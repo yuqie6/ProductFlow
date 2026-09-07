@@ -32,6 +32,7 @@ export function scopeFromContract(contract: ProductFlowContract, lookup: Runtime
     schema_version: 1,
     scope_type: contract.scope_type,
     conversation_id: conversationID,
+    merchant_id: contract.merchant_id.trim(),
     task_id: taskID,
     task_goal: contract.task_goal,
     product_id: contract.product_id?.trim() || null,

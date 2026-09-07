@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -16,7 +17,7 @@ import (
 
 // LaunchWorkspaceFromGlobal 从全局 conversation 按幂等键创建商品工作区。conversation 不存在返回 NotFound。非全局作用域、工作区缺少 Session 或同键冲突返回 Conflict；名称/幂等键无效返回 Validation。
 func (s Service) LaunchWorkspaceFromGlobal(ctx context.Context, globalConversationID, name, idempotencyKey string) (WorkspaceLaunchResponse, error) {
-	conv, err := s.loadScopedConversation(ctx, globalConversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, globalConversationID)
 	if err != nil {
 		return WorkspaceLaunchResponse{}, err
 	}
@@ -41,7 +42,8 @@ func (s Service) LaunchWorkspaceFromGlobal(ctx context.Context, globalConversati
 
 // ReconcileWorkspaceFromGlobal 按幂等键对账商品工作区创建；证据不足返回 unknown。conversation 不存在返回 NotFound。幂等键无效返回 Validation。
 func (s Service) ReconcileWorkspaceFromGlobal(ctx context.Context, globalConversationID, name, idempotencyKey string) (ReconcileResponse, error) {
-	if _, err := s.loadScopedConversation(ctx, globalConversationID); err != nil {
+	ctx, _, err := s.loadScopedConversation(ctx, globalConversationID)
+	if err != nil {
 		return ReconcileResponse{}, err
 	}
 	key, err := normalizeIdempotency(idempotencyKey, "idempotency key")
@@ -83,7 +85,7 @@ func (s Service) FinalizeProductIntake(ctx context.Context, conversationID, idem
 	if found {
 		return replay, nil
 	}
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +115,7 @@ func (s Service) FinalizeProductIntake(ctx context.Context, conversationID, idem
 // conversation 必须 global。cursor 绑定当前 query；换搜索词却复用旧 cursor 返回 Validation。limit 须在 1–100。
 // 只读 products 与 active workflow 摘要。不创建工作区、不改 Goal、不写 lease。
 func (s Service) ListGlobalProducts(ctx context.Context, conversationID, query, cursor string, limit int) (GlobalProductListResponse, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return GlobalProductListResponse{}, err
 	}
@@ -127,9 +129,9 @@ func (s Service) ListGlobalProducts(ctx context.Context, conversationID, query, 
 	if len([]rune(normalized)) > 255 {
 		return GlobalProductListResponse{}, apperr.Validation("商品搜索词不能超过 255 个字符")
 	}
-	q := s.DB.WithContext(ctx).Model(&schema.Products{}).
+	q := auth.ScopeMerchant(ctx, s.DB.WithContext(ctx).Model(&schema.Products{}).
 		Select("id, name, category, updated_at").
-		Where("? = '' OR name ILIKE '%' || ? || '%'", normalized, normalized)
+		Where("? = '' OR name ILIKE '%' || ? || '%'", normalized, normalized), "merchant_id")
 	if cursor != "" {
 		var decoded struct {
 			UpdatedAt string `json:"updated_at"`
@@ -185,7 +187,7 @@ func (s Service) ListGlobalProducts(ctx context.Context, conversationID, query, 
 
 // InspectGlobalProducts 按明确 id 检查商品摘要。product_ids 数量非法、空值或重复返回 Validation。部分商品不存在返回 NotFound；非全局 conversation 返回 Conflict。
 func (s Service) InspectGlobalProducts(ctx context.Context, conversationID string, productIDs []string) ([]GlobalProductResponse, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -208,6 +210,10 @@ func (s Service) InspectGlobalProducts(ctx context.Context, conversationID strin
 		seen[id] = struct{}{}
 		detail, err := s.Product.Get(ctx, id)
 		if err != nil {
+			var appErr apperr.Error
+			if errors.As(err, &appErr) && appErr.Detail == auth.CrossMerchantDetail {
+				return nil, err
+			}
 			return nil, apperr.NotFound("部分商品不存在")
 		}
 		item := GlobalProductResponse{ID: detail.ID, Name: detail.Name, Category: detail.Category, UpdatedAt: detail.UpdatedAt.UTC().Format(time.RFC3339Nano)}
@@ -235,7 +241,7 @@ func (s Service) GlobalWorkflowContext(ctx context.Context, conversationID, prod
 	if productID == "" {
 		return nil, apperr.Validation("请求参数无效")
 	}
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +277,7 @@ func (s Service) GlobalWorkflowContext(ctx context.Context, conversationID, prod
 //
 // conversation 不存在返回 NotFound；非 global 返回 Conflict。payload 非 JSON 或缺少 operations 返回 Validation。
 func (s Service) ValidateLibraryDraft(ctx context.Context, conversationID string, value json.RawMessage) error {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return err
 	}
@@ -292,7 +298,7 @@ func (s Service) ValidateLibraryDraft(ctx context.Context, conversationID string
 //
 // conversation 不存在返回 NotFound；非 global 返回 Conflict。JSON 无效、draft_kind 非 library_organization、或内层 payload 缺 operations 返回 Validation。
 func (s Service) ValidateGlobalDraft(ctx context.Context, conversationID string, value json.RawMessage) error {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return err
 	}
@@ -321,6 +327,9 @@ func (s Service) ConfirmLibraryDraftHTTP(ctx context.Context, conversationID str
 	if key == "" {
 		return nil, apperr.Validation("idempotency key 不能为空")
 	}
+	if err := requireBrowserMerchant(ctx); err != nil {
+		return nil, err
+	}
 	var out any
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		conv, err := loadConversationByID(ctx, pgxTx, conversationID)
@@ -348,7 +357,8 @@ func (s Service) ConfirmLibraryDraftHTTP(ctx context.Context, conversationID str
 
 // GetLibraryDraftHTTP 读取全局 conversation 的素材整理 Draft。conversation 或 Draft 不存在返回 NotFound。
 func (s Service) GetLibraryDraftHTTP(ctx context.Context, conversationID string) (any, error) {
-	if _, err := s.loadScopedConversation(ctx, conversationID); err != nil {
+	ctx, _, err := s.loadScopedConversation(ctx, conversationID)
+	if err != nil {
 		return nil, err
 	}
 	return s.Library.GetOrganizationDraft(ctx, conversationID)

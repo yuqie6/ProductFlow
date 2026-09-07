@@ -85,7 +85,7 @@ func (s Service) RuntimeContext(ctx context.Context, conversationID string, task
 			taskSummary = task.Summary
 		}
 		out = RuntimeContextResponse{
-			SchemaVersion: 1, SessionID: session.ID, ConversationID: conv.ID,
+			SchemaVersion: 1, SessionID: session.ID, ConversationID: conv.ID, MerchantID: conv.MerchantID,
 			TaskID: taskID, SessionSummary: session.Summary, TaskSummary: taskSummary,
 		}
 		return nil
@@ -102,7 +102,7 @@ func contractForConversation(ctx context.Context, pgxTx *gorm.DB, conversationID
 		return ContractResponse{}, err
 	}
 	out := ContractResponse{
-		SchemaVersion: 1, ScopeType: conv.ScopeType, ConversationID: conv.ID,
+		SchemaVersion: 1, ScopeType: conv.ScopeType, ConversationID: conv.ID, MerchantID: conv.MerchantID,
 		ProductID: conv.ProductID, HarnessRunID: conv.HarnessRunID,
 		ToolContractVersion: toolContractVersion, DraftSchema: map[string]any{},
 	}

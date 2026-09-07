@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -83,7 +84,7 @@ func TestConfirmDraftAndAppendTerminalDoNotDeadlock(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		_, err := as.svc.ConfirmLibraryDraftHTTP(context.Background(), convID, 1, clockid.New())
+		_, err := as.svc.ConfirmLibraryDraftHTTP(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), convID, 1, clockid.New())
 		results <- outcome{op: "confirm", err: err}
 	}()
 	wg.Wait()

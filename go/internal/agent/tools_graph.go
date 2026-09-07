@@ -22,14 +22,26 @@ const (
 	focusCanvasTool     = "focus_canvas_items_v1"
 )
 
-func (s Service) loadScopedConversation(ctx context.Context, conversationID string) (conversationRow, error) {
+func (s Service) loadScopedConversation(ctx context.Context, conversationID string) (context.Context, conversationRow, error) {
 	var conv conversationRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		loaded, err := loadConversationByID(ctx, pgxTx, conversationID)
-		conv = loaded
-		return err
+		// 内部工具可能尚无商家上下文：先按 id 读出合同商家，再绑定。
+		var rec schema.AgentConversations
+		scanErr := pgxTx.WithContext(ctx).Where("id = ?", conversationID).Take(&rec).Error
+		if errors.Is(scanErr, gorm.ErrRecordNotFound) {
+			return apperr.NotFound("Agent conversation 不存在")
+		}
+		if scanErr != nil {
+			return scanErr
+		}
+		conv = conversationFromSchema(rec)
+		return nil
 	})
-	return conv, err
+	if err != nil {
+		return ctx, conversationRow{}, err
+	}
+	ctx, err = bindConversationMerchant(ctx, conv)
+	return ctx, conv, err
 }
 
 func requireProductWorkflow(conv conversationRow) error {
@@ -75,7 +87,7 @@ func (s Service) ApplyGraphTool(ctx context.Context, conversationID string, chan
 	if found {
 		return replay, nil
 	}
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -112,13 +124,15 @@ func (s Service) ProposeGraphTool(ctx context.Context, conversationID string, ch
 	if found {
 		return replay, nil
 	}
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
 	if err := requireProductWorkflow(conv); err != nil {
 		return nil, err
 	}
+	// CreateAgentProposal 未挂 guardCtx；商家上下文绑定后 LoadGraph 需要 ProductGuard。
+	ctx = graph.WithProductGuard(ctx, s.Graph.Products)
 	proposal, err := s.Graph.CreateAgentProposal(ctx, *conv.ProductID, conversationID, parsed)
 	if err != nil {
 		return nil, err
@@ -143,7 +157,7 @@ func (s Service) DiscardProposalTool(ctx context.Context, conversationID string,
 	if found {
 		return replay, nil
 	}
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +195,7 @@ func (s Service) CancelRunTool(ctx context.Context, conversationID, runID, idemp
 	if found {
 		return replay, nil
 	}
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +254,7 @@ func (s Service) ReconcileGraphTool(ctx context.Context, conversationID, toolNam
 //
 // conversation 必须是 product_workflow。无 live 图或节点不在图上返回 NotFound。只读，不写 Graph Command、lease、journal。
 func (s Service) GetNodeDetail(ctx context.Context, conversationID, nodeID string) (map[string]any, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +278,7 @@ func (s Service) GetNodeDetail(ctx context.Context, conversationID, nodeID strin
 
 // ListWorkflowRuns 列出当前商品 live 图的 GraphRun。conversation 不存在返回 NotFound。非商品工作流返回 Conflict。
 func (s Service) ListWorkflowRuns(ctx context.Context, conversationID string, limit int) (map[string]any, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +305,7 @@ func (s Service) ListWorkflowRuns(ctx context.Context, conversationID string, li
 
 // InspectWorkflowRuns 供全局 Agent 按 workflow id 检查有界 GraphRun 列表。conversation 或工作流不存在返回 NotFound。非全局 conversation 返回 Conflict。
 func (s Service) InspectWorkflowRuns(ctx context.Context, conversationID string, workflowIDs []string, limit int) (map[string]any, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +344,7 @@ func (s Service) InspectWorkflowRuns(ctx context.Context, conversationID string,
 // 商品对话只看本商品；全局对话按 run 反查所属商品。runID 空返回 Validation；找不到 NotFound。
 // 不取消 run、不改 Goal。artifact 只保留身份字段。
 func (s Service) WorkflowRunDetail(ctx context.Context, conversationID, runID string) (map[string]any, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}

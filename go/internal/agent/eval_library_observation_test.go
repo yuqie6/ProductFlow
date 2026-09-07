@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 )
@@ -143,7 +144,7 @@ func TestEvalLibraryObservationFixtures(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := as.svc.ConfirmLibraryDraftHTTP(context.Background(), seeded.ConvID, draft.CurrentRevision.Version, clockid.New()); err != nil {
+				if _, err := as.svc.ConfirmLibraryDraftHTTP(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), seeded.ConvID, draft.CurrentRevision.Version, clockid.New()); err != nil {
 					t.Fatal(err)
 				}
 				for _, raw := range payload["operations"].([]any) {

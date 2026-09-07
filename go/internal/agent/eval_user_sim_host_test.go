@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -47,7 +48,7 @@ func TestEvalUserSimHost(t *testing.T) {
 	var mu sync.Mutex
 	closed := make(chan struct{})
 	var once sync.Once
-	ctx := context.Background()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	var baseline graph.Projection
 	if seeded.GraphID != "" {
 		baseline, err = as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)

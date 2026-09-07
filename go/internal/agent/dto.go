@@ -259,6 +259,7 @@ type ContractResponse struct {
 	SchemaVersion       int            `json:"schema_version"` // 合同 schema
 	ScopeType           string         `json:"scope_type"`     // 决定 system prompt 与 Draft
 	ConversationID      string         `json:"conversation_id"`
+	MerchantID          string         `json:"merchant_id"` // 合同商家；Pi scope 只读，不授予权限
 	TaskID              *string        `json:"task_id"`
 	TaskGoal            *string        `json:"task_goal"` // 绑定 Task 时的 Goal；未绑为 nil
 	ProductID           *string        `json:"product_id"`
@@ -276,6 +277,7 @@ type RuntimeContextResponse struct {
 	SchemaVersion  int     `json:"schema_version"` // 运行时上下文 schema
 	SessionID      string  `json:"session_id"`
 	ConversationID string  `json:"conversation_id"`
+	MerchantID     string  `json:"merchant_id"` // 与合同同一商家
 	TaskID         *string `json:"task_id"`
 	SessionSummary *string `json:"session_summary"` // Dock 用的有界 summary
 	TaskSummary    *string `json:"task_summary"`    // Task 有界 summary；未绑 Task 为 nil
@@ -482,6 +484,7 @@ type TurnArtifact struct {
 
 type conversationRow struct {
 	ID           string
+	MerchantID   string
 	ScopeType    string
 	SessionID    *string
 	ProductID    *string

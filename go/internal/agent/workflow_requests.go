@@ -115,6 +115,9 @@ func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, c
 
 // ConfirmWorkflowRunRequest 经 graph 包提交或重试 GraphRun；已确认则回放。已取消或不在待确认状态返回 NotPending。请求不存在返回 NotFound；revision 已变返回 Conflict。
 func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
+	if err := requireBrowserMerchant(ctx); err != nil {
+		return WorkflowRunRequestResponse{}, err
+	}
 	var out WorkflowRunRequestResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		item, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
@@ -223,7 +226,7 @@ func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, s Service, pr
 
 // PrepareWorkflowRunRequest 检查商品工作流 conversation 当前 live 图是否可提交执行。conversation 不存在返回 NotFound。非商品工作流、无 live 图或 revision 已变返回 Conflict；revision/source_run 非法返回 Validation。
 func (s Service) PrepareWorkflowRunRequest(ctx context.Context, conversationID string, expectedRevision int, sourceRunID *string, taskID *string) (PreparedWorkflowRunRequest, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return PreparedWorkflowRunRequest{}, err
 	}
@@ -239,7 +242,7 @@ func (s Service) PrepareWorkflowRunRequest(ctx context.Context, conversationID s
 
 // PrepareGlobalWorkflowRunRequest 检查全局 Agent 指定的商品 live 图是否可提交执行。conversation 不存在返回 NotFound。非全局 conversation 返回 Conflict。product_id/workflow_id 无效或 source_run 不可重试返回 Validation。
 func (s Service) PrepareGlobalWorkflowRunRequest(ctx context.Context, conversationID, productID, workflowID string, expectedRevision int, sourceRunID, taskID *string) (PreparedWorkflowRunRequest, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return PreparedWorkflowRunRequest{}, err
 	}
@@ -316,7 +319,7 @@ func (s Service) resolveGraphRunnable(ctx context.Context, db *gorm.DB, productI
 	if g.Revision != expectedRevision {
 		return PreparedWorkflowRunRequest{}, apperr.Conflict(workflowRevisionChangedDetail)
 	}
-	runnable, err := requireRunnableWorkflow(ctx, db, productID, g.ID)
+	runnable, err := s.requireRunnableWorkflow(ctx, db, productID, g.ID)
 	if err != nil {
 		return PreparedWorkflowRunRequest{}, err
 	}
@@ -772,7 +775,9 @@ func validateSourceRun(ctx context.Context, db *gorm.DB, productID, graphID stri
 }
 
 // requireRunnableWorkflow 经 graph 包判断全图是否有可运行节点。没有则 Conflict。Agent 不直接写 graph 表。
-func requireRunnableWorkflow(ctx context.Context, db *gorm.DB, productID, graphID string) (int, error) {
+// LoadGraph 经 requireOwnedProduct 需要 ProductGuard（B3）；此处挂上 s.Graph.Products。
+func (s Service) requireRunnableWorkflow(ctx context.Context, db *gorm.DB, productID, graphID string) (int, error) {
+	ctx = graph.WithProductGuard(ctx, s.Graph.Products)
 	id, err := graph.LoadGraph(ctx, db, productID, graphID)
 	if err != nil {
 		return 0, err

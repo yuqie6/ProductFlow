@@ -21,9 +21,9 @@ import (
 func (h HTTP) registerInternal(engine *gin.Engine) {
 	internal := engine.Group("/api/internal/v1", h.requireInternal)
 	internal.GET("/agent-runtime/provider-config", h.providerConfig)
-	internal.GET("/agent-tasks/:task_id/contract", h.taskContract)
+	internal.GET("/agent-tasks/:task_id/contract", h.bindInternalTaskMerchant(), h.taskContract)
 
-	conv := internal.Group("/agent-conversations/:conversation_id")
+	conv := internal.Group("/agent-conversations/:conversation_id", h.bindInternalConversationMerchant())
 	conv.GET("/contract", h.conversationContract)
 	conv.GET("/runtime-context", h.runtimeContext)
 	conv.GET("/product-context", h.productContext)

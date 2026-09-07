@@ -41,7 +41,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 		}
 		return runtime.AdminAccessRequired, nil
 	})
-	v2 := engine.Group("/api/v2", admin)
+	v2 := engine.Group("/api/v2", admin, abortIfNoMerchant)
 	v2.GET("/agent-sessions", h.listSessions)
 	v2.POST("/agent-sessions", h.createSession)
 	v2.PATCH("/agent-sessions/:session_id", h.renameSession)

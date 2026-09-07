@@ -48,7 +48,7 @@ func libraryMeta(item library.AssetResponse) LibraryAssetMetadata {
 
 // ListProductAssets 列出商品图库有界元数据，不把整库交给 Turn。conversation 不存在返回 NotFound。非商品工作流返回 Conflict；图库筛选非法返回 Validation。
 func (s Service) ListProductAssets(ctx context.Context, conversationID, directoryKind, directoryKey, query, sort, after string, limit int) (AssetListResponse, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return AssetListResponse{}, err
 	}
@@ -77,7 +77,7 @@ func (s Service) InspectProductAssets(ctx context.Context, conversationID string
 	if len(ids) == 0 {
 		return nil, apperr.Validation("请明确提供要查看的商品图片 ID")
 	}
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ type AssetContent struct {
 
 // ReadProductAssetContent 读取商品图片 bytes；超过上限或与核验元数据不一致时拒绝。超过单张上限返回 Validation。文件不存在返回 NotFound；与核验元数据不一致返回 Conflict。
 func (s Service) ReadProductAssetContent(ctx context.Context, conversationID, assetID string) (AssetContent, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return AssetContent{}, err
 	}
@@ -147,7 +147,7 @@ func (s Service) ListLibraryAssets(ctx context.Context, conversationID, query, c
 	if len(options) > 0 {
 		opt = options[0]
 	}
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return LibraryAssetListResponse{}, err
 	}
@@ -193,7 +193,7 @@ func (s Service) InspectLibraryAssets(ctx context.Context, conversationID string
 	if len(ids) == 0 {
 		return nil, apperr.Validation("请明确提供要查看的商品图片 ID")
 	}
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (s Service) InspectLibraryAssets(ctx context.Context, conversationID string
 
 // ReadLibraryAssetContent 读取全局素材 bytes；已归档返回 NotFound。
 func (s Service) ReadLibraryAssetContent(ctx context.Context, conversationID, assetID string) (AssetContent, error) {
-	conv, err := s.loadScopedConversation(ctx, conversationID)
+	ctx, conv, err := s.loadScopedConversation(ctx, conversationID)
 	if err != nil {
 		return AssetContent{}, err
 	}

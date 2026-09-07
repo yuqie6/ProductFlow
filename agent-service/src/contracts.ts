@@ -159,6 +159,8 @@ export interface ProductFlowContract {
   schema_version: number;
   scope_type: "global" | "product_workflow" | string;
   conversation_id: string;
+  /** 合同商家；仅描述 scope，不授予权限。 */
+  merchant_id: string;
   task_id: string | null;
   task_goal: string | null;
   product_id: string | null;
@@ -176,6 +178,7 @@ export interface Scope {
   schema_version: 1;
   scope_type: "global" | "product_workflow";
   conversation_id: string;
+  merchant_id: string;
   task_id: string | null;
   task_goal: string | null;
   product_id: string | null;
@@ -402,7 +405,7 @@ export function validatePageContext(value: PageContext | null): void {
 }
 
 export function validateScope(scope: Scope): void {
-  if (scope.schema_version !== 1 || !scope.run_id || !scope.conversation_id) {
+  if (scope.schema_version !== 1 || !scope.run_id || !scope.conversation_id || !scope.merchant_id?.trim()) {
     throw new Error("ProductFlow returned an invalid Agent contract");
   }
   if (scope.scope_type === "product_workflow") {
@@ -424,6 +427,7 @@ export function sameRuntimeScope(left: Scope, right: Scope): boolean {
     left.schema_version === right.schema_version &&
     left.scope_type === right.scope_type &&
     left.conversation_id === right.conversation_id &&
+    left.merchant_id === right.merchant_id &&
     left.task_id === right.task_id &&
     left.product_id === right.product_id &&
     left.run_id === right.run_id

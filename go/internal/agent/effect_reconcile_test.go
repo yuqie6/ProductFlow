@@ -299,7 +299,7 @@ func seedEffectLedger(t *testing.T, as *agentServer, toolName, conversationID st
 		fields, _ := decodeIntentPayload(intent.RequestPayload)
 		productID := fieldString(fields, "product_id")
 		if productID == "" {
-			conv, err := as.svc.loadScopedConversation(context.Background(), conversationID)
+			_, conv, err := as.svc.loadScopedConversation(context.Background(), conversationID)
 			if err != nil {
 				t.Fatal(err)
 			}

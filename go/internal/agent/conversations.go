@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -28,28 +29,37 @@ func (s Service) GetConversation(ctx context.Context, productID *string, convers
 
 func conversationFromSchema(rec schema.AgentConversations) conversationRow {
 	return conversationRow{
-		ID: rec.ID, ScopeType: rec.ScopeType, SessionID: rec.SessionID, ProductID: rec.ProductID,
+		ID: rec.ID, MerchantID: rec.MerchantID, ScopeType: rec.ScopeType, SessionID: rec.SessionID, ProductID: rec.ProductID,
 		HarnessRunID: rec.HarnessRunID, Status: rec.Status, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt,
 	}
 }
 
 // loadConversation 按商品或全局作用域读取 conversation。商品行缺失与 conversation 缺失返回不同 NotFound。
+// 有工作商家时 ScopeMerchant；跨商统一 404。
 func loadConversation(ctx context.Context, pgxTx *gorm.DB, productID *string, conversationID string) (conversationRow, error) {
 	var rec schema.AgentConversations
 	var err error
 	if productID == nil {
-		err = pgxTx.WithContext(ctx).Where("id = ? AND scope_type = ?", conversationID, "global").Take(&rec).Error
+		q := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Where("id = ? AND scope_type = ?", conversationID, "global"), "merchant_id")
+		err = q.Take(&rec).Error
 	} else {
-		err = pgxTx.WithContext(ctx).
-			Where("id = ? AND scope_type = ? AND product_id = ?", conversationID, "product_workflow", *productID).
-			Take(&rec).Error
+		q := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).
+			Where("id = ? AND scope_type = ? AND product_id = ?", conversationID, "product_workflow", *productID), "merchant_id")
+		err = q.Take(&rec).Error
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		if productID != nil {
 			var product schema.Products
-			if scanErr := pgxTx.WithContext(ctx).Select("id").Where("id = ?", *productID).Take(&product).Error; errors.Is(scanErr, gorm.ErrRecordNotFound) {
+			pq := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Select("id").Where("id = ?", *productID), "merchant_id")
+			if scanErr := pq.Take(&product).Error; errors.Is(scanErr, gorm.ErrRecordNotFound) {
+				if _, ok := auth.MerchantIDFrom(ctx); ok {
+					return conversationRow{}, auth.NotFoundCrossMerchant()
+				}
 				return conversationRow{}, apperr.NotFound("商品不存在")
 			}
+		}
+		if _, ok := auth.MerchantIDFrom(ctx); ok {
+			return conversationRow{}, auth.NotFoundCrossMerchant()
 		}
 		return conversationRow{}, apperr.NotFound("Agent conversation 不存在")
 	}
@@ -61,8 +71,12 @@ func loadConversation(ctx context.Context, pgxTx *gorm.DB, productID *string, co
 
 func loadConversationByID(ctx context.Context, pgxTx *gorm.DB, conversationID string) (conversationRow, error) {
 	var rec schema.AgentConversations
-	err := pgxTx.WithContext(ctx).Where("id = ?", conversationID).Take(&rec).Error
+	q := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Where("id = ?", conversationID), "merchant_id")
+	err := q.Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if _, ok := auth.MerchantIDFrom(ctx); ok {
+			return conversationRow{}, auth.NotFoundCrossMerchant()
+		}
 		return conversationRow{}, apperr.NotFound("Agent conversation 不存在")
 	}
 	if err != nil {
@@ -73,8 +87,12 @@ func loadConversationByID(ctx context.Context, pgxTx *gorm.DB, conversationID st
 
 func lockConversation(ctx context.Context, pgxTx *gorm.DB, conversationID string) (conversationRow, error) {
 	var rec schema.AgentConversations
-	err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", conversationID).Take(&rec).Error
+	q := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", conversationID), "merchant_id")
+	err := q.Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
+		if _, ok := auth.MerchantIDFrom(ctx); ok {
+			return conversationRow{}, auth.NotFoundCrossMerchant()
+		}
 		return conversationRow{}, apperr.NotFound("Agent conversation 不存在")
 	}
 	if err != nil {
