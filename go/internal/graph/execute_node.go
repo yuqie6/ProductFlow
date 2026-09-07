@@ -749,8 +749,18 @@ func (e Executor) persistImageArtifact(
 		imageTypeKey = &key
 	}
 	now := time.Now().UTC()
-	consumed := false
-	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		settle := func() error {
+			merchantID, err := merchantIDForGraphRun(ctx, pgxTx, run.ID)
+			if err != nil {
+				return err
+			}
+			attemptID := ""
+			if nodeRun.ActiveAttemptID != nil {
+				attemptID = *nodeRun.ActiveAttemptID
+			}
+			return (Executor{DB: pgxTx}).settleImageQuota(ctx, merchantID, nodeRun.ID, attemptID)
+		}
 		assetID, err := e.Deps.Assets.Write(ctx, pgxTx, GeneratedImageInput{
 			ProductID:    productID,
 			Title:        node.Title,
@@ -822,8 +832,7 @@ func (e Executor) persistImageArtifact(
 			if err := finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now); err != nil {
 				return err
 			}
-			consumed = true
-			return nil
+			return settle()
 		}
 		promotable, err := lockNodeRunForPromotion(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID)
 		if err != nil {
@@ -833,8 +842,7 @@ func (e Executor) persistImageArtifact(
 			if err := finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now); err != nil {
 				return err
 			}
-			consumed = true
-			return nil
+			return settle()
 		}
 		if nodeRun.NodeID != nil {
 			// 节点 id 在 move/整理后仍稳定。不能用 run 快照 revision 对 live revision
@@ -874,24 +882,8 @@ func (e Executor) persistImageArtifact(
 		if _, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID); err != nil {
 			return err
 		}
-		consumed = true
-		return nil
+		return settle()
 	})
-	if err != nil {
-		return err
-	}
-	if !consumed {
-		return nil
-	}
-	merchantID, mErr := merchantIDForGraphRun(ctx, e.DB, run.ID)
-	if mErr != nil {
-		return mErr
-	}
-	attemptID := ""
-	if nodeRun.ActiveAttemptID != nil {
-		attemptID = *nodeRun.ActiveAttemptID
-	}
-	return e.settleImageQuota(ctx, merchantID, nodeRun.ID, attemptID)
 }
 
 // loadReferences 按 ProductImageAsset id 读字节交给 provider。Assets 未注入或 MIME 非 png/jpeg/webp 返回 Validation。
