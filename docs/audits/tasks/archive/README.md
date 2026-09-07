@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [release-d3-restore-drill.md](release-d3-restore-drill.md) | 完成 | B4 隔离全栈 D3；登录/媒体/Agent/CHECKSUMS；在途 UNKNOWN；≠R6 |
 | [compete-facts-text-trace.md](compete-facts-text-trace.md) | 完成 | CF-B1 text_trace+卖点一图一理由；≠OCR/采用硬闸/R3 |
 | [brand-visual-reuse.md](brand-visual-reuse.md) | 完成 | 视觉方案版本选择+IQ-CF-07 继承预览；Brand 占位；≠跨商分享 |
 | [merchant-product-chain.md](merchant-product-chain.md) | 完成 | B2 商品子链隔离+跨商404；≠MP-B |

@@ -152,6 +152,8 @@ bash scripts/release-restore.sh
 
 恢复结束后脚本打印 **D3 业务断言清单**（登录、媒体非 missing、provider 密钥列、任务/outbox、Agent health）。**完整隔离实跑证据归 B4**；跑通本脚本不等于 D3 通过，也不等于 R6。
 
+B4 演练备注（2026-09-07）：隔离项目 `pf-d3-src-20260907` → 备份 → `pf-d3-dst-20260907` 全栈恢复；发行 pin `0.0.0-5ed2b916b569`；证据见 [`docs/audits/tasks/release-d3-restore-drill.md`](../docs/audits/tasks/release-d3-restore-drill.md)。≠ R6。
+
 ### D2 清单对齐
 
 1. 写入探针后备份：一商品、一媒体原图、一设置/provider 行、一可识别 Agent/Pi 文件（演练任务填写具体隔离项目）。

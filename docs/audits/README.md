@@ -44,12 +44,12 @@
 | merchant-identity-skeleton | 商家平台 B0 | 2026-09-07 完成归档 |
 | merchant-root-ownership | 商家平台 B1；根表 merchant_id | 2026-09-07 完成归档 |
 | merchant-product-chain | 商家平台 B2；商品链隔离 | 2026-09-07 完成归档 |
-| merchant-graph-recipe | 商家平台 B3；Graph/配方隔离 | 开放 |
+| merchant-graph-recipe | 商家平台 B3；Graph/配方隔离 | CTO 认领 `sub-merchant/…`，执行中 |
 | release-readiness-baseline | 发行差距 | 完成归档 |
 | release-compose-proxy-overlay | 发行 B1 | 完成归档 |
 | release-versioned-artifact | 发行 B2 | 2026-09-07 完成归档 |
 | release-backup-restore | 发行 B3；备份恢复 | 2026-09-07 完成归档 |
-| release-d3-restore-drill | 发行 B4；D3 恢复演练 | 开放 |
+| release-d3-restore-drill | 发行 B4；D3 恢复演练 | CTO 认领 `sub-release/…`，执行中 |
 | delivery-workbench-projection | 成果视图 | 完成归档；默认仍为流程 |
 | delivery-adoption-snapshot | 采用快照 | 2026-09-07 完成归档 |
 | brand-visual-reuse | 品牌视觉复用 | 2026-09-07 完成归档 |
@@ -58,7 +58,6 @@
 | compete-facts-layer-gate | CF-B0 事实分层闸 | 2026-09-07 完成归档 |
 | compete-facts-text-trace | CF-B1 图位文字追溯 | 2026-09-07 完成归档 |
 | compete-facts-impact-preview | CF-B2 变更影响预览 | 开放 |
-| merchant-graph-recipe | 商家平台 B3；Graph/配方隔离 | CTO 认领 `sub-merchant/…`，执行中 |
 | image-quality-content-pilot | 图片质量真实对照 | 费用已授权；开放待隔离栈 |
 | eval-skills | Agent 质量 | 阻塞；保留候选与冻结 A/B |
 | eval-labels / eval-state-live | Agent 质量证据 | 阻塞 |

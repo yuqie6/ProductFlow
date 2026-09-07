@@ -1,9 +1,9 @@
 # 任务：成果视图默认入口走查
 
-状态：开放
+状态：认领
 类型：证据
-认领者：—
-认领于：—
+认领者：sub-delivery/workbench-default-entry-walkthrough
+认领于：2026-09-07T13:42:00+08:00
 业务组：工作流体验
 父账本：canvas-test-system.md
 完成后可拆：按证据决定是否切换默认入口；不单独改生成链
