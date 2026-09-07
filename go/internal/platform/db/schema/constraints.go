@@ -2130,5 +2130,59 @@ $fn$;`,
 	`CREATE TRIGGER trg_agent_tasks_fill_merchant_id BEFORE INSERT ON agent_tasks FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_agent_conversations_fill_merchant_id ON agent_conversations;`,
 	`CREATE TRIGGER trg_agent_conversations_fill_merchant_id BEFORE INSERT ON agent_conversations FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+
+	// MP-C B0: merchant commercial quota ledger (separate from agent_model_invocations usage facts)
+	`DO $c$ BEGIN
+ALTER TABLE merchant_quota_accounts ADD CONSTRAINT fk_merchant_quota_accounts_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_quota_accounts ADD CONSTRAINT ck_merchant_quota_accounts_nonneg CHECK (available_units >= 0 AND reserved_units >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_quota_holds ADD CONSTRAINT fk_merchant_quota_holds_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_quota_holds ADD CONSTRAINT uq_merchant_quota_holds_idempotency UNIQUE (merchant_id, idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_quota_holds ADD CONSTRAINT ck_merchant_quota_holds_status CHECK (status IN ('reserved', 'settled', 'released', 'pending_reconciliation'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_quota_holds ADD CONSTRAINT ck_merchant_quota_holds_amount CHECK (amount_units > 0 AND (settled_units IS NULL OR settled_units >= 0));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_quota_events ADD CONSTRAINT fk_merchant_quota_events_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_quota_events ADD CONSTRAINT fk_merchant_quota_events_hold_id FOREIGN KEY (hold_id) REFERENCES merchant_quota_holds(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_quota_events ADD CONSTRAINT uq_merchant_quota_events_idempotency UNIQUE (merchant_id, event_type, idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE merchant_quota_events ADD CONSTRAINT ck_merchant_quota_events_type CHECK (event_type IN ('reserve', 'settle', 'release', 'adjust', 'mark_unknown'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_merchant_quota_holds_merchant_status ON public.merchant_quota_holds USING btree (merchant_id, status, created_at DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_merchant_quota_events_merchant_created ON public.merchant_quota_events USING btree (merchant_id, created_at DESC, id DESC);`,
 }
 

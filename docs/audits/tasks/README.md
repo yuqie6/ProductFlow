@@ -20,6 +20,8 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
+| [delivery-r2-core-path-gate.md](delivery-r2-core-path-gate.md) | 工作流体验 | 证据 | 认领 | sub-r2/delivery-r2-core-path-gate | 2026-09-07T17:17:00+08:00 |
+| [image-quality-selling-point-live.md](image-quality-selling-point-live.md) | 图片质量 | 证据 | 认领 | sub-iq/image-quality-selling-point-live | 2026-09-07T17:17:00+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |

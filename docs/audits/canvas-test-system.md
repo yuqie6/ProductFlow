@@ -99,6 +99,7 @@ O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；�
 | 有产出时默认成果 | [workbench-conditional-results-default](tasks/archive/workbench-conditional-results-default.md)：`defaultWorkbenchMainView`；有当前图 → results，否则 flow；Vitest 2 files / 17 passed | 非全局一律成果；跨会话记忆见下条 |
 | 记忆上次主视图 | [workbench-remember-last-view](tasks/archive/workbench-remember-last-view.md)：商品级显式偏好；无偏好仍条件默认；`clearWorkbenchMainViewPreference` 可关 | 已交付；≠全局一律成果；浏览器整链未宣称 |
 | 交付采用快照 | [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md)：Go 采用/并发/导出一致；成果视图采用/导出接线；schema `delivery_adoption_*`；Vitest 14 | 浏览器整链 opt-in 未跑；质量判据仍依赖图片质量组判定输入；不宣称 R2 全部通过 |
+| R2 核心路径门 | [delivery-r2-core-path-gate](tasks/delivery-r2-core-path-gate.md)：进行中；§5 创建→成果→采用→导出→复用；桌面/手机可达性 | 未完成；≠假标 R2 全过 |
 | 品牌视觉复用 | [brand-visual-reuse](tasks/archive/brand-visual-reuse.md)：商家内视觉方案版本 CRUD；商品显式选择；IQ-CF-07 继承预览（Brand 占位）；追加版本不静默改选择；配方创建预览列继承/待填；Vitest + Go 包测 | 浏览器整链未跑；Brand 表仍占位；未宣称跨商家分享 |
 
 两项新浏览器交付未修改生产业务代码，分别提交于 `daa4672c` 与 `f7e70e1e`。当时完整 Web 回归为 91 files / 647 tests passed，lint、build 通过，build 保留既有大 chunk 警告。Go delivery 为带 PostgreSQL 的 24 项实际通过，无跳过；不扩展为全部 Go 包通过。

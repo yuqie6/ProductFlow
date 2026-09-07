@@ -8,7 +8,7 @@
 
 | 组 | 章程 | 当前结果与状态 | 组内任务序列 | 可消费的固定输入与边界 |
 |---|---|---|---|---|
-| 商家平台 | [merchant-platform.md](merchant-platform.md) | 新设；身份、成员、隔离、额度和运营权限尚未实现 | 冻结全链路覆盖与实施批次 → 身份和资源归属 → 业务/异步/Agent 隔离 → 商业额度与运营权限 → 双商家验收 | 当前源码可作调查输入；完整隔离验收前不开放互不信任的第二商家 |
+| 商家平台 | [merchant-platform.md](merchant-platform.md) | R1/MP-A/MP-B 已过；MP-C B0 骨架已交付；MP-D 未齐 | 冻结全链路覆盖与实施批次 → 身份和资源归属 → 业务/异步/Agent 隔离 → 商业额度与运营权限 → 双商家验收 | 完整隔离验收前不开放互不信任的第二商家；额度入口接线与 R5 仍开放 |
 | Agent 质量 | [agent-eval-system.md](agent-eval-system.md) | 交付正确的商家 Agent 行为及可信的测量；图观察已交付，固定基线与候选复验仍阻塞 | 冻结题集 → 行为修复 → 独立复验 → 交付可复用基线；新商家行为在授权合同固定后纳入 | 当前产品合同与固定代码；题目修订和被测行为修订分任务串行，不等待自进化系统 |
 | Agent 自进化 | [agent-self-harness.md](agent-self-harness.md) | 固定模型组合下自动发现、修改、验证和有界多轮改进，最终一次人工审批；尚未实现 | 固定实验输入与隔离执行 → 自动挖掘及候选验证 → 多轮运行与审批交付 | 可测开发包、固定评测与业务合同；当前有一次性启动阻塞，跨模型泛化与高级反馈系统不作为前置 |
 | 图片质量 | [image-quality.md](image-quality.md) | 对成图内容与视觉改进负责；旧闸门未过，单图卖点候选待付费复验 | 有效参考/金标 → 冻结对照 → 事实与图种归因 → 保真/文字/生成链改进 → 复验 | 固定模型、评委与预算；不扩池凑数，不依赖 Agent 分数 |
@@ -80,6 +80,7 @@
 | image-quality-selling-point-fidelity | 卖点保真与一理由对齐 | 2026-09-07 完成归档；确定性修补；无 live；≠R3 |
 | compete-adoption-hard-gate | IQ-CF-08 采用硬闸 | 2026-09-07 完成归档；服务端强制 text/route_qualified；≠R3 |
 | merchant-r1-close-ruling | 总纲 R1 关闭裁定 | 2026-09-07 完成归档；**R1 通过**（夹具双商；CreateMerchant 仍 409） |
+| merchant-mp-c-quota-b0 | 商家平台 MP-C B0 额度账本 | 2026-09-07 完成归档；骨架+包测；入口未接线；≠R5 |
 | eval-skills | Agent 质量 | 阻塞；保留候选与冻结 A/B |
 | eval-labels / eval-state-live | Agent 质量证据 | 阻塞 |
 | eval-production-mine | Agent 质量 | 阻塞（无生产商户） |

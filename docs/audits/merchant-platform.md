@@ -37,7 +37,7 @@
 |---|---|---|
 | MP-A 身份 | 多角色、邀请/撤销/恢复、最后 Owner 与并发变更、会话失效可验证 | **通过**（B0，见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)；邀请/角色/撤销/最后 Owner 自动化） |
 | MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **通过**（B10，2026-09-07，见 [merchant-isolation-gate](tasks/archive/merchant-isolation-gate.md)）；**未开放**第二互不信任商家产品上线；≠ MP-C/MP-D |
-| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | 未实现 |
+| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0 骨架已交付**（[merchant-mp-c-quota-b0](tasks/archive/merchant-mp-c-quota-b0.md)，2026-09-07）：`merchant_quota_*` 账本 + `go/internal/quota` Reserve/Settle/Release/MarkUnknown/Adjust；并发预留/幂等/取消/unknown 自动化 PASS。**缺口**：生图/Agent 入口未接线；无 HTTP 余额面；≠ 全入口计费 ≠ R5 ≠ 真实支付 |
 | MP-D 运营 | 运营密钥不进入商家上下文；停用、支持访问、数据导出有明确权限与审计 | 未实现（A8 合同草案仅） |
 
 **总纲 R1：** **通过**（2026-09-07，见 [merchant-r1-close-ruling](tasks/archive/merchant-r1-close-ruling.md)）。证据口径：测试夹具双商 + 多角色 + 成员撤销 + HTTP/资源/队列/事件/Agent/后台交叉拒绝；**≠** 产品上线第二互不信任商；**≠** MP-C/MP-D。
@@ -53,7 +53,7 @@
 | 类别 | 命令要点 | 计数 |
 |---|---|---|
 | HTTP 注册 | `go/cmd/productflow-api/register.go` 挂载 `auth/settings/product/library/graph/recipe/imagesession/delivery/localedit/agent`；解析各包 `http*.go` 的 `Group`+动词（含 `""` 路径） | **业务路由 214**：auth 3、product 28、graph 20、library 21（含 `GET ""`）、recipe 8、imagesession 16、delivery 6、localedit 10、settings 14（含 `GET/PATCH ""`）、agent 浏览器 42 + internal 46；另实例级 `GET /healthz`、`GET /healthz/ready`、条件 `GET /metrics` |
-| Schema 模型 | `rg 'TableName\(\)' go/internal/platform/db/schema/models.go` | **57 表** |
+| Schema 模型 | `rg 'TableName\(\)' go/internal/platform/db/schema/*.go` | **68 表**（冻结枚举曾只计 `models.go`=57；现含 identity 5 + MP-C B0 `merchant_quota_*` 3） |
 | Agent tool | `rg 'name: "' agent-service/src/tool-manifest.ts` | **25 工具名**（含 skill/ask/context_injection） |
 | 异步 Actor | `go/internal/platform/queue/actors.go` | 信封 `run_async_dispatch`；Actor：`run_workflow_graph_run`、`run_image_session_generation_task`、`run_delivery_rendition_job`、`run_local_image_edit_task`、`run_agent_turn_sync` |
 | 下载 | product/library/imagesession 的 `*/download`、商品 ZIP、delivery ZIP、internal `*/content`；变体经 `media.ServeVariant`（`?variant=`） | 见矩阵「下载/媒体」 |
@@ -85,7 +85,7 @@
 
 | 表 | 当前 | 目标归属 | 说明 |
 |---|---|---|---|
-| *(新)* users / merchants / memberships / invites / sessions | 不存在 | 身份根 | 批次 B0；不复用 admin cookie |
+| *(新)* merchant_quota_accounts / holds / events | 不存在 → **B0 已建** | 商家商业额度账本 | MP-C B0；与 `agent_model_invocations.usage_source` 平台调用事实分离 |
 | products | 无商家 | 商家根 | 所有商品链由此证明 |
 | media_library_folders / media_library_tags / media_library_assets | 实例全局 | 商家根（商家共享图库） | 总纲「商家共享图库」；禁止跨商家 list |
 | media_library_upload_keys / media_library_collection_keys | 无商家 | 随商家（或经 product/session 证明后冗余商家） | 幂等键须含商家，防跨商家碰撞 |
@@ -321,8 +321,8 @@
 
 ## 验收缺口（R1 通过后的残余，不阻塞 R1）
 
-- MP-C 未开始；MP-D 仅 A8 合同草案（≠完整运营产品化）。
+- MP-C **B0 骨架已交付**（额度表 + service + 包测试）；生图/Agent 入口接线、Op/商家余额 HTTP、全入口计费与 R5 仍开放。MP-D 仅 A8 合同草案（≠完整运营产品化）。
 - **运营尚未邀请第二互不信任商家**；产品 `CreateMerchant` 仍 409；邀请属运营另决，不由 R1/B10 自动开启。
 - 额度公平调度、混合负载经营验收仍属后续（≠本 R1 条文）。
 
-本文件矩阵与批次可执行；**R1 / MP-A / MP-B 已过；≠ 第二外部商产品上线；≠ MP-C/MP-D。**
+本文件矩阵与批次可执行；**R1 / MP-A / MP-B 已过；MP-C B0 骨架已交付；≠ 第二外部商产品上线；≠ MP-C 全入口/R5；≠ MP-D。**
