@@ -52,7 +52,7 @@ func marshalCompactSorted(v any) ([]byte, error) {
 // markNodeUnknown 把无法证明的 provider 结果写成 unknown，不是 failed。
 // 须已在事务里；锁序 run → node → effect。run 已终态、节点不在 running、attempt 不匹配都直接成功返回（幂等围栏）。
 // 副作用：workflow_graph_provider_effects 标 unknown；node_run 终态 unknown；事件 kind 仍是 node.failed，
-// 但 payload.status 是 unknown。不要在这里 promote queued——由 completeGraphRunIfNodesTerminal 做。
+// 但 payload.status 是 unknown；同事务标记原 attempt 的额度待核对。由 completeGraphRunIfNodesTerminal 推进 run。
 func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, attemptID *string, detail string) error {
 	if len(detail) > 1000 {
 		detail = detail[:1000]
@@ -101,6 +101,13 @@ func markNodeUnknown(ctx context.Context, tx *gorm.DB, runID, nodeRunID string, 
 	}
 	if res.RowsAffected != 1 {
 		return nil
+	}
+	merchantID, err := merchantIDForGraphRun(ctx, tx, runID)
+	if err != nil {
+		return err
+	}
+	if err := (Executor{DB: tx}).markImageQuotaUnknown(ctx, merchantID, nodeRunID, resolved); err != nil {
+		return err
 	}
 	return appendGraphRunEventLocked(ctx, tx, runID, "node.failed", &nodeRunID, map[string]any{
 		"status": NodeRunUnknown, "node_id": node.NodeID, "reason": detail,

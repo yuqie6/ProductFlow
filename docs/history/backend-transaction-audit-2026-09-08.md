@@ -26,7 +26,8 @@
 | 连续生图创建/重试分开预留额度，失败依靠事后释放；取消提交后吞掉额度错误 | `imagesession.Service.Generate/Retry/Cancel` 负责组合事务；Retry/Cancel 锁定任务后判断状态；删除 Service 的补偿释放路径 | 队列约束失败回滚任务、hold 和余额；取消额度失败保留 queued；解除故障可重放；两个并发 Retry 仅一个成功且预留保持 reserved | `1f9af348` |
 | Graph HTTP 取消在事务外忽略额度失败，Agent 的 CancelRunTx 完全漏掉额度处理 | `cancelGraphRun` 持 run/node 锁后处理准确 attempt 的额度；两个 Service 入口共享命令 | 两种入口、Provider 前后四条真实数据库约束回归；失败时运行/节点/额度/取消事件回滚，AfterRunStatus 不发生，解除后重复取消幂等 | `adfe06ce` |
 | Graph 恢复先提交 queued/unknown，再处理额度且吞掉写错误 | `recoverGraphRunState` 在恢复事务中使用原额度 owner，删除事务外动作列表并复用商家查询 | claimed/provider_call 两分支原代码均复现吞错；额度失败保留运行和当前 attempt、余额与事件，解除后重排队或标未知，重放仅一次额度事件 | `c475faab` |
-| Graph 图像调用先 Reserve 再检查 attempt，取消后的旧 worker 可创建 hold 并依赖事后补偿 | `callImageProvider` 在一个事务中组合既有 prepare 与 Reserve，Provider 调用在提交之后 | 原代码复现取消后新增 hold；修复后无 hold，额度故障回滚阶段和 effect intent；外部调用期间另一连接可锁运行行 | 随本次提交 |
+| Graph 图像调用先 Reserve 再检查 attempt，取消后的旧 worker 可创建 hold 并依赖事后补偿 | `callImageProvider` 在一个事务中组合既有 prepare 与 Reserve，Provider 调用在提交之后 | 原代码复现取消后新增 hold；修复后无 hold，额度故障回滚阶段和 effect intent；外部调用期间另一连接可锁运行行 | `0d33ca14` |
+| Graph Provider 错误与节点/运行失败可提交 unknown 而未在同事务处理额度 | `markNodeUnknown` 持锁确认当前 attempt 后同步额度，Provider 与恢复删除重复后处理 | 三条入口原代码复现额度故障未阻止 unknown；修复后保留运行/节点/attempt，解除故障后重放仅一次 mark_unknown 事件 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -89,3 +90,7 @@ Graph 图像调用前准备切片由本任务主代理负责，范围为 `execut
 因账户任务的未完成 auth/settings 文件短暂不能编译，使用已提交基线 `a12e10ee` 的临时隔离 checkout 验证：原实现复现取消后新增 hold，带入本切片后两条真实数据库回归通过。调用期间用另一连接 `FOR UPDATE NOWAIT` 核实运行锁已释放。隔离证据不等价于包含他人未提交修改的工作区集成通过；不会改动对方文件修复该编译状态。
 
 调用前准备切片验证：隔离基线 `a12e10ee` 加本切片的 Graph 整包通过（83.643 秒）。账户任务修复临时编译状态后，当前共享工作区的 `TestGraphProviderPreparation*`、额度不足、成功结算、取消/执行/恢复并发回归通过（4.875 秒）。共享工作区整包两次构建失败分别来自对方未完成的 auth/settings，不记为通过；本切片不声称其账户功能已验收。`just docs-check` 与主代理完整 diff 自审通过，临时 checkout 仅包含本切片文件并在验证后清理。
+
+Graph 未知转换切片由本任务主代理负责，范围为 `effects.go`、删除 `execute_node.go/recovery.go` 重复后处理以及 [未知额度回归](../../go/internal/graph/unknown_quota_atomicity_test.go)。所有 `markNodeUnknown` 调用者包括 `failClaimedNode` 和 `failGraphRun` 消费同一持久化不变量；准确 attempt 在持锁节点内解析，失效 attempt 仍不产生副作用。针对性回归覆盖三条未知入口、过期恢复、旧 attempt 额度隔离和 Provider 未知，真实 PostgreSQL 全部通过。
+
+未知转换切片最终当前工作区 Graph 整包通过；新增数据库用例实际执行。`just docs-check` 与主代理完整 diff 自审通过；没有修改当前账户任务的 auth/settings/schema，也未使用自进化采证任务的冻结资源。

@@ -441,9 +441,6 @@ func (e Executor) callImageProvider(
 		if markErr := e.markUnknownCommitted(ctx, runID, nodeRun.ID, &attemptID); markErr != nil {
 			return ImageResult{}, false, markErr
 		}
-		if qErr := e.markImageQuotaUnknown(ctx, merchantID, nodeRun.ID, attemptID); qErr != nil {
-			return ImageResult{}, false, qErr
-		}
 		return ImageResult{}, false, providerUnknownError{}
 	}
 	promote, err := e.finishProviderCall(ctx, runID, nodeRun.ID, attemptID, map[string]any{

@@ -277,9 +277,6 @@ func recoverGraphRunState(ctx context.Context, gdb *gorm.DB, runID string, cutof
 				return err
 			}
 			markedUnknown = true
-			if err := quotaOwner.markImageQuotaUnknown(ctx, merchantID, node.ID, attemptID); err != nil {
-				return err
-			}
 		}
 		if _, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID); err != nil {
 			return err
