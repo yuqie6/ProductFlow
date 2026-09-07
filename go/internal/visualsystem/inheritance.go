@@ -26,10 +26,10 @@ var ForbiddenStyleChainKeys = map[string]struct{}{
 	"images":                   {},
 }
 
-// ResolveInheritance 按 IQ-CF-07 合并：本商品覆盖 > 选定方案版本 > 品牌占位 > 产品默认。
-// 事实与身份参考不参与本函数。Brand 未就绪时品牌层恒为占位且不合并任何品牌载荷。
+// ResolveInheritance 按 IQ-CF-07 合并：本商品覆盖 > 选定方案版本 > 品牌层 > 产品默认。
+// 事实与身份参考不参与本函数。品牌色合并尚未接线：有 BrandID 时诚实返回 brand_exists_no_style_merge，仍不合并 BrandPayload。
 func ResolveInheritance(input ResolveInput) InheritanceView {
-	brand := DefaultBrandPlaceholder()
+	brand := brandPlaceholderFor(input)
 	defaults := filterStyleChain(input.ProductDefault)
 	if defaults == nil {
 		defaults = map[string]any{}
@@ -43,7 +43,7 @@ func ResolveInheritance(input ResolveInput) InheritanceView {
 			effective[key] = cloneValue(value)
 		}
 	}
-	// 品牌层：Brand 表未就绪时永不合并，即使调用方误传 BrandPayload。
+	// 品牌层：本切片不合并 BrandPayload（残余：全量品牌色合并）。
 	if override != nil {
 		for key, value := range override {
 			effective[key] = cloneValue(value)
@@ -106,8 +106,17 @@ type ResolveInput struct {
 	SelectedPayload    map[string]any
 	ProductDefault     map[string]any
 	NewerVersion       *VersionView
-	// BrandPayload 预留；Brand 表未就绪时 ResolveInheritance 忽略，不伪造品牌层。
+	// BrandID 非空表示品牌实体已选定；本切片仍不合并风格色。
+	BrandID string
+	// BrandPayload 预留；全量品牌色合并属下一切片，当前忽略。
 	BrandPayload map[string]any
+}
+
+func brandPlaceholderFor(input ResolveInput) BrandPlaceholder {
+	if strings.TrimSpace(input.BrandID) != "" {
+		return BrandExistsPlaceholder()
+	}
+	return DefaultBrandPlaceholder()
 }
 
 // filterStyleChain 只保留 style/colors，并剥离子身份/事实键。nil 入参保持 nil。

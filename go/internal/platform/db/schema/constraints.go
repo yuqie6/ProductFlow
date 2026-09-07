@@ -2184,5 +2184,26 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_merchant_quota_holds_merchant_status ON public.merchant_quota_holds USING btree (merchant_id, status, created_at DESC);`,
 	`CREATE INDEX IF NOT EXISTS ix_merchant_quota_events_merchant_created ON public.merchant_quota_events USING btree (merchant_id, created_at DESC, id DESC);`,
+
+	// Brand entity B0: merchant-scoped brand root; optional visual_system link for inheritance wiring.
+	`DO $c$ BEGIN
+ALTER TABLE brands ADD CONSTRAINT fk_brands_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE brands ADD CONSTRAINT fk_brands_visual_system_id FOREIGN KEY (visual_system_id) REFERENCES visual_systems(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE brands ADD CONSTRAINT ck_brands_name_nonempty CHECK (length(btrim(name)) > 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_brands_merchant_updated ON public.brands USING btree (merchant_id, updated_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_brands_visual_system_id ON public.brands USING btree (visual_system_id);`,
+	`DROP TRIGGER IF EXISTS trg_brands_fill_merchant_id ON brands;`,
+	`CREATE TRIGGER trg_brands_fill_merchant_id BEFORE INSERT ON brands FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 }
 

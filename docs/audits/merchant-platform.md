@@ -52,8 +52,8 @@
 
 | 类别 | 命令要点 | 计数 |
 |---|---|---|
-| HTTP 注册 | `go/cmd/productflow-api/register.go` 挂载 `auth/settings/product/library/graph/recipe/imagesession/delivery/localedit/agent`；解析各包 `http*.go` 的 `Group`+动词（含 `""` 路径） | **业务路由 214**：auth 3、product 28、graph 20、library 21（含 `GET ""`）、recipe 8、imagesession 16、delivery 6、localedit 10、settings 14（含 `GET/PATCH ""`）、agent 浏览器 42 + internal 46；另实例级 `GET /healthz`、`GET /healthz/ready`、条件 `GET /metrics` |
-| Schema 模型 | `rg 'TableName\(\)' go/internal/platform/db/schema/*.go` | **68 表**（冻结枚举曾只计 `models.go`=57；现含 identity 5 + MP-C B0 `merchant_quota_*` 3） |
+| HTTP 注册 | `go/cmd/productflow-api/register.go` 挂载含 `brand`（及既有 auth/settings/product/…/visualsystem/localedit/agent） | **业务路由 218**：相对冻结枚举 214 + Brand B0 的 4 条（`GET/POST /api/v3/brands`、`GET/PATCH /api/v3/brands/:id`）；其余分区仍以 register.go 为准 |
+| Schema 模型 | `rg 'TableName\(\)' go/internal/platform/db/schema/*.go` | **69 表**（冻结枚举曾只计 `models.go`=57；现含 identity 5 + MP-C B0 `merchant_quota_*` 3 + Brand B0 `brands` 1） |
 | Agent tool | `rg 'name: "' agent-service/src/tool-manifest.ts` | **25 工具名**（含 skill/ask/context_injection） |
 | 异步 Actor | `go/internal/platform/queue/actors.go` | 信封 `run_async_dispatch`；Actor：`run_workflow_graph_run`、`run_image_session_generation_task`、`run_delivery_rendition_job`、`run_local_image_edit_task`、`run_agent_turn_sync` |
 | 下载 | product/library/imagesession 的 `*/download`、商品 ZIP、delivery ZIP、internal `*/content`；变体经 `media.ServeVariant`（`?variant=`） | 见矩阵「下载/媒体」 |
@@ -85,13 +85,14 @@
 
 | 表 | 当前 | 目标归属 | 说明 |
 |---|---|---|---|
+| *(新)* brands | 不存在 → **B0 已建**（[merchant-brand-entity-b0](tasks/archive/merchant-brand-entity-b0.md)） | 商家根 Brand | 总纲 §6.3；可选 `visual_system_id` 挂接本商家方案；≠跨商分享；≠完整品牌色合并 |
 | *(新)* merchant_quota_accounts / holds / events | 不存在 → **B0 已建** | 商家商业额度账本 | MP-C B0；与 `agent_model_invocations.usage_source` 平台调用事实分离 |
 | products | 无商家 | 商家根 | 所有商品链由此证明 |
 | media_library_folders / media_library_tags / media_library_assets | 实例全局 | 商家根（商家共享图库） | 总纲「商家共享图库」；禁止跨商家 list |
 | media_library_upload_keys / media_library_collection_keys | 无商家 | 随商家（或经 product/session 证明后冗余商家） | 幂等键须含商家，防跨商家碰撞 |
 | image_sessions | 无商家 | 商家根 | 连续生图独立根；attach 到 product 时双方同商家 |
 | workflow_recipes / workflow_recipe_versions | 全局列表 | 商家根 | 配方无商品身份但可复用；首版不跨商家共享 |
-| visual_systems / visual_system_versions | 无商家 | 商家根（对接 Brand） | 总纲 Brand；versions/references 随父 |
+| visual_systems / visual_system_versions | 无商家 | 商家根（对接 Brand） | 总纲 Brand；versions/references 随父；Brand.`visual_system_id` 为接线点 |
 | agent_sessions / agent_tasks / agent_conversations | 有 product/global scope，无商家 | 商家根；global 会话仍属单一商家 | 「global」= 商家内全局 Agent，非跨商家 |
 | library_organization_drafts | 随 conversation | 经 conversation→merchant | 可冗余 merchant_id 一致性约束 |
 
@@ -138,7 +139,7 @@
 
 矩阵列：入口 | 角色 | 根所有权 | 子引用验证 | 队列/effect | 读写 owner（代码锚点） | 前端 query/订阅 | 测试计划。共享规则见上；同规则入口可归并，但清单必须完整。
 
-**条目统计：归并矩阵 69 条**（A8+B9+C6+D6+E6+F6+G6+H7+I10+J5）。每条绑定源码锚点与测试计划；**展开覆盖**枚举面 214 业务路由 + 25 Pi 工具 + 5 Actor + 6 SSE/事件族 + 3 实例探活/指标入口 + 57 表的所有权分类。禁止只测商品列表过滤。
+**条目统计：归并矩阵 69 条**（A8+B9+C6+D6+E6+F6+G6+H7+I10+J5）。每条绑定源码锚点与测试计划；**展开覆盖**枚举面 218 业务路由 + 25 Pi 工具 + 5 Actor + 6 SSE/事件族 + 3 实例探活/指标入口 + 69 表的所有权分类。禁止只测商品列表过滤。
 
 ### A. 身份与实例面（8）
 

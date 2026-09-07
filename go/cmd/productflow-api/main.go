@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/agent"
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/brand"
 	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/imagesession"
@@ -145,6 +146,10 @@ func main() {
 		},
 		VisualSystem: visualsystem.HTTP{
 			Service:  visualsystem.Service{DB: gdb},
+			Settings: settingsStore,
+		},
+		Brand: brand.HTTP{
+			Service:  brand.Service{DB: gdb},
 			Settings: settingsStore,
 		},
 		LocalEdit: localedit.HTTP{

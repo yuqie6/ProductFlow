@@ -23,7 +23,7 @@ func TestResolveInheritanceColorPriorityFourLayers(t *testing.T) {
 			"style":  []any{"方案冷色棚拍"},
 			"colors": []any{map[string]any{"role": "accent", "value": "#111111"}},
 		},
-		// 误传品牌色：Brand 未就绪时不得进入 EffectivePayload。
+		// 误传品牌色：未选定品牌时不得进入 EffectivePayload。
 		BrandPayload: map[string]any{
 			"colors": []any{map[string]any{"role": "accent", "value": "#00AA00"}},
 		},
@@ -36,7 +36,7 @@ func TestResolveInheritanceColorPriorityFourLayers(t *testing.T) {
 	if got.BrandPlaceholder.Status != visualsystem.BrandStatusUnavailable {
 		t.Fatalf("brand placeholder status=%s", got.BrandPlaceholder.Status)
 	}
-	if got.BrandPlaceholder.Reason != visualsystem.BrandReasonNotReady {
+	if got.BrandPlaceholder.Reason != visualsystem.BrandReasonNotSelected {
 		t.Fatalf("brand reason=%s", got.BrandPlaceholder.Reason)
 	}
 	if got.Layers[2].Layer != visualsystem.LayerBrandVersion || got.Layers[2].Active {
@@ -161,7 +161,7 @@ func TestResolveInheritancePriority(t *testing.T) {
 	if got.BrandPlaceholder.Status != visualsystem.BrandStatusUnavailable {
 		t.Fatalf("brand placeholder status=%s", got.BrandPlaceholder.Status)
 	}
-	if got.BrandPlaceholder.Reason != visualsystem.BrandReasonNotReady {
+	if got.BrandPlaceholder.Reason != visualsystem.BrandReasonNotSelected {
 		t.Fatalf("brand reason=%s", got.BrandPlaceholder.Reason)
 	}
 	style, _ := got.EffectivePayload["style"].([]any)
@@ -202,6 +202,26 @@ func TestResolveInheritanceWithoutSelectionUsesDefault(t *testing.T) {
 	style, _ := got.EffectivePayload["style"].([]any)
 	if len(style) != 1 || style[0] != "默认" {
 		t.Fatalf("default payload %+v", got.EffectivePayload)
+	}
+}
+
+func TestResolveInheritanceBrandExistsNoMerge(t *testing.T) {
+	got := visualsystem.ResolveInheritance(visualsystem.ResolveInput{
+		ProductID: "prod-branded",
+		BrandID:   "brand-1",
+		BrandPayload: map[string]any{
+			"colors": []any{map[string]any{"value": "#00AA00"}},
+		},
+		ProductDefault: map[string]any{"style": []any{"默认"}},
+	})
+	if got.BrandPlaceholder.Reason != visualsystem.BrandReasonExistsNoMerge {
+		t.Fatalf("reason=%s", got.BrandPlaceholder.Reason)
+	}
+	if got.Layers[2].Active {
+		t.Fatal("brand layer must stay inactive until style merge ships")
+	}
+	if _, ok := got.EffectivePayload["colors"]; ok {
+		t.Fatalf("brand colors must not merge yet: %+v", got.EffectivePayload)
 	}
 }
 

@@ -293,6 +293,39 @@ func nameSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool, q string) ma
 	return out
 }
 
+func TestBrandsTablePresentAfterApply(t *testing.T) {
+	pool := testdb.Pool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	gdb, err := db.OpenGorm(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'brands'
+	`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("brands table missing: n=%d err=%v", n, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'brands'
+		  AND column_name IN ('id', 'merchant_id', 'name', 'visual_system_id', 'created_at', 'updated_at')
+	`).Scan(&n); err != nil || n != 6 {
+		t.Fatalf("brands columns: n=%d err=%v", n, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM pg_constraint
+		WHERE conname = 'fk_brands_merchant_id'
+	`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("fk_brands_merchant_id: n=%d err=%v", n, err)
+	}
+}
+
 func assertSame[T comparable](t *testing.T, label string, want, got map[string]T) {
 	t.Helper()
 	var missing, extra []string

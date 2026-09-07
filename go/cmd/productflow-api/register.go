@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/agent"
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/brand"
 	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/imagesession"
@@ -27,6 +28,7 @@ type apiHandlers struct {
 	ImageSession imagesession.HTTP
 	Delivery     delivery.HTTP
 	VisualSystem visualsystem.HTTP
+	Brand        brand.HTTP
 	LocalEdit    localedit.HTTP
 	Agent        agent.HTTP
 	Quota        quota.HTTP
@@ -44,6 +46,7 @@ func registerAPI(engine *gin.Engine, h apiHandlers) {
 	h.ImageSession.Register(engine)
 	h.Delivery.Register(engine)
 	h.VisualSystem.Register(engine)
+	h.Brand.Register(engine)
 	h.LocalEdit.Register(engine)
 	h.Agent.Register(engine)
 }

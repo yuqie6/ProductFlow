@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-brand-entity-b0.md](merchant-brand-entity-b0.md) | 完成 | brands CRUD + 继承占位改写；≠R2/跨商 |
 | [merchant-mp-c-wire-source-note.md](merchant-mp-c-wire-source-note.md) | 完成 | source-note generate Reserve；≠R5 |
 | [merchant-mp-c-wire-localedit.md](merchant-mp-c-wire-localedit.md) | 完成 | localedit Edit 前 Reserve；≠R5 |
 | [image-quality-subject-compose-b1.md](image-quality-subject-compose-b1.md) | 完成 | cutout+背景/阴影占位/安全区合成；≠R3 |

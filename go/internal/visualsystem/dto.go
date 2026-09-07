@@ -5,10 +5,13 @@ import (
 	"time"
 )
 
-// BrandVersionStatus 是 Brand 表未就绪时的显式占位状态，不假装已有多品牌实体。
+// Brand 层占位状态：表已建，但商品未选定品牌，或品牌存在尚未并入风格色。
 const (
-	BrandStatusUnavailable = "unavailable"
-	BrandReasonNotReady    = "brand_table_not_ready"
+	BrandStatusUnavailable     = "unavailable"
+	BrandReasonNotSelected     = "brand_not_selected"
+	BrandReasonExistsNoMerge   = "brand_exists_no_style_merge"
+	// BrandReasonNotReady 保留别名，指向 brand_not_selected（表已存在，不再表示「表缺失」）。
+	BrandReasonNotReady = BrandReasonNotSelected
 )
 
 // Layer 是 IQ-CF-07 继承优先级层。
@@ -19,19 +22,28 @@ const (
 	LayerProductDefault  = "product_default"
 )
 
-// BrandPlaceholder 明确声明品牌版本不可用，避免静默伪造 Brand。
+// BrandPlaceholder 明确声明品牌层未贡献风格；不静默合并未接线的品牌色。
 type BrandPlaceholder struct {
 	Status string `json:"status"` // unavailable
-	Reason string `json:"reason"` // brand_table_not_ready
+	Reason string `json:"reason"` // brand_not_selected | brand_exists_no_style_merge
 	Detail string `json:"detail"` // 用户可读说明
 }
 
-// DefaultBrandPlaceholder 返回当前合同下的品牌占位。
+// DefaultBrandPlaceholder 表示继承输入未携带品牌选定（诚实「未选定」）。
 func DefaultBrandPlaceholder() BrandPlaceholder {
 	return BrandPlaceholder{
 		Status: BrandStatusUnavailable,
-		Reason: BrandReasonNotReady,
-		Detail: "品牌版本尚未开通；继承链跳过本层，不伪造 Brand 实体",
+		Reason: BrandReasonNotSelected,
+		Detail: "未选定品牌；继承链跳过品牌层",
+	}
+}
+
+// BrandExistsPlaceholder 表示品牌实体存在，但本切片尚未合并品牌风格色（接线合同：下一切片）。
+func BrandExistsPlaceholder() BrandPlaceholder {
+	return BrandPlaceholder{
+		Status: BrandStatusUnavailable,
+		Reason: BrandReasonExistsNoMerge,
+		Detail: "品牌已存在，但品牌色/风格合并尚未接线；继承链跳过本层",
 	}
 }
 
@@ -78,7 +90,8 @@ type LayerContribution struct {
 	Note        string         `json:"note"`
 }
 
-// InheritanceView 是商品视觉继承解析结果；优先级对本商品覆盖 > 选定方案版本 > 品牌占位 > 产品默认。
+// InheritanceView 是商品视觉继承解析结果；优先级对本商品覆盖 > 选定方案版本 > 品牌层 > 产品默认。
+// 品牌层：未选定 → brand_not_selected；有 BrandID 但未接线合并 → brand_exists_no_style_merge。
 type InheritanceView struct {
 	ProductID             string              `json:"product_id"`
 	SelectedVersionID     *string             `json:"selected_visual_system_version_id"`

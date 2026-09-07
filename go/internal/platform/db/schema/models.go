@@ -1198,6 +1198,7 @@ func AllModels() []any {
 		&VisualSystemVersionReferences{},
 		&VisualSystemVersions{},
 		&VisualSystems{},
+		&Brands{},
 		&WorkflowGraphArtifacts{},
 		&WorkflowGraphEdges{},
 		&WorkflowGraphGroups{},

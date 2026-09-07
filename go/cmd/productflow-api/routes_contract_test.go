@@ -16,6 +16,7 @@ import (
 
 	"github.com/yuqie6/productflow/internal/agent"
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/brand"
 	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/imagesession"
@@ -76,6 +77,10 @@ var goOpsExtras = map[string]bool{
 	"GET /api/v3/products/{}/visual-selection":                                          true,
 	"PUT /api/v3/products/{}/visual-selection":                                          true,
 	"POST /api/v3/products/{}/visual-inheritance":                                       true,
+	"GET /api/v3/brands":                                                                true,
+	"POST /api/v3/brands":                                                               true,
+	"GET /api/v3/brands/{}":                                                             true,
+	"PATCH /api/v3/brands/{}":                                                           true,
 	"PATCH /api/merchants/{}/status":                                                    true,
 	"GET /api/ops/support-contract":                                                     true,
 	"POST /api/ops/support-sessions":                                                    true,
@@ -135,6 +140,7 @@ func TestSealedHTTPRoutesAreRegistered(t *testing.T) {
 		ImageSession: imagesession.HTTP{Settings: fake},
 		Delivery:     delivery.HTTP{Settings: fake},
 		VisualSystem: visualsystem.HTTP{Settings: fake},
+		Brand:        brand.HTTP{Settings: fake},
 		LocalEdit:    localedit.HTTP{Settings: fake},
 		Agent:        agent.HTTP{Settings: fake, InternalToken: "contract-internal-token"},
 	})
@@ -235,6 +241,7 @@ func TestSealedAdminAndInternalRoutesReturnContractUnauthorized(t *testing.T) {
 		ImageSession: imagesession.HTTP{Settings: fake},
 		Delivery:     delivery.HTTP{Settings: fake},
 		VisualSystem: visualsystem.HTTP{Settings: fake},
+		Brand:        brand.HTTP{Settings: fake},
 		LocalEdit:    localedit.HTTP{Settings: fake},
 		Agent:        agent.HTTP{Settings: fake, InternalToken: "contract-internal-token"},
 	})
