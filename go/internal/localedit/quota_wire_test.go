@@ -373,3 +373,58 @@ func TestTerminalQuotaFailureRemainsRecoverable(t *testing.T) {
 		})
 	}
 }
+
+func TestProviderPreparationCannotReserveAfterCancellation(t *testing.T) {
+	ctx := context.Background()
+	es := newEditServer(t, MockProvider{Cap: SupportedCapability("mock-local")})
+	created := es.createProduct(t)
+	taskID := createQueuedLocalEdit(t, es, created, "cancel-before-reserve")
+	executor := Executor{DB: es.db, Media: es.media}
+	claimed, attemptID, err := executor.claim(ctx, taskID)
+	if err != nil || !claimed {
+		t.Fatalf("claimed=%v err=%v", claimed, err)
+	}
+	merchantID := auth.MustDevMerchantID(t, es.db)
+	if _, err := es.svc.Cancel(auth.WithMerchantID(ctx, merchantID), created.Product.ID, taskID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.prepareProviderCall(ctx, merchantID, taskID, attemptID, "mock-local", nil); !errors.Is(err, errAttemptFenced) {
+		t.Fatalf("want fence, got %v", err)
+	}
+	var count int64
+	if err := es.db.Model(&schema.MerchantQuotaHolds{}).Where("idempotency_key = ?", editQuotaKey(taskID, attemptID)).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("cancelled attempt created quota hold")
+	}
+}
+
+func TestProviderPreparationQuotaFailureRollsBackBoundary(t *testing.T) {
+	ctx := context.Background()
+	provider := &capturingEditProvider{MockProvider: MockProvider{Cap: SupportedCapability("mock-local")}}
+	es := newEditServer(t, provider)
+	taskID := createQueuedLocalEdit(t, es, es.createProduct(t), "reserve-write-failure")
+	const constraint = "test_prepare_quota_failure"
+	if _, err := es.pool.Exec(ctx, "ALTER TABLE merchant_quota_holds ADD CONSTRAINT "+constraint+" CHECK (idempotency_key NOT LIKE 'local-edit:"+taskID+":%')"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := es.pool.Exec(context.Background(), "ALTER TABLE merchant_quota_holds DROP CONSTRAINT "+constraint); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := (Executor{DB: es.db, Media: es.media, Provider: provider}).Execute(ctx, taskID); err == nil {
+		t.Fatal("quota database failure must propagate")
+	}
+	if provider.lastSize != "" {
+		t.Fatal("provider called without quota reservation")
+	}
+	var status, phase, attemptPhase string
+	if err := es.pool.QueryRow(ctx, "SELECT t.status,t.progress_phase,a.phase FROM local_image_edit_tasks t JOIN local_image_edit_provider_attempts a ON a.task_id=t.id WHERE t.id=$1", taskID).Scan(&status, &phase, &attemptPhase); err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" || phase != "claimed" || attemptPhase != "claimed" {
+		t.Fatalf("partial provider boundary: task=%s phase=%s attempt=%s", status, phase, attemptPhase)
+	}
+}

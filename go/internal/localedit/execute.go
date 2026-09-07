@@ -33,7 +33,7 @@ func (e Executor) provider() Provider {
 	return MockProvider{}
 }
 
-// Execute 是 worker 入口。无法证明的 provider 结果标 unknown，且返回 nil 以便 dispatch 记 CONSUMED。
+// Execute 是 worker 入口。无法证明的 provider 结果提交 unknown 后返回 nil；持久化失败返回 error。
 // 额度：capability 通过后、Edit 前 Reserve；成功 Settle；未发出 Release；已发出不明 MarkUnknown。
 func (e Executor) Execute(ctx context.Context, taskID string) error {
 	claimed, attemptID, err := e.claim(ctx, taskID)
@@ -80,17 +80,6 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		}
 		return e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
 	}
-	if err := e.reserveEditQuota(ctx, merchantID, taskID, attemptID); err != nil {
-		return e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", quotaConflictDetail(err), true, "", "")
-	}
-	if err := e.markPhase(ctx, taskID, attemptID, "provider_pending", cap.ProviderName, snap.auditJSON()); err != nil {
-		_ = e.releaseEditQuota(ctx, merchantID, taskID, attemptID)
-		return nil
-	}
-	if err := e.markPhase(ctx, taskID, attemptID, "provider_call", cap.ProviderName, nil); err != nil {
-		_ = e.releaseEditQuota(ctx, merchantID, taskID, attemptID)
-		return nil
-	}
 	editSize, err := sourceEditSize(snap.SourceBytes, snap.SourceMIME)
 	if err != nil {
 		detail := "局部编辑源图未通过媒体核验"
@@ -99,6 +88,22 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 			detail = ae.Detail
 		}
 		return e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
+	}
+	if err := e.prepareProviderCall(ctx, merchantID, taskID, attemptID, cap.ProviderName, snap.auditJSON()); err != nil {
+		if errors.Is(err, errAttemptFenced) {
+			return nil
+		}
+		var ae apperr.Error
+		if errors.As(err, &ae) && ae.Status == 409 {
+			return e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", quotaConflictDetail(err), true, "", "")
+		}
+		return err
+	}
+	if err := e.markPhase(ctx, taskID, attemptID, "provider_call", cap.ProviderName, nil); err != nil {
+		if errors.Is(err, errAttemptFenced) {
+			return nil
+		}
+		return err
 	}
 	result, err := e.provider().Edit(ctx, EditRequest{
 		SourceBytes: snap.SourceBytes, SourceMIME: snap.SourceMIME, MaskPNG: snap.MaskBytes,
@@ -305,14 +310,30 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 	return out, err
 }
 
-// markPhase 推进 progress_phase 并写 attempt 账本。fence 失败当 409，表示别人已接管或任务已终态。
+var errAttemptFenced = errors.New("局部编辑 attempt 已失效")
+
+// prepareProviderCall holds the attempt fence while reserving quota and recording
+// the provider boundary. Cancellation sees either neither write or both writes.
+func (e Executor) prepareProviderCall(ctx context.Context, merchantID, taskID, attemptID, providerName string, requestJSON map[string]any) error {
+	return tx.WithGorm(ctx, e.DB, func(db *gorm.DB) error {
+		command := Executor{DB: db}
+		if err := command.markPhase(ctx, taskID, attemptID, "provider_pending", providerName, requestJSON); err != nil {
+			return err
+		}
+		return command.reserveEditQuota(ctx, merchantID, taskID, attemptID)
+	})
+}
+
+// markPhase 推进 progress_phase 并写 attempt 账本。fence 失效与数据库错误分别返回。
 func (e Executor) markPhase(ctx context.Context, taskID, attemptID, phase, providerName string, requestJSON map[string]any) error {
 	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		task, attemptOK, err := lockFenced(ctx, pgxTx, taskID, attemptID)
-		if err != nil || !attemptOK {
-			return apperr.Conflict("局部编辑 attempt 已失效")
+		_, attemptOK, err := lockFenced(ctx, pgxTx, taskID, attemptID)
+		if err != nil {
+			return err
 		}
-		_ = task
+		if !attemptOK {
+			return errAttemptFenced
+		}
 		now := time.Now().UTC()
 		taskUpdates := map[string]any{"progress_phase": phase, "updated_at": now}
 		if providerName != "" {
@@ -340,13 +361,17 @@ func (e Executor) markPhase(ctx context.Context, taskID, attemptID, phase, provi
 	})
 }
 
-// persistResult 把供应商返回的图落成 MediaObject 并挂到任务。fence 失效返回 409，compensation 回滚刚写的文件。
+// persistResult 将结果媒体、资产、任务、attempt 与额度结算原子提交。
+// fence 失效返回 errAttemptFenced；事务失败由 compensation 回滚刚写的文件。
 func (e Executor) persistResult(ctx context.Context, snap snapshot, attemptID string, result EditResult) error {
 	var compensation storage.Compensation
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		_, ok, err := lockFenced(ctx, pgxTx, snap.ID, attemptID)
-		if err != nil || !ok {
-			return apperr.Conflict("局部编辑 attempt 已失效")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errAttemptFenced
 		}
 		if err := lockProduct(ctx, pgxTx, snap.ProductID); err != nil {
 			return err
