@@ -59,6 +59,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.DELETE("/v2/products/:product_id", h.requireDeletion, h.deleteProduct)
 	api.GET("/v3/products/:product_id/facts", h.getFacts)
 	api.PUT("/v3/products/:product_id/facts", h.updateFacts)
+	api.POST("/v3/products/:product_id/facts/impact-preview", h.previewFactsImpact)
 	api.GET("/v2/product-image-assets/:asset_id/download", h.download)
 	api.DELETE("/v2/product-image-assets/:asset_id", h.requireDeletion, h.deleteAsset)
 	api.POST("/v3/products", h.createV3)
@@ -318,6 +319,7 @@ func (h HTTP) getFacts(c *gin.Context) {
 }
 
 // updateFacts 是 PUT /api/v3/products/:product_id/facts：200 新版本；体非法 400；expected 落后 409。
+// 携带 update_node_ids 时返回扩展字段（impact / preserved_node_ids），不入队全图运行。
 func (h HTTP) updateFacts(c *gin.Context) {
 	raw, err := io.ReadAll(c.Request.Body)
 	if err != nil {
@@ -329,7 +331,36 @@ func (h HTTP) updateFacts(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
+	if in.UpdateNodeIDsProvided {
+		out, err := h.Service.UpdateFactsAndAdopt(c.Request.Context(), c.Param("product_id"), in)
+		if err != nil {
+			httpx.AbortErr(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+		return
+	}
 	out, err := h.Service.UpdateFacts(c.Request.Context(), c.Param("product_id"), in)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// previewFactsImpact 是 POST /api/v3/products/:product_id/facts/impact-preview：只读列出依赖图位。
+func (h HTTP) previewFactsImpact(c *gin.Context) {
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		httpx.AbortDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	in, err := parseFactsImpactPreview(raw)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.PreviewFactsImpact(c.Request.Context(), c.Param("product_id"), in)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -633,6 +664,7 @@ func parseUpdateFacts(raw []byte) (UpdateFactsInput, error) {
 		"price":                        {},
 		"source_note":                  {},
 		"facts":                        {},
+		"update_node_ids":              {},
 	}
 	for key := range fields {
 		if _, ok := allowed[key]; !ok {
@@ -716,6 +748,59 @@ func parseUpdateFacts(raw []byte) (UpdateFactsInput, error) {
 		facts, err := parseFactItems(rawFacts)
 		if err != nil {
 			return UpdateFactsInput{}, err
+		}
+		in.Facts = facts
+	}
+	if rawIDs, ok := fields["update_node_ids"]; ok {
+		in.UpdateNodeIDsProvided = true
+		if string(rawIDs) == "null" {
+			in.UpdateNodeIDs = []string{}
+		} else {
+			var ids []string
+			if err := json.Unmarshal(rawIDs, &ids); err != nil {
+				return UpdateFactsInput{}, apperr.Validation("请求体无效")
+			}
+			if ids == nil {
+				ids = []string{}
+			}
+			for _, id := range ids {
+				if strings.TrimSpace(id) == "" || utf8.RuneCountInString(id) > 36 {
+					return UpdateFactsInput{}, apperr.Validation("请求体无效")
+				}
+			}
+			in.UpdateNodeIDs = ids
+		}
+	}
+	return in, nil
+}
+
+// parseFactsImpactPreview 解码 impact-preview 请求；只需 facts（可省略表示仅用当前版本算空变更）。
+func parseFactsImpactPreview(raw []byte) (FactsImpactPreviewInput, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return FactsImpactPreviewInput{}, apperr.Validation("请求体无效")
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	var fields map[string]json.RawMessage
+	if err := dec.Decode(&fields); err != nil || fields == nil {
+		return FactsImpactPreviewInput{}, apperr.Validation("请求体无效")
+	}
+	if dec.More() {
+		return FactsImpactPreviewInput{}, apperr.Validation("请求体无效")
+	}
+	allowed := map[string]struct{}{"facts": {}}
+	for key := range fields {
+		if _, ok := allowed[key]; !ok {
+			return FactsImpactPreviewInput{}, apperr.Validation("请求体无效")
+		}
+	}
+	in := FactsImpactPreviewInput{Fields: map[string]bool{}}
+	for key := range fields {
+		in.Fields[key] = true
+	}
+	if rawFacts, ok := fields["facts"]; ok && string(rawFacts) != "null" {
+		facts, err := parseFactItems(rawFacts)
+		if err != nil {
+			return FactsImpactPreviewInput{}, err
 		}
 		in.Facts = facts
 	}

@@ -37,6 +37,7 @@ import type {
   GraphProjection,
   GraphRunSubmitInput,
   ProductFactsResponse,
+  FactsImpactPreviewResponse,
   WorkflowDeliverySpec,
   WorkflowNodeDisplayStatus,
 } from "../../../lib/types";
@@ -95,6 +96,12 @@ import {
   type ProductFactRowDraft,
   type GraphTitleDraft,
 } from "./graphNodeEditorDrafts";
+import {
+  defaultSelectedImpactNodeIds,
+  impactNodeLabel,
+  shouldShowFactsImpactPreview,
+  toggleImpactNodeSelection,
+} from "./factImpactPreview";
 import type { ProductFactLayer } from "../../../lib/types";
 import { nodeDraftSaveError, useNodeDraftAutosave, type NodeDraftAutosave } from "./useNodeDraftAutosave";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
@@ -861,6 +868,8 @@ function ProductSourceEditor({
     status: "idle",
     error: null,
   });
+  const [factsImpact, setFactsImpact] = useState<FactsImpactPreviewResponse | null>(null);
+  const [factsUpdateNodeIds, setFactsUpdateNodeIds] = useState<string[]>([]);
   const productsQuery = useQuery({
     queryKey: ["product-source-picker", search],
     queryFn: () => api.listProducts({ q: search, page: 1, page_size: 20 }),
@@ -892,6 +901,8 @@ function ProductSourceEditor({
     setFactsForm(null);
     setFactsBaseVersion(null);
     setFactsSaveState({ status: "idle", error: null });
+    setFactsImpact(null);
+    setFactsUpdateNodeIds([]);
   }, [sourceProductId]);
 
   useEffect(() => {
@@ -926,24 +937,21 @@ function ProductSourceEditor({
     }
   }, [graphRevision, node, onSave, onSaveStateChange, sourceDraft.fact_set_version_id, sourceProductId, t]);
 
-  const saveFacts = async () => {
-    if (!sourceProductId || !factsForm || factsQuery.isPending) return;
-    const validationError = validateProductFactsDraft(factsForm);
-    if (validationError) {
-      setFactsSaveState({ status: "failed", error: productFactsValidationMessage(validationError, t) });
-      return;
-    }
+  const commitFacts = async (updateNodeIds?: string[]) => {
+    if (!sourceProductId || !factsForm) return;
     const normalized = normalizeProductFactsDraft(factsForm);
     setFactsSaveState({ status: "saving", error: null });
     try {
-      const response = await api.updateProductFacts(sourceProductId, {
+      const body = {
         expected_fact_version: factsBaseVersion,
         name: normalized.name,
         category: normalized.category || null,
         price: normalized.price || null,
         source_note: normalized.source_note || null,
         facts: productFactsPayload(normalized),
-      });
+        ...(updateNodeIds ? { update_node_ids: updateNodeIds } : {}),
+      };
+      const response = await api.updateProductFacts(sourceProductId, body);
       queryClient.setQueryData(["product-facts", sourceProductId], response);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["product-facts", sourceProductId] }),
@@ -953,6 +961,8 @@ function ProductSourceEditor({
       ]);
       setFactsForm(productFactsDraft(response.product, response.fact_set));
       setFactsBaseVersion(response.fact_set?.version ?? null);
+      setFactsImpact(null);
+      setFactsUpdateNodeIds([]);
       setFactsSaveState({ status: "saved", error: null });
     } catch (error) {
       setFactsSaveState({
@@ -963,6 +973,32 @@ function ProductSourceEditor({
             ? t("graph.inspector.productFactsConflict")
             : t("graph.inspector.productFactsSaveFailed"),
         ),
+      });
+    }
+  };
+
+  const saveFacts = async () => {
+    if (!sourceProductId || !factsForm || factsQuery.isPending) return;
+    const validationError = validateProductFactsDraft(factsForm);
+    if (validationError) {
+      setFactsSaveState({ status: "failed", error: productFactsValidationMessage(validationError, t) });
+      return;
+    }
+    const normalized = normalizeProductFactsDraft(factsForm);
+    setFactsSaveState({ status: "saving", error: null });
+    try {
+      const preview = await api.previewProductFactsImpact(sourceProductId, productFactsPayload(normalized));
+      if (shouldShowFactsImpactPreview(preview)) {
+        setFactsImpact(preview);
+        setFactsUpdateNodeIds(defaultSelectedImpactNodeIds(preview));
+        setFactsSaveState({ status: "idle", error: null });
+        return;
+      }
+      await commitFacts();
+    } catch (error) {
+      setFactsSaveState({
+        status: "failed",
+        error: errorMessage(error, t("graph.inspector.productFactsImpactFailed")),
       });
     }
   };
@@ -1165,16 +1201,77 @@ function ProductSourceEditor({
             <p role="alert" className="text-[11px] leading-5 text-state-error">{productFactsValidationMessage(validateProductFactsDraft(factsForm), t)}</p>
           ) : null}
           {factsSaveState.error ? <p role="alert" className="text-[11px] leading-5 text-state-error">{factsSaveState.error}</p> : null}
+          {factsImpact ? (
+            <div
+              data-facts-impact-preview
+              className="space-y-2 border border-border-l1 bg-surface-muted/40 px-3 py-2.5 text-xs leading-5 text-text-secondary"
+            >
+              <p className="font-semibold text-text-primary">{t("graph.inspector.productFactsImpactTitle")}</p>
+              <p>{t("graph.inspector.productFactsImpactHint")}</p>
+              <ul className="space-y-1.5">
+                {factsImpact.nodes.map((node) => {
+                  const checked = factsUpdateNodeIds.includes(node.node_id);
+                  return (
+                    <li key={node.node_id} className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={checked}
+                        disabled={busy || factsSaveState.status === "saving"}
+                        aria-label={impactNodeLabel(node)}
+                        onChange={(event) => {
+                          setFactsUpdateNodeIds(toggleImpactNodeSelection(factsUpdateNodeIds, node.node_id, event.target.checked));
+                        }}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-text-primary">{impactNodeLabel(node)}</span>
+                        <span className="block text-[11px] text-text-muted">{node.reason}</span>
+                        {node.artifact_fact_set_version_id || node.bound_fact_set_version_id ? (
+                          <span className="block text-[11px] text-text-muted">
+                            {t("graph.inspector.productFactsImpactVersion", {
+                              version: node.artifact_fact_set_version_id || node.bound_fact_set_version_id || "",
+                            })}
+                          </span>
+                        ) : null}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="flex gap-2 pt-1">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={busy || factsSaveState.status === "saving"}
+                  busy={factsSaveState.status === "saving"}
+                  onClick={() => void commitFacts(factsUpdateNodeIds)}
+                >
+                  {t("graph.inspector.productFactsImpactConfirm")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy || factsSaveState.status === "saving"}
+                  onClick={() => {
+                    setFactsImpact(null);
+                    setFactsUpdateNodeIds([]);
+                  }}
+                >
+                  {t("graph.inspector.productFactsImpactCancel")}
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <Button
             variant="primary"
             size="lg"
             className="w-full"
             onClick={() => void saveFacts()}
-            disabled={busy || factsSaveState.status === "saving" || Boolean(validateProductFactsDraft(factsForm))}
-            busy={factsSaveState.status === "saving"}
+            disabled={busy || factsSaveState.status === "saving" || Boolean(validateProductFactsDraft(factsForm)) || Boolean(factsImpact)}
+            busy={factsSaveState.status === "saving" && !factsImpact}
           >
-            {factsSaveState.status === "saving" ? null : <Save size={14} />}
-            {factsSaveState.status === "saving" ? t("graph.inspector.productFactsSaving") : t("graph.inspector.productFactsSave")}
+            {factsSaveState.status === "saving" && !factsImpact ? null : <Save size={14} />}
+            {factsSaveState.status === "saving" && !factsImpact ? t("graph.inspector.productFactsSaving") : t("graph.inspector.productFactsSave")}
           </Button>
         </div>
       ) : null}

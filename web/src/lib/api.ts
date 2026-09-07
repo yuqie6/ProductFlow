@@ -75,6 +75,8 @@ import type {
   GraphRunSubmitInput,
   CanonicalProductDetail,
   ProductFactsResponse,
+  ProductFactsUpdateResponse,
+  FactsImpactPreviewResponse,
   ProductListResponse,
   ProductImageAsset,
   ProductImageAssetListResponse,
@@ -87,6 +89,7 @@ import type {
   SubmitAgentTurnInput,
   SubmitAgentTurnResponse,
   UpdateProductFactsInput,
+  GraphProductFact,
   WorkflowDeliverySpec,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
@@ -227,7 +230,13 @@ export const api = {
   getProductFacts(productId: string): Promise<ProductFactsResponse> {
     return request(`/api/v3/products/${encodeURIComponent(productId)}/facts`);
   },
-  updateProductFacts(productId: string, input: UpdateProductFactsInput): Promise<ProductFactsResponse> {
+  previewProductFactsImpact(productId: string, facts: GraphProductFact[]): Promise<FactsImpactPreviewResponse> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/facts/impact-preview`, {
+      method: "POST",
+      body: JSON.stringify({ facts }),
+    });
+  },
+  updateProductFacts(productId: string, input: UpdateProductFactsInput): Promise<ProductFactsUpdateResponse> {
     return request(`/api/v3/products/${encodeURIComponent(productId)}/facts`, {
       method: "PUT",
       body: JSON.stringify(input),

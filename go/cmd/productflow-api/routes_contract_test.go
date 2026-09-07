@@ -42,6 +42,7 @@ var sealedDocsOnly = map[string]bool{
 var goOpsExtras = map[string]bool{
 	"GET /api/v3/image-generation-options":                                              true,
 	"POST /api/v3/products/from-recipe":                                                 true,
+	"POST /api/v3/products/{}/facts/impact-preview":                                     true,
 	"POST /api/v3/workflow-recipes/{}/creation-preview":                                 true,
 	"GET /healthz/ready":                                                                true,
 	"GET /api/v2/agent-control/events":                                                  true,

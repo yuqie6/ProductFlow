@@ -403,3 +403,57 @@ func TestFactsHTTPLayerGateFixtures(t *testing.T) {
 	}
 	rejectMarketing.Body.Close()
 }
+
+func TestFactsImpactPreviewHTTP(t *testing.T) {
+	ps := newProductServer(t)
+	created := ps.createV2(t, "影响预览", map[string]string{"category": "杯壶", "price": "39.00"}, 1)
+	path := "/api/v3/products/" + created.Product.ID + "/facts"
+	first := ps.doJSON(t, http.MethodPut, path, map[string]any{
+		"facts": []map[string]any{{"key": "capacity", "value": "500ml", "source_type": "user", "status": "confirmed"}},
+	})
+	if first.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(first.Body)
+		first.Body.Close()
+		t.Fatalf("seed %d %s", first.StatusCode, raw)
+	}
+	var seeded FactsResponse
+	ps.decode(t, first, &seeded)
+
+	preview := ps.doJSON(t, http.MethodPost, path+"/impact-preview", map[string]any{
+		"facts": []map[string]any{{"key": "capacity", "value": "600ml", "source_type": "user", "status": "confirmed"}},
+	})
+	if preview.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(preview.Body)
+		preview.Body.Close()
+		t.Fatalf("preview %d %s", preview.StatusCode, raw)
+	}
+	var impact FactsImpactPreviewResponse
+	ps.decode(t, preview, &impact)
+	if len(impact.ChangedFactKeys) != 1 || impact.ChangedFactKeys[0] != "capacity" {
+		t.Fatalf("changed %+v", impact.ChangedFactKeys)
+	}
+	// v2 无图出生：无工作流时 nodes 为空，不得假装全图受影响。
+	if len(impact.Nodes) != 0 {
+		t.Fatalf("no-graph nodes %+v", impact.Nodes)
+	}
+
+	adopt := ps.doJSON(t, http.MethodPut, path, map[string]any{
+		"expected_fact_set_version_id": seeded.CurrentFactSetVersionID,
+		"facts":                        []map[string]any{{"key": "capacity", "value": "600ml", "source_type": "user", "status": "confirmed"}},
+		"update_node_ids":              []string{},
+	})
+	if adopt.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(adopt.Body)
+		adopt.Body.Close()
+		t.Fatalf("adopt %d %s", adopt.StatusCode, raw)
+	}
+	var adopted FactsUpdateResponse
+	ps.decode(t, adopt, &adopted)
+	if adopted.CurrentFactVersion == nil || *adopted.CurrentFactVersion != 2 {
+		t.Fatalf("%+v", adopted)
+	}
+	if !adopted.DidAdoptFactSet && adopted.AdoptedFactSetID == nil {
+		// 无图时 DidAdoptFactSet 可为 false，但仍应写出新版本。
+	}
+}
+

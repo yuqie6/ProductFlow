@@ -27,6 +27,9 @@ type UpdateFactsInput struct {
 	SourceNote               *string           // 仅当 Fields["source_note"] 时写入
 	Facts                    *[]map[string]any // nil 表示不改 facts 数组
 	Fields                   map[string]bool   // JSON 里实际出现的键
+	// UpdateNodeIDs 是用户多选的更新图位；仅当 UpdateNodeIDsProvided 时采用新 fact 版本并保留未选中产物。
+	UpdateNodeIDs          []string
+	UpdateNodeIDsProvided  bool
 }
 
 // GetFacts 返回当前选中的 fact 版本；v2 无图出生尚未写 fact 时 id 为 null。
@@ -46,6 +49,7 @@ func (s Service) GetFacts(ctx context.Context, productID string) (FactsResponse,
 
 // UpdateFacts 先锁商品再校验 expected version，然后写入新的不可变 fact 版本。
 // 缺商品返回 NotFound；expected version 不匹配返回 Conflict；字段非法返回 Validation。
+// 携带 update_node_ids 时请走 UpdateFactsAndAdopt。
 func (s Service) UpdateFacts(ctx context.Context, productID string, in UpdateFactsInput) (FactsResponse, error) {
 	var out FactsResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {

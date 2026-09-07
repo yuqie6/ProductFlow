@@ -307,15 +307,52 @@ export interface GraphProductFactSet {
 export interface ProductFactsResponse {
   product: CanonicalProductDetail;
   fact_set: GraphProductFactSet | null;
+  current_fact_set_version_id?: string | null;
+  current_fact_version?: number | null;
+}
+
+export interface FactImpactNode {
+  node_id: string;
+  node_type: string;
+  title: string;
+  image_type_key?: string;
+  depends_on_changed_keys: string[];
+  default_selected: boolean;
+  has_artifact: boolean;
+  current_artifact_id?: string | null;
+  current_input_digest?: string | null;
+  bound_fact_set_version_id?: string | null;
+  artifact_fact_set_version_id?: string | null;
+  reason: string;
+}
+
+export interface FactsImpactPreviewResponse {
+  product_id: string;
+  changed_fact_keys: string[];
+  current_fact_set_version_id?: string | null;
+  nodes: FactImpactNode[];
+  default_update_node_ids: string[];
+  explanation: string;
+  proposed_fact_count: number;
 }
 
 export interface UpdateProductFactsInput {
   expected_fact_version: number | null;
+  expected_fact_set_version_id?: string | null;
   name: string;
   category: string | null;
   price: string | null;
   source_note: string | null;
   facts: GraphProductFact[];
+  update_node_ids?: string[];
+}
+
+export interface ProductFactsUpdateResponse extends ProductFactsResponse {
+  impact?: FactsImpactPreviewResponse | null;
+  preserved_node_ids?: string[];
+  adopted_fact_set_version_id?: string | null;
+  update_node_ids?: string[];
+  did_adopt_fact_set?: boolean;
 }
 
 export interface AgentProductImageTypeOption {
