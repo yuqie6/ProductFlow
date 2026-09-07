@@ -6,4 +6,4 @@ alwaysApply: false
 
 # 内部 Issue
 
-用户要求“直接修”时当前会话处理，不强制建单或归组；要求“记个任务，让其他 Agent 修”时使用公共任务池。完整流程只由 [`docs/audits/tasks/README.md`](../../docs/audits/tasks/README.md) 定义，已读且未变化的协议可复用。接单前检查当前任务和占用，取得已确认的所有权后才调查或设计；协调者登记确认即可生效，无需认领 commit。审查协议本身不等于接单。
+直接交办的设计实现、功能、迁移和修复按根 `AGENTS.md` 连续交付；建单触发条件与完整流程由 [`docs/audits/tasks/README.md`](../../docs/audits/tasks/README.md) 定义，已读且未变化的协议可复用。接单前检查当前任务和占用，取得已确认的所有权后才调查或设计；协调者登记确认即可生效，无需认领 commit。审查协议本身不等于接单。

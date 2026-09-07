@@ -22,6 +22,8 @@
 
 [`audits/README.md`](audits/README.md) 索引商家平台、Agent 质量、Agent 自进化、图片质量、工作流体验、平台可靠性六组。**一组一份文档**；拆合时迁移有效内容与证据，不保留重复章程。业务组任务和用户独立交办任务共用 [`audits/tasks/README.md`](audits/tasks/README.md)，由该协议维护认领、提交和归档流程。当前会话直接处理的修复和只读调查无需建单。
 
+设计与推进方式由根 `AGENTS.md` 和任务协议定义：直接交办以完整结果为单位，设计保留目标、关键取舍、不变量与最终验收；内部实施步骤留在会话计划。需要委派、交接、并发协调或独立冻结采证时进入任务池。索引保留导航，组章程保留当前结论、剩余缺口和证据链接，详细交付记录留在任务中。
+
 ## 历史叙事
 
 [`history/`](history/) 保存已经发生的开发线，不是当前能力声明。Agent 从自研 harness 到 Pi SDK、直播协议和写入所有权的时间线见 [`history/agent-runtime-timeline.md`](history/agent-runtime-timeline.md)。
