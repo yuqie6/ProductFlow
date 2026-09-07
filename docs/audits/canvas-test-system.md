@@ -98,9 +98,9 @@ O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；�
 | 默认入口走查 | [workbench-default-entry-walkthrough](tasks/archive/workbench-default-entry-walkthrough.md)：共享 dev 浏览器路径创建→（代理）出图→成果→定位；Vitest 成果/采用 17 + 视觉/配方 9 passed | **建议暂不全局默认成果**；已跟进 [有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) |
 | 有产出时默认成果 | [workbench-conditional-results-default](tasks/archive/workbench-conditional-results-default.md)：`defaultWorkbenchMainView`；有当前图 → results，否则 flow；Vitest 2 files / 17 passed | 非全局一律成果；跨会话记忆见下条 |
 | 记忆上次主视图 | [workbench-remember-last-view](tasks/archive/workbench-remember-last-view.md)：商品级显式偏好；无偏好仍条件默认；`clearWorkbenchMainViewPreference` 可关 | 已交付；≠全局一律成果；浏览器整链未宣称 |
-| 交付采用快照 | [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md)：Go 采用/并发/导出一致；成果视图采用/导出接线；schema `delivery_adoption_*`；Vitest 14 | 浏览器整链 opt-in 未跑；质量判据仍依赖图片质量组判定输入；不宣称 R2 全部通过 |
-| R2 核心路径门 | [delivery-r2-core-path-gate](tasks/delivery-r2-core-path-gate.md)：进行中；§5 创建→成果→采用→导出→复用；桌面/手机可达性 | 未完成；≠假标 R2 全过 |
-| 品牌视觉复用 | [brand-visual-reuse](tasks/archive/brand-visual-reuse.md)：商家内视觉方案版本 CRUD；商品显式选择；IQ-CF-07 继承预览（Brand 占位）；追加版本不静默改选择；配方创建预览列继承/待填；Vitest + Go 包测 | 浏览器整链未跑；Brand 表仍占位；未宣称跨商家分享 |
+| 交付采用快照 | [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md)：Go 采用/并发/导出一致；成果视图采用/导出接线；schema `delivery_adoption_*`；Vitest 14 | 浏览器整链见下条本门；质量判据仍依赖图片质量组判定输入；不宣称 R2 全部通过 |
+| R2 核心路径门 | [delivery-r2-core-path-gate](tasks/archive/delivery-r2-core-path-gate.md)：**本门 PASS**（2026-09-07）；隔离 mock Chromium 2 passed / 24.7s；路径表含 adopt/export asset+sha256；1440/390 截图 | **≠R2 全过**；共享 just-dev API 过旧须隔离 HEAD 栈；导出 UI 叠层；§5.4 本门未重跑；Brand/批跑缺口 |
+| 品牌视觉复用 | [brand-visual-reuse](tasks/archive/brand-visual-reuse.md)：商家内视觉方案版本 CRUD；商品显式选择；IQ-CF-07 继承预览（Brand 占位）；追加版本不静默改选择；配方创建预览列继承/待填；Vitest + Go 包测 | 本门含选定视觉+配方第二商品清身份；Brand 表仍占位；未宣称跨商家分享 |
 
 两项新浏览器交付未修改生产业务代码，分别提交于 `daa4672c` 与 `f7e70e1e`。当时完整 Web 回归为 91 files / 647 tests passed，lint、build 通过，build 保留既有大 chunk 警告。Go delivery 为带 PostgreSQL 的 24 项实际通过，无跳过；不扩展为全部 Go 包通过。
 
@@ -146,11 +146,12 @@ just web-e2e-canvas-run-recovery
 just web-e2e-canvas-delivery
 just web-e2e-canvas-asset-recipe
 just web-e2e-canvas-local-edit
+just web-e2e-delivery-r2-core-path
 just web-e2e-live-graph
 just docs-check
 ```
 
-这些是按风险选择的入口，不要求每项工作全部运行。PostgreSQL 测试须具备数据库环境；浏览器门须具备相应运行栈与资源窗口；交付 ZIP 验收依赖 `unzip`。C2 加深命令把 `PRODUCTFLOW_CANVAS_SEARCH_WALKS` 从默认 8 提高到 80。真实 provider 门为 opt-in，不并入默认确定性回归。
+这些是按风险选择的入口，不要求每项工作全部运行。PostgreSQL 测试须具备数据库环境；浏览器门须具备相应运行栈与资源窗口；交付 ZIP 验收依赖 `unzip`。C2 加深命令把 `PRODUCTFLOW_CANVAS_SEARCH_WALKS` 从默认 8 提高到 80。真实 provider 门为 opt-in，不并入默认确定性回归。R2 核心路径门须挂载 delivery-adoptions / visual-systems 的 **当前** API（过旧共享 just-dev 二进制会 404）；可用隔离端口 + Redis DB 隔离 worker，勿 `docker compose down` 共享栈。
 
 ## 后续工作如何选择
 
@@ -158,4 +159,4 @@ just docs-check
 
 [完整配方创建入口](tasks/archive/canvas-full-recipe-entry.md) 已修复：新建页直接预览并事务确认，不经过默认 birth graph 或无图工作台。已有图不可覆盖、取消不创建商品/图、目标身份及重试去重保持。前单入口 FAIL 保留为历史；临时 probe 已移除，正向路径纳入常规资产与配方门禁。[局部编辑](tasks/archive/canvas-local-edit-flow.md) 已修复：mock 绑定下检查器可完成消除/换字/重绘、采用或只留图库，失败不改节点当前图。商家任务耗时与镜头列表主界面仍未知，本组当前没有已发布的后续实现单。
 
-其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) 已按条件默认实现；[记忆上次视图](tasks/archive/workbench-remember-last-view.md) 已交付商品级显式偏好。采用/视觉整链浏览器验收仍须栈挂载 delivery-adoption 与 visual-systems 路由。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。
+其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) 已按条件默认实现；[记忆上次视图](tasks/archive/workbench-remember-last-view.md) 已交付商品级显式偏好。采用/视觉核心路径浏览器证据见 [delivery-r2-core-path-gate](tasks/archive/delivery-r2-core-path-gate.md)（本门 PASS，≠R2 全过）。Brand 占位与批量无限制批跑仍为缺口。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。

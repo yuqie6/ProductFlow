@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [delivery-r2-core-path-gate.md](delivery-r2-core-path-gate.md) | 完成 | 本门 PASS；R2 仍未通过；§5.4/Brand/导出叠层缺口 |
 | [merchant-mp-c-wire-b1.md](merchant-mp-c-wire-b1.md) | 完成 | 图会话 Generate 额度接线；≠R5/Graph/Agent |
 | [image-quality-selling-point-live.md](image-quality-selling-point-live.md) | 完成 | 炸锅 selling_point live k=1；闸门改善保真平；≠R3 |
 | [merchant-mp-c-quota-b0.md](merchant-mp-c-quota-b0.md) | 完成 | MP-C B0 预留/结算骨架；入口未接线；≠R5 |

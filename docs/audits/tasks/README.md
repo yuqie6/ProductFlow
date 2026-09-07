@@ -20,7 +20,9 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [delivery-r2-core-path-gate.md](delivery-r2-core-path-gate.md) | 工作流体验 | 证据 | 认领 | sub-r2/delivery-r2-core-path-gate | 2026-09-07T17:17:00+08:00 |
+| [image-quality-ocr-trace-b0.md](image-quality-ocr-trace-b0.md) | 图片质量 | 实现 | 认领 | sub-iq/image-quality-ocr-trace-b0 | 2026-09-07T17:42:00+08:00 |
+| [merchant-mp-c-wire-b2-graph.md](merchant-mp-c-wire-b2-graph.md) | 商家平台 | 实现 | 认领 | sub-mpc/merchant-mp-c-wire-b2-graph | 2026-09-07T17:42:00+08:00 |
+| [delivery-export-overlay-fix.md](delivery-export-overlay-fix.md) | 工作流体验 | 实现 | 认领 | sub-r2/delivery-export-overlay-fix | 2026-09-07T17:48:30+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |
