@@ -43,7 +43,8 @@
 | 局部编辑成功结算容忍缺失 hold，可提交未结算资产及 succeeded | settleEditQuota 对唯一付费成功路径返回原额度错误；取消和未调用释放不扩改 | 原代码真实数据库复现缺 hold 仍成功；修复后资产/任务/attempt 回滚，补足原 attempt 预留后成功结算 | `5deb31e2` |
 | 连续生图活跃 hold 查询失败退回初始键，原数据库错误丢失甚至被后续 NotFound 容忍吞掉 | 三种 finalizer 直接消费 activeQuotaKey 的错误，删除 mustActiveQuotaKey，保留底层数据库 cause | 独立 PostgreSQL 关系不可用时三条入口透传 SQLSTATE 42P01；真实预留与余额不变 | `a32f72bc` |
 | Pi 默认并行工具同时追加 checkpoint，Node 为两个请求分配同一序号，Go 对不同内容返回 Conflict | TurnRuntime 串行持久化 checkpoint；清理等待待写链，新 Turn 重置；沿既有 lease 错误中止后续项 | 原代码两种并发场景发送 [1,1]；修复后确认成功发送 [1,2]、首条失败只发一次且两调用失败，清理等待；真实 PG 验证序号绑定内容 | 2b4355ec |
-| 连续生图结算吞掉缺失预留错误，允许终态与实际额度结算分离 | settleGenerationQuota 直接返回 quota.Settle 的错误；原终态事务回滚 | 独立 PostgreSQL 验证成功和已调用失败终态拒绝缺 hold，恢复原预留后同 attempt 可提交并结算 | 随本次提交 |
+| 连续生图结算吞掉缺失预留错误，允许终态与实际额度结算分离 | settleGenerationQuota 直接返回 quota.Settle 的错误；原终态事务回滚 | 独立 PostgreSQL 验证成功和已调用失败终态拒绝缺 hold，恢复原预留后同 attempt 可提交并结算 | `c8e00923` |
+| 手动重试缺失活动预留时退回首次已结算键，旧结算幂等结果放行当前终态 | 额度键查询返回是否命中活动预留；结算必须命中，取消/释放消费者保持原合同 | 两种终态的 retry=true 原实现均返回 nil；修复后拒绝并回滚，恢复同一重试 hold 后结算 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -228,3 +229,12 @@ Node [进程重启测试](../../agent-service/src/process-restart.e2e.test.ts) �
 新回归用独立 pf_successhold_* 数据库，经现有创建/Generate/claim 夹具取得任务和预留，仅使该库的原 hold 键暂时不可查，验证返回 NotFound、任务仍 running、active attempt 保留、终止时间和结果 group 不写入、余额不变；恢复原键后同 attempt 完成对应终态并结算。失败场景经 ensureEffect/markEffect 创建明确失败证据。测试隔离库自动清理，不影响开发库。此测试证明缺失结算前置条件时拒绝终态，不声称已经找到生产中丢失 hold 的来源，也不声称重新执行了 Provider。
 
 本切片最终 imagesession 整包通过（42.806 秒），两个新增真实数据库子例实际执行，标准 go vet 通过。首轮整包的既有 TestImageCheckpointTransactionBoundaries/stale_consumer 未等到重投递，记为 FAIL；定向复跑该用例及最终整包通过，未证明根因，不修改队列时序。新增失败夹具初版分别因误用异常构造器和不合法 request hash 失败，已改用现有 apperr.Validation 与 canonjson.SHA256Hex。主代理完整 diff 自审、结算调用者扫描和空白检查通过。共享 docs-check 因其他任务新增 /ops 路由尚未同步架构、README 与 PRD 而失败；当前提交的独立临时 checkout 执行相同 check_docs.py 通过，随后清理。共享失败不记为通过；其他任务的 schema、商品、账户和前端修改均未纳入提交，未使用共享开发进程或真实模型。
+
+
+重试额度回退切片由本任务主代理负责，范围仍为 `imagesession/quota_wire.go`、既有终态额度回归。继续验证上个切片发现新旁路：首次 hold 已 settled，当前手动重试 hold 不可查时，activeQuotaKey 返回首次键；quota.Settle 对旧 settled 行幂等返回 nil，成功和已调用失败两种终态负例均复现提交。因此仅透传 quota 错误不足以证明结算条件成立。
+
+查询现在额外返回是否实际命中 reserved/pending_reconciliation 预留，结算在未命中时返回 NotFound，由原终态事务回滚。unknown/release 仍消费既有键与错误，未扩大其合同。没有修改共享 quota 模块或当前由管理后台任务占用的 schema。终态重复投递仍由任务状态与 attempt 条件拒绝重复写入，不依赖退回历史 hold 完成幂等。本切片消除无活动预留的历史结算旁路；活动预留仍由任务前缀和创建时间选择，多个活动历史 hold 的精确 billing identity 绑定仍未完成。
+
+回归扩为成功/失败 × 首次/手动重试四个独立数据库场景。重试场景先经额度服务结算首次预留、设置可重试失败夹具，再实际调用 Service.Retry 建立新预留；当前预留不可查时检查任务回滚与余额不变，恢复该预留后同 attempt 提交并结算。不把夹具设置的失败状态描述为真实 Provider 失败调用。
+
+最终 imagesession 整包通过（48.835 秒），四个数据库子例实际执行；标准 go vet、全调用者签名扫描和主代理完整 diff 自审通过。共享 docs-check 仍因其他任务的 /ops 文档未齐而失败；以 HEAD 加本切片三个文件构造独立临时 checkout 执行 check_docs.py 通过，随后清理。没有更改其他任务的 quota/schema/Auth/Product/Web 文件、数据库或运行进程，没有真实 Provider 调用费用。

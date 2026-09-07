@@ -43,16 +43,19 @@ func (s Service) reserveGenerationQuota(ctx context.Context, merchantID, taskID 
 }
 
 func (e Executor) settleGenerationQuota(ctx context.Context, merchantID, taskID string) error {
-	key, err := activeQuotaKey(ctx, e.DB, merchantID, taskID)
+	key, active, err := activeQuotaKey(ctx, e.DB, merchantID, taskID)
 	if err != nil {
 		return err
+	}
+	if !active {
+		return apperr.NotFound("生成任务没有活动额度预留")
 	}
 	_, _, err = e.quota().Settle(ctx, merchantID, key, imageSessionQuotaUnits)
 	return err
 }
 
 func (e Executor) markGenerationQuotaUnknown(ctx context.Context, merchantID, taskID string) error {
-	key, err := activeQuotaKey(ctx, e.DB, merchantID, taskID)
+	key, _, err := activeQuotaKey(ctx, e.DB, merchantID, taskID)
 	if err != nil {
 		return err
 	}
@@ -60,7 +63,7 @@ func (e Executor) markGenerationQuotaUnknown(ctx context.Context, merchantID, ta
 }
 
 func (e Executor) releaseGenerationQuota(ctx context.Context, merchantID, taskID string) error {
-	key, err := activeQuotaKey(ctx, e.DB, merchantID, taskID)
+	key, _, err := activeQuotaKey(ctx, e.DB, merchantID, taskID)
 	if err != nil {
 		return err
 	}
@@ -78,11 +81,11 @@ func finalizeQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) 
 	return err
 }
 
-func activeQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID string) (string, error) {
+func activeQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID string) (string, bool, error) {
 	merchantID = strings.TrimSpace(merchantID)
 	taskID = strings.TrimSpace(taskID)
 	if merchantID == "" || taskID == "" {
-		return generationQuotaKey(taskID, 0), nil
+		return generationQuotaKey(taskID, 0), false, nil
 	}
 	prefix := "image-session-generation:" + taskID
 	var row schema.MerchantQuotaHolds
@@ -93,12 +96,12 @@ func activeQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID string)
 		Order("created_at DESC").
 		Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return generationQuotaKey(taskID, 0), nil
+		return generationQuotaKey(taskID, 0), false, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("读取额度预留失败: %w", err)
+		return "", false, fmt.Errorf("读取额度预留失败: %w", err)
 	}
-	return row.IdempotencyKey, nil
+	return row.IdempotencyKey, true, nil
 }
 
 func sessionMerchantID(ctx context.Context, db *gorm.DB, sessionID string) (string, error) {
