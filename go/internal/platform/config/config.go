@@ -5,6 +5,8 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,38 +16,44 @@ import (
 
 // Config 是进程启动 overlay。改供应商/模型不要改这里，去 PostgreSQL；密钥字段永远只来自 env。
 type Config struct {
-	AppHost                           string  // env APP_HOST
-	AppPort                           int     // env APP_PORT
-	DatabaseURL                       string  // env DATABASE_URL，启动后不再读库
-	RedisURL                          string  // env REDIS_URL，asynq 用；Load 不强制非空
-	LogLevel                          string  // env LOG_LEVEL
-	LogFormat                         string  // env LOG_FORMAT，console 或 json
-	LogDir                            string  // env LOG_DIR；空则 STORAGE_ROOT/logs
-	LogMaxBytes                       int     // 字节；交给 lumberjack 前会换成 MiB
-	LogBackupCount                    int     // env LOG_BACKUP_COUNT，滚动份数
-	LogRetentionDays                  int     // env LOG_RETENTION_DAYS，天
-	StorageRoot                       string  // env STORAGE_ROOT，相对仓库根
-	SessionSecret                     string  // env SESSION_SECRET，空则 Load 失败
-	SessionCookieSecure               bool    // env SESSION_COOKIE_SECURE
-	AdminAccessKey                    string  // env ADMIN_ACCESS_KEY，登录时恒定时间比较
-	SettingsAccessToken               string  // env SETTINGS_ACCESS_TOKEN，设置页解锁密钥，env-only
-	AdminAccessRequired               bool    // env 默认值；运行时 app_settings 可覆盖
-	DeletionEnabled                   bool    // env DELETION_ENABLED；运行时 app_settings 可覆盖
-	UploadMaxImageBytes               int     // env UPLOAD_MAX_IMAGE_BYTES，字节；运行时可被 app_settings 覆盖
-	UploadMaxBatchBytes               int     // env UPLOAD_MAX_BATCH_BYTES，字节；运行时可被 app_settings 覆盖
-	UploadMaxBatchFiles               int     // env UPLOAD_MAX_BATCH_FILES；运行时可被 app_settings 覆盖
-	UploadMaxReferenceImages          int     // env UPLOAD_MAX_REFERENCE_IMAGES；运行时可被 app_settings 覆盖
-	UploadMaxPixels                   int     // env UPLOAD_MAX_PIXELS；运行时可被 app_settings 覆盖
-	UploadAllowedMIMETypes            string  // env UPLOAD_ALLOWED_IMAGE_MIME_TYPES，逗号分隔
-	AgentServiceBaseURL               string  // env AGENT_SERVICE_BASE_URL
-	AgentServiceInternalToken         string  // env AGENT_SERVICE_INTERNAL_TOKEN，env-only 密钥
-	AgentServiceConnectTimeoutSeconds float64 // env AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS
-	AgentServiceReadTimeoutSeconds    float64 // env AGENT_SERVICE_READ_TIMEOUT_SECONDS
-	AgentTurnSyncPollSeconds          float64 // env AGENT_TURN_SYNC_POLL_SECONDS
-	MetricsBearerToken                string  // 空则不注册 GET /metrics
-	DispatcherMetricsAddr             string  // env DISPATCHER_METRICS_ADDR；空则不启动 dispatcher metrics server
-	WorkerMetricsAddr                 string  // env WORKER_METRICS_ADDR；空则不启动 worker metrics server
-	QuotaTrialUnits                   int64   // env QUOTA_TRIAL_UNITS；新商家首次建账可用额度；默认 100
+	AppHost                           string   // env APP_HOST
+	AppPort                           int      // env APP_PORT
+	DatabaseURL                       string   // env DATABASE_URL，启动后不再读库
+	RedisURL                          string   // env REDIS_URL，asynq 用；Load 不强制非空
+	LogLevel                          string   // env LOG_LEVEL
+	LogFormat                         string   // env LOG_FORMAT，console 或 json
+	LogDir                            string   // env LOG_DIR；空则 STORAGE_ROOT/logs
+	LogMaxBytes                       int      // 字节；交给 lumberjack 前会换成 MiB
+	LogBackupCount                    int      // env LOG_BACKUP_COUNT，滚动份数
+	LogRetentionDays                  int      // env LOG_RETENTION_DAYS，天
+	StorageRoot                       string   // env STORAGE_ROOT，相对仓库根
+	SessionSecret                     string   // env SESSION_SECRET，空则 Load 失败
+	SessionCookieSecure               bool     // env SESSION_COOKIE_SECURE
+	AdminAccessKey                    string   // env ADMIN_ACCESS_KEY，登录时恒定时间比较
+	AllowedOrigins                    []string // env BACKEND_CORS_ORIGINS，精确 scheme/host/port
+	TrustedProxyCIDRs                 []string // env TRUSTED_PROXY_CIDRS，空表示不信任转发头
+	AuthRateLimitNamespace            string   // env AUTH_RATE_LIMIT_NAMESPACE
+	AuthRateLimitWindowSeconds        int      // env AUTH_RATE_LIMIT_WINDOW_SECONDS
+	AuthRateLimitIPMax                int      // env AUTH_RATE_LIMIT_IP_MAX
+	AuthRateLimitSubjectMax           int      // env AUTH_RATE_LIMIT_SUBJECT_MAX
+	SettingsAccessToken               string   // env SETTINGS_ACCESS_TOKEN，设置页解锁密钥，env-only
+	AdminAccessRequired               bool     // env 默认值；运行时 app_settings 可覆盖
+	DeletionEnabled                   bool     // env DELETION_ENABLED；运行时 app_settings 可覆盖
+	UploadMaxImageBytes               int      // env UPLOAD_MAX_IMAGE_BYTES，字节；运行时可被 app_settings 覆盖
+	UploadMaxBatchBytes               int      // env UPLOAD_MAX_BATCH_BYTES，字节；运行时可被 app_settings 覆盖
+	UploadMaxBatchFiles               int      // env UPLOAD_MAX_BATCH_FILES；运行时可被 app_settings 覆盖
+	UploadMaxReferenceImages          int      // env UPLOAD_MAX_REFERENCE_IMAGES；运行时可被 app_settings 覆盖
+	UploadMaxPixels                   int      // env UPLOAD_MAX_PIXELS；运行时可被 app_settings 覆盖
+	UploadAllowedMIMETypes            string   // env UPLOAD_ALLOWED_IMAGE_MIME_TYPES，逗号分隔
+	AgentServiceBaseURL               string   // env AGENT_SERVICE_BASE_URL
+	AgentServiceInternalToken         string   // env AGENT_SERVICE_INTERNAL_TOKEN，env-only 密钥
+	AgentServiceConnectTimeoutSeconds float64  // env AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS
+	AgentServiceReadTimeoutSeconds    float64  // env AGENT_SERVICE_READ_TIMEOUT_SECONDS
+	AgentTurnSyncPollSeconds          float64  // env AGENT_TURN_SYNC_POLL_SECONDS
+	MetricsBearerToken                string   // 空则不注册 GET /metrics
+	DispatcherMetricsAddr             string   // env DISPATCHER_METRICS_ADDR；空则不启动 dispatcher metrics server
+	WorkerMetricsAddr                 string   // env WORKER_METRICS_ADDR；空则不启动 worker metrics server
+	QuotaTrialUnits                   int64    // env QUOTA_TRIAL_UNITS；新商家首次建账可用额度；默认 100
 }
 
 // Load 用 viper AutomaticEnv 读进程环境，并填开发默认值。
@@ -64,6 +72,10 @@ func Load() (Config, error) {
 	v.SetDefault("LOG_RETENTION_DAYS", 14)
 	v.SetDefault("STORAGE_ROOT", "./storage-dev")
 	v.SetDefault("ADMIN_ACCESS_REQUIRED", true)
+	v.SetDefault("AUTH_RATE_LIMIT_NAMESPACE", "productflow:auth:attempt")
+	v.SetDefault("AUTH_RATE_LIMIT_WINDOW_SECONDS", 15*60)
+	v.SetDefault("AUTH_RATE_LIMIT_IP_MAX", 100)
+	v.SetDefault("AUTH_RATE_LIMIT_SUBJECT_MAX", 10)
 	v.SetDefault("DELETION_ENABLED", false)
 	v.SetDefault("UPLOAD_MAX_IMAGE_BYTES", 10*1024*1024)
 	v.SetDefault("UPLOAD_MAX_BATCH_BYTES", 50*1024*1024)
@@ -84,6 +96,18 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	origins := splitCSV(v.GetString("BACKEND_CORS_ORIGINS"))
+	trustedProxyCIDRs := splitCSV(v.GetString("TRUSTED_PROXY_CIDRS"))
+	for _, raw := range trustedProxyCIDRs {
+		if _, err := netip.ParsePrefix(raw); err != nil {
+			return Config{}, fmt.Errorf("TRUSTED_PROXY_CIDRS contains invalid CIDR %q", raw)
+		}
+	}
+	for _, raw := range origins {
+		if !validConfiguredOrigin(raw) {
+			return Config{}, fmt.Errorf("BACKEND_CORS_ORIGINS contains invalid exact origin %q", raw)
+		}
+	}
 	cfg := Config{
 		AppHost:                           v.GetString("APP_HOST"),
 		AppPort:                           v.GetInt("APP_PORT"),
@@ -99,6 +123,12 @@ func Load() (Config, error) {
 		SessionSecret:                     v.GetString("SESSION_SECRET"),
 		SessionCookieSecure:               v.GetBool("SESSION_COOKIE_SECURE"),
 		AdminAccessKey:                    v.GetString("ADMIN_ACCESS_KEY"),
+		AllowedOrigins:                    origins,
+		TrustedProxyCIDRs:                 trustedProxyCIDRs,
+		AuthRateLimitNamespace:            strings.TrimSpace(v.GetString("AUTH_RATE_LIMIT_NAMESPACE")),
+		AuthRateLimitWindowSeconds:        v.GetInt("AUTH_RATE_LIMIT_WINDOW_SECONDS"),
+		AuthRateLimitIPMax:                v.GetInt("AUTH_RATE_LIMIT_IP_MAX"),
+		AuthRateLimitSubjectMax:           v.GetInt("AUTH_RATE_LIMIT_SUBJECT_MAX"),
 		SettingsAccessToken:               strings.TrimSpace(v.GetString("SETTINGS_ACCESS_TOKEN")),
 		AdminAccessRequired:               v.GetBool("ADMIN_ACCESS_REQUIRED"),
 		DeletionEnabled:                   v.GetBool("DELETION_ENABLED"),
@@ -127,7 +157,51 @@ func Load() (Config, error) {
 	if cfg.SessionSecret == "" {
 		return Config{}, fmt.Errorf("SESSION_SECRET is required")
 	}
+	if cfg.AuthRateLimitNamespace == "" {
+		return Config{}, fmt.Errorf("AUTH_RATE_LIMIT_NAMESPACE is required")
+	}
+	if cfg.AuthRateLimitWindowSeconds <= 0 || cfg.AuthRateLimitIPMax <= 0 || cfg.AuthRateLimitSubjectMax <= 0 {
+		return Config{}, fmt.Errorf("auth rate limit settings must be positive")
+	}
 	return cfg, nil
+}
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func validConfiguredOrigin(raw string) bool {
+	if raw == "" || strings.EqualFold(raw, "null") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.User != nil || u.Scheme == "" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	if !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https") {
+		return false
+	}
+	if strings.ContainsAny(u.Host, " \t\r\n,") || u.Hostname() == "" {
+		return false
+	}
+	if strings.Contains(u.Host, ":") && u.Port() == "" && !strings.Contains(u.Host, "]") {
+		return false
+	}
+	return true
 }
 
 // NormalizePostgresURL 把 SQLAlchemy 的 postgresql+psycopg(2):// 收成 pgx 认识的 postgres://。

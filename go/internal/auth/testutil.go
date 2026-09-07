@@ -33,12 +33,19 @@ func MountTest(engine *gin.Engine, gdb *gorm.DB, store settings.RuntimeReader, a
 		Store:          store,
 		DB:             gdb,
 		Service:        Service{DB: gdb},
+		AttemptLimiter: testAllowAttemptLimiter{},
 	}
 	engine.Use(h.LoadPrincipal())
 	engine.Use(h.AttachWorkingMerchant())
 	engine.Use(h.RejectSuspendedMerchantWrites())
 	h.Register(engine)
 	return h
+}
+
+type testAllowAttemptLimiter struct{}
+
+func (testAllowAttemptLimiter) Allow(context.Context, string, string) (AttemptDecision, error) {
+	return AttemptDecision{Allowed: true}, nil
 }
 
 // MustDevMerchantID 返回测试库中已引导的开发商家 ID。

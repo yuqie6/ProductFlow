@@ -1,14 +1,14 @@
 # 任务：账号入口在邀请、跨站请求与多 API 实例下保持可靠鉴权
 
-状态：开放
+状态：完成
 类型：实现
-认领者：—
-认领于：—
+认领者：root/saas-auth-entry-security
+认领于：2026-09-07T19:46:00+08:00
 业务组：商家平台
 父账本：merchant-platform.md
 完成后可拆：saas-workspace-context
 
-任务状态、认领及提交遵循 [Issue 协议](README.md)。本任务仅经协调者确认所有权后执行；发布不表示已分配。
+任务状态、认领及提交遵循 [Issue 协议](../README.md)。本任务仅经协调者确认所有权后执行；发布不表示已分配。
 
 ## 问题来源
 
@@ -27,6 +27,7 @@
 - 冻结输入：现有身份角色、内部服务鉴权与会话 cookie 名；不改变商家开通限制。
 - 运行资源：任务专用 PostgreSQL 测试库和 Redis namespace/实例，两 API 测试实例；不得 FLUSHDB 共享 Redis 或改共享 provider。
 - 不与其它 auth、HTTP middleware、config、LoginPage 或共享 API client 写者并行；协调者串行整合共享文档。
+- 本轮分工：root/auth_implementation 独占本任务 auth/httpx/config、配置样例与 release 配置说明；主代理独占 go/cmd/productflow-api、Web、任务记录和活文档，并负责跨层审查与最终验收。双方仅按已确认 HTTP 合同交接，不交叉写文件。数据库测试按现有 testdb 派生专用库，Redis 测试使用独立实例；不停止共享服务。
 
 ## 只改这些文件
 
@@ -34,6 +35,7 @@
 - `go/cmd/productflow-api/` 接线；已有 go-redis 依赖直接使用所需的最小 `go/go.mod` / `go/go.sum` 调整。
 - `web/src/pages/LoginPage.tsx`、`web/src/lib/api.ts`、`web/src/lib/types.ts`、`web/src/lib/i18n.ts` 及贴近入口的测试。
 - `.env.example`、`contracts/http-routes.json`、`release/README.md` 中受影响配置/路由；需要新邀请页时由协调者扩入精确路径后实施。
+- 主代理配置接线：`docker-compose.yml`、`release/docker-compose.yml`、`release/.env.example`，透传允许来源、可信代理和限流参数；否则容器 API 无法履行同源合同。
 - 本文件；协调者整合父章程和受影响活文档。
 
 ## 不要碰
@@ -67,12 +69,18 @@
 - 原因：无；需正常认领和资源隔离。
 - 解除条件：无。
 - 跟进者：开发协调者。
-- 交接：设计发布；未修改业务代码、未运行测试栈、未授予发信或外部开放权限。
+- 交接：身份入口实现及本合同回归已完成；未授予发信或外部开放权限。后续工作商家任务消费本次 cookie/来源合同。
 
 ## 证据
 
-- 命令 / 日期 / 结果：待执行。
-- 基线 commit / artifact：认领时固定；本设计观察基线 `0dff28fa`。
+- 验证日期：2026-09-07；实现基线 `47379b8f` 加本任务 diff；设计观察基线 `0dff28fa`。
+- `pnpm --dir web test:run`：103 文件、728 测试通过；`pnpm --dir web lint` 与 `just web-build`（含包体预算）通过。
+- `pnpm --dir web exec playwright test e2e/login-security.spec.ts`：17 用例通过；390×844 / 1440×960、四语明暗，429 冷却、Enter 不重复提交、503 后可重试和 bootstrap。截图在 `web/test-results/login-security-*/login-cooldown.png`，已检查尺寸与溢出。本项使用真实浏览器、mock HTTP，不作为真实 provider 或完整 SaaS 验收。
+- `bash scripts/with_dev_env.sh env REDIS_URL=redis://127.0.0.1:26379/0 go test -C go ./internal/auth ./internal/platform/httpx ./internal/platform/config ./cmd/productflow-api -count=1 -p 1`：通过；PG 使用包级专用 testdb，Redis 为任务专用进程。后补邀请与真实 Redis 停机测试的 focused `-v` 复跑通过，未跳过 PG/Redis。
+- `docker compose --env-file .env.example config --quiet` 及使用测试镜像变量的 release Compose 校验通过。`just docs-check` 通过。
+- 全后端命令 `bash scripts/with_dev_env.sh env REDIS_URL=redis://127.0.0.1:26379/0 go test -C go ./... -count=1 -p 1` 已执行：其余包通过，Agent 在复用库超时，quota 全局过期扫描受到历史夹具影响；运行途中新增 httpx 测试的 imports 导致该包编译输入失效。冻结代码后 auth/httpx/config/API 四包完整复跑通过。原全量命令结果为 FAIL，不记为一次性绿灯。
+- Agent、quota 用当前代码编译测试二进制 `/tmp/pf_authgate_agent.test`、`/tmp/pf_authgate_quota.test` 后，在 dev 环境直接运行 `-test.count=1`（Agent 加 `-test.timeout=4m`），两包全部 PASS；实际库名为 `productflow_dev_gotest_pf_authgate_agent` / `productflow_dev_gotest_pf_authgate_quota`，与旧包级库隔离。`go test -o` 本身仍运行临时默认名称二进制，不能作为新库证明。全部后端包已有通过结果；旧测试库复跑稳定性仍是独立缺口，本任务未修改 Agent/额度实现或清空旧库。
+- 主代理审查并修正：IP+subject 键、缺 limiter 的 503、显式邀请身份参数、真实内部令牌校验、来源配置透传、限流 IP 耗尽后不新增 subject key；补邀请失败不建 session/不消费 token、普通用户与 Operator 身份证明回归。
 - 交付定位：随本任务提交。
-- 审核者 / 结论：待审核。
-- Issue 结果 / 业务门槛结果 / 剩余缺口：未交付；完成本项不重签 R1 或宣布 SaaS 可开放。
+- 审核者 / 结论：主代理审核子代理后端 diff，并自审 API 接线、前端和补充回归；合同回归通过，全后端失败包经隔离复跑通过。未使用独立审核者名义。
+- Issue 结果 / 业务门槛结果 / 剩余缺口：本项完成；不重签 R1 或宣布 SaaS 可开放。浏览器使用 mock HTTP，现有开发 API 未重启，不声明新后端已在线运行。

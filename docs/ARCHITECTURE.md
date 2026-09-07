@@ -18,6 +18,10 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 
 ## 2. 后端分层
 
+账号身份由 PostgreSQL User/AuthSession 与现有 `session` cookie 证明；邀请仅授权加入商家，已有账号接受邀请须提供正确密码或匹配的有效会话。`go/internal/auth` 对登录、初始化和邀请接受使用 Redis 原子固定窗口限流，默认每 IP 15 分钟 100 次、每 IP 与账号或邀请摘要组合 10 次。Redis 不可用时凭据交换返回 503，已登录读取继续使用 PostgreSQL 会话；预算与命名空间仅由环境变量配置。
+
+`go/cmd/productflow-api/register.go` 在全部 API 注册前挂载 `httpx.BrowserStateProtection`。浏览器 POST/PUT/PATCH/DELETE（含 JSON 和 multipart）按 `BACKEND_CORS_ORIGINS` 精确校验 Origin，缺失时检查 Referer，缺来源或不匹配返回 403；请求 Host 不构成信任来源。内部调用须通过配置令牌校验，并继续接受具体路由的服务鉴权。`TRUSTED_PROXY_CIDRS` 默认空，未经信任的转发头不影响限流 IP。入口覆盖证据由 API 路由合同测试及 auth/httpx 测试维护。
+
 业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx，命令事务走 `tx.WithGorm` 与 schema 模型 `Create`/`Updates`/`Take`，行锁走 `platform/db` locking clause），异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威是 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 加 ExtraDDL（CHECK / enum / 部分唯一索引 / FK）。不使用 AutoMigrate。写库约定见 [`go/AGENTS.md`](../go/AGENTS.md)。
 
 机器可读合同在仓库根 `contracts/`：`http-routes.json` 与 `openapi.json` 是 2026-08-29 历史封印快照，默认不重生。Go 对未知 JSON 字段 `DisallowUnknownFields` → 400。HTTP 只写业务行和 `async_dispatches` PENDING，不在请求里打 broker。

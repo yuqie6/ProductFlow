@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -25,9 +27,12 @@ type HTTP struct {
 	Store          settings.RuntimeReader // Runtime.AdminAccessRequired
 	DB             *gorm.DB
 	Service        Service
+	// AttemptLimiter is shared by all API instances. Production injects the
+	// Redis implementation; a missing limiter fails closed with 503.
+	AttemptLimiter    AttemptLimiter
+	TrustedProxyCIDRs []string
 	// EnsureMerchantQuota 在商家创建或重新激活后建试用额度账；由主进程注入，避免 auth↔quota 循环导入。
 	EnsureMerchantQuota func(ctx context.Context, merchantID string) error
-	limiter             *loginLimiter
 }
 
 func (h *HTTP) svc() Service {
@@ -35,13 +40,6 @@ func (h *HTTP) svc() Service {
 		return h.Service
 	}
 	return Service{DB: h.DB}
-}
-
-func (h *HTTP) rate() *loginLimiter {
-	if h.limiter == nil {
-		h.limiter = newLoginLimiter(time.Minute, 10)
-	}
-	return h.limiter
 }
 
 // Register 挂上会话、引导、商家与邀请路由。
@@ -135,20 +133,16 @@ func (h HTTP) create(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"ok": true, "access_required": false})
 		return
 	}
-	key := clientKey(c.Request)
-	now := time.Now().UTC()
-	if !h.rate().allow(key, now) {
-		httpx.WriteDetail(c, http.StatusTooManyRequests, "登录尝试过于频繁，请稍后再试")
-		return
-	}
 	var payload sessionCreateRequest
 	if err := bindJSONStrict(c, &payload); err != nil {
 		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
 		return
 	}
+	if !h.admitCredential(c, strings.ToLower(strings.TrimSpace(payload.Email))) {
+		return
+	}
 	principal, sessionID, err := h.svc().Login(c.Request.Context(), payload.Email, payload.Password)
 	if err != nil {
-		h.rate().fail(key, now)
 		httpx.AbortErr(c, err)
 		return
 	}
@@ -160,15 +154,12 @@ func (h HTTP) create(c *gin.Context) {
 }
 
 func (h HTTP) bootstrap(c *gin.Context) {
-	key := clientKey(c.Request)
-	now := time.Now().UTC()
-	if !h.rate().allow(key, now) {
-		httpx.WriteDetail(c, http.StatusTooManyRequests, "操作过于频繁，请稍后再试")
-		return
-	}
 	var payload bootstrapRequest
 	if err := bindJSONStrict(c, &payload); err != nil {
 		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	if !h.admitCredential(c, strings.ToLower(strings.TrimSpace(payload.Email))) {
 		return
 	}
 	principal, sessionID, err := h.svc().Bootstrap(
@@ -181,7 +172,6 @@ func (h HTTP) bootstrap(c *gin.Context) {
 		payload.MerchantName,
 	)
 	if err != nil {
-		h.rate().fail(key, now)
 		httpx.AbortErr(c, err)
 		return
 	}
@@ -263,7 +253,14 @@ func (h HTTP) acceptInvite(c *gin.Context) {
 		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
 		return
 	}
-	principal, sessionID, err := h.svc().AcceptInvite(c.Request.Context(), payload.Token, payload.Password, payload.DisplayName)
+	if !h.admitCredential(c, hashToken(strings.TrimSpace(payload.Token))) {
+		return
+	}
+	currentUserID := ""
+	if current := PrincipalFrom(c); current != nil {
+		currentUserID = current.UserID
+	}
+	principal, sessionID, err := h.svc().AcceptInvite(c.Request.Context(), payload.Token, payload.Password, payload.DisplayName, currentUserID)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -404,6 +401,25 @@ func writeAuthSession(c *gin.Context, userID, sessionID string) error {
 		sessionCookieUserKey:    userID,
 		sessionCookieSessionKey: sessionID,
 	})
+}
+
+func (h HTTP) admitCredential(c *gin.Context, subject string) bool {
+	if h.AttemptLimiter == nil {
+		httpx.AbortDetail(c, http.StatusServiceUnavailable, "认证限流服务暂时不可用，请稍后再试")
+		return false
+	}
+	decision, err := h.AttemptLimiter.Allow(c.Request.Context(), ClientIP(c.Request, h.TrustedProxyCIDRs), subject)
+	if err != nil {
+		httpx.AbortDetail(c, http.StatusServiceUnavailable, "认证限流服务暂时不可用，请稍后再试")
+		return false
+	}
+	if decision.Allowed {
+		return true
+	}
+	seconds := int((decision.RetryAfter + time.Second - 1) / time.Second)
+	c.Header("Retry-After", strconv.Itoa(max(1, seconds)))
+	httpx.WriteDetail(c, http.StatusTooManyRequests, "尝试过于频繁，请稍后再试")
+	return false
 }
 
 func bindJSONStrict(c *gin.Context, dest any) error {

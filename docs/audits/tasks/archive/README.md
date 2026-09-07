@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [saas-auth-entry-security.md](saas-auth-entry-security.md) | 完成 | 邀请身份证明、Redis 原子准入、来源校验和登录冷却；多商家体验待交付 |
 | [delivery-inspector-confirm-facts-null.md](delivery-inspector-confirm-facts-null.md) | 完成 | 确认事实 impact-preview null.length 兜底；≠R2 |
 | [merchant-mp-c-price-display-workbench.md](merchant-mp-c-price-display-workbench.md) | 完成 | 工作台 Agent 确认展示 graph.image_generation；≠R5 |
 | [delivery-merchant-image-loop-gate.md](delivery-merchant-image-loop-gate.md) | 完成 | 商家成图闭环本门 PASS（mock）；≠R2 |

@@ -237,22 +237,39 @@ func TestSealedAdminAndInternalRoutesReturnContractUnauthorized(t *testing.T) {
 	httpx.RegisterHealth(engine, nil)
 	fake := contractSettings{}
 	registerAPI(engine, apiHandlers{
-		Auth:         auth.HTTP{AdminAccessKey: "contract-admin-key", Store: fake},
-		Settings:     settings.HTTP{Store: fake, SettingsAccessToken: "contract-settings-token"},
-		Product:      product.HTTP{Settings: fake},
-		Library:      library.HTTP{Settings: fake},
-		Graph:        graph.HTTP{Settings: fake},
-		Recipe:       recipe.HTTP{Settings: fake},
-		ImageSession: imagesession.HTTP{Settings: fake},
-		Delivery:     delivery.HTTP{Settings: fake},
-		VisualSystem: visualsystem.HTTP{Settings: fake},
-		Brand:        brand.HTTP{Settings: fake},
-		LocalEdit:    localedit.HTTP{Settings: fake},
-		Agent:        agent.HTTP{Settings: fake, InternalToken: "contract-internal-token"},
+		Auth:           auth.HTTP{AdminAccessKey: "contract-admin-key", Store: fake},
+		AllowedOrigins: []string{"http://web.test"},
+		Settings:       settings.HTTP{Store: fake, SettingsAccessToken: "contract-settings-token"},
+		Product:        product.HTTP{Settings: fake},
+		Library:        library.HTTP{Settings: fake},
+		Graph:          graph.HTTP{Settings: fake},
+		Recipe:         recipe.HTTP{Settings: fake},
+		ImageSession:   imagesession.HTTP{Settings: fake},
+		Delivery:       delivery.HTTP{Settings: fake},
+		VisualSystem:   visualsystem.HTTP{Settings: fake},
+		Brand:          brand.HTTP{Settings: fake},
+		LocalEdit:      localedit.HTTP{Settings: fake},
+		Agent:          agent.HTTP{Settings: fake, InternalToken: "contract-internal-token"},
 	})
 
 	var failed []string
 	for _, route := range engine.Routes() {
+		if route.Method == http.MethodPost || route.Method == http.MethodPut || route.Method == http.MethodPatch || route.Method == http.MethodDelete {
+			for _, origin := range []string{"", "null", "https://untrusted.test"} {
+				for _, contentType := range []string{"application/json", "multipart/form-data; boundary=test"} {
+					req := httptest.NewRequest(route.Method, requestPathFor(route.Path), nil)
+					req.Header.Set("Content-Type", contentType)
+					if origin != "" {
+						req.Header.Set("Origin", origin)
+					}
+					rec := httptest.NewRecorder()
+					engine.ServeHTTP(rec, req)
+					if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "请求来源不受信任") {
+						t.Fatalf("source guard missing: %s %s origin=%q content-type=%s: %d %s", route.Method, route.Path, origin, contentType, rec.Code, rec.Body.String())
+					}
+				}
+			}
+		}
 		if route.Method == http.MethodHead {
 			continue
 		}
@@ -260,6 +277,7 @@ func TestSealedAdminAndInternalRoutesReturnContractUnauthorized(t *testing.T) {
 			continue
 		}
 		req := httptest.NewRequest(route.Method, requestPathFor(route.Path), nil)
+		req.Header.Set("Origin", "http://web.test")
 		rec := httptest.NewRecorder()
 		engine.ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {

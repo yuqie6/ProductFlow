@@ -211,6 +211,9 @@ func (s Service) Login(ctx context.Context, email, password string) (*Principal,
 	if err := s.requireDB(); err != nil {
 		return nil, "", err
 	}
+	if len([]byte(password)) > maxPasswordBytes {
+		return nil, "", apperr.Validation("密码过长")
+	}
 	emailNorm, err := normalizeEmail(email)
 	if err != nil {
 		return nil, "", apperr.Error{Status: 401, Detail: "邮箱或密码不正确"}
@@ -447,7 +450,10 @@ func (s Service) CreateInvite(ctx context.Context, actor UserRef, merchantID, em
 	}, nil
 }
 
-func (s Service) AcceptInvite(ctx context.Context, token, password, displayName string) (*Principal, string, error) {
+// AcceptInvite consumes an invitation after proving the invited account.
+// currentUserID is the already validated browser session identity, or empty
+// when the request has no active session.
+func (s Service) AcceptInvite(ctx context.Context, token, password, displayName, currentUserID string) (*Principal, string, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, "", err
 	}
@@ -455,10 +461,14 @@ func (s Service) AcceptInvite(ctx context.Context, token, password, displayName 
 	if token == "" {
 		return nil, "", apperr.Validation("邀请令牌无效")
 	}
+	if len([]byte(password)) > maxPasswordBytes {
+		return nil, "", apperr.Validation("密码过长")
+	}
 	tokenHash := hashToken(token)
 	now := s.now()
 	var principal *Principal
 	var sessionID string
+	currentID := strings.TrimSpace(currentUserID)
 	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
 		var invite schema.MerchantInvites
 		err := gdb.Clauses(pfdb.ForUpdate()).
@@ -487,6 +497,9 @@ func (s Service) AcceptInvite(ctx context.Context, token, password, displayName 
 		var user schema.Users
 		err = gdb.Where("email = ?", invite.Email).Take(&user).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if currentID != "" {
+				return apperr.Conflict("当前登录账号与邀请账号不一致，请先退出当前账号")
+			}
 			if err := validatePassword(password); err != nil {
 				return apperr.Validation(err.Error())
 			}
@@ -507,13 +520,14 @@ func (s Service) AcceptInvite(ctx context.Context, token, password, displayName 
 			}
 		} else if err != nil {
 			return err
+		} else if currentID != "" && currentID != user.ID {
+			return apperr.Conflict("当前登录账号与邀请账号不一致，请先退出当前账号")
 		} else if user.Status != UserStatusActive {
 			return apperr.Forbidden("账号已停用")
-		} else if password != "" {
-			// 已有账号接受邀请不要求重设密码；若提供则校验正确性
-			if !checkPassword(user.PasswordHash, password) {
-				return apperr.Error{Status: 401, Detail: "邮箱或密码不正确"}
-			}
+		} else if currentID == "" && !checkPassword(user.PasswordHash, password) {
+			// An existing account must prove its identity with its password or a
+			// matching active session. Empty password is never an invitation login.
+			return apperr.Error{Status: 401, Detail: "邮箱或密码不正确"}
 		}
 		var existing schema.Memberships
 		err = gdb.Clauses(pfdb.ForUpdate()).

@@ -23,12 +23,10 @@ describe("delivery export API", () => {
   });
 
   it("preserves the server ApiError for a rejected export", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 409,
-      statusText: "Conflict",
-      json: async () => ({ detail: "A rendition is not exportable" }),
-    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: "A rendition is not exportable" }),
+      { status: 409, statusText: "Conflict" },
+    ));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.downloadDeliveryExport("product-1", ["job-1"])).rejects.toEqual(

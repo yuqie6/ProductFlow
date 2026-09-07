@@ -48,7 +48,12 @@ cd productflow-<IMAGE_TAG>
 ```bash
 cp .env.example .env
 # 至少填写 ADMIN_ACCESS_KEY、SETTINGS_ACCESS_TOKEN、SESSION_SECRET、
-# POSTGRES_PASSWORD、AGENT_SERVICE_INTERNAL_TOKEN（≥32 字符）
+# POSTGRES_PASSWORD、AGENT_SERVICE_INTERNAL_TOKEN（≥32 字符）。
+# BACKEND_CORS_ORIGINS 必须列出 Web 的精确 scheme/host/port；生产设
+# SESSION_COOKIE_SECURE=true。只有 API 前面确实有受控代理时才填写
+# TRUSTED_PROXY_CIDRS，API 不会采信其它来源的 X-Forwarded-For。
+# AUTH_RATE_LIMIT_* 是共享 Redis 上的登录/邀请准入预算，默认每 IP 15 分钟 100 次、
+# 每 IP+账号或邀请令牌摘要 10 次；Redis 不可用时凭据交换返回 503。
 ```
 
 3. 取得镜像（三选一）：

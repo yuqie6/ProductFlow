@@ -110,3 +110,16 @@ func TestLoadQuotaTrialUnits(t *testing.T) {
 		t.Fatalf("negative clamp QuotaTrialUnits=%d", cfg.QuotaTrialUnits)
 	}
 }
+
+func TestValidConfiguredOrigin(t *testing.T) {
+	for _, raw := range []string{"http://localhost:29283", "https://draw.example"} {
+		if !validConfiguredOrigin(raw) {
+			t.Fatalf("validConfiguredOrigin(%q)=false", raw)
+		}
+	}
+	for _, raw := range []string{"null", "*", "http://user@example.test", "http://example.test/path", "http://example.test:bad"} {
+		if validConfiguredOrigin(raw) {
+			t.Fatalf("validConfiguredOrigin(%q)=true", raw)
+		}
+	}
+}

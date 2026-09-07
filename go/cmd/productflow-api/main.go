@@ -89,11 +89,23 @@ func main() {
 	if poll < time.Millisecond {
 		poll = time.Millisecond
 	}
+	attemptLimiter, err := auth.NewRedisAttemptLimiter(cfg.RedisURL, auth.RedisAttemptLimiterConfig{
+		Namespace:  cfg.AuthRateLimitNamespace,
+		Window:     time.Duration(cfg.AuthRateLimitWindowSeconds) * time.Second,
+		IPMax:      cfg.AuthRateLimitIPMax,
+		SubjectMax: cfg.AuthRateLimitSubjectMax,
+	})
+	if err != nil {
+		logger.Fatal("auth limiter configuration", zap.Error(err))
+	}
+	defer attemptLimiter.Client.Close()
 	authHTTP := auth.HTTP{
-		AdminAccessKey: cfg.AdminAccessKey,
-		Store:          settingsStore,
-		DB:             gdb,
-		Service:        auth.Service{DB: gdb},
+		AdminAccessKey:    cfg.AdminAccessKey,
+		Store:             settingsStore,
+		DB:                gdb,
+		Service:           auth.Service{DB: gdb},
+		AttemptLimiter:    attemptLimiter,
+		TrustedProxyCIDRs: cfg.TrustedProxyCIDRs,
 	}
 	trialUnits := cfg.QuotaTrialUnits
 	authHTTP.EnsureMerchantQuota = func(ctx context.Context, merchantID string) error {
@@ -112,7 +124,8 @@ func main() {
 		return runtime.AdminAccessRequired, nil
 	})
 	registerAPI(engine, apiHandlers{
-		Auth: authHTTP,
+		AllowedOrigins: cfg.AllowedOrigins,
+		Auth:           authHTTP,
 		Settings: settings.HTTP{
 			Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken,
 			OperatorOnly: operatorOnly,

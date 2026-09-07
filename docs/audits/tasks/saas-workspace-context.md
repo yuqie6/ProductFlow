@@ -23,7 +23,7 @@
 
 ## 前置与并行
 
-- 前置：[saas-auth-entry-security](saas-auth-entry-security.md) 已交付并固定 cookie/来源合同。
+- 前置：[saas-auth-entry-security](archive/saas-auth-entry-security.md) 已交付并固定 cookie/来源合同。
 - 冻结输入：MP-01 至 MP-04、已有 worker merchant 快照；两商家由测试夹具创建，产品 CreateMerchant 限制保留。
 - 运行资源：隔离 PG、Redis、API/Web/worker、mock provider；不用共享开发栈做退出/停用实验。
 - 全链客户端和商家 middleware 排他；涉及各 SSE reader 时协调者核对实际文件后锁定，不能与其它工作台任务并行写共享文件。
@@ -63,7 +63,7 @@
 
 ## 阻塞与交接
 
-- 原因：身份入口任务未交付，安全来源和邀请身份合同尚未固定。
+- 原因：身份入口交付正在提交；提交后协调者核对基线与共享范围并解阻。
 - 解除条件：开发协调者核验前置 commit、共享文件空闲后恢复开放并认领。
 - 跟进者：开发协调者。
 - 交接：未开工，无资源占用；依赖通过后可自主解阻，不需用户重复审批。

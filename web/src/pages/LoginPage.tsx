@@ -17,6 +17,8 @@ export function LoginPage({ authenticated }: LoginPageProps) {
   const [adminKey, setAdminKey] = useState("");
   const [merchantName, setMerchantName] = useState("开发商家");
   const [error, setError] = useState("");
+  const [retryAt, setRetryAt] = useState(0);
+  const [retrySeconds, setRetrySeconds] = useState(0);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -25,6 +27,15 @@ export function LoginPage({ authenticated }: LoginPageProps) {
     queryFn: api.getSessionState,
   });
   const needsBootstrap = Boolean(sessionQuery.data?.needs_bootstrap);
+
+  useEffect(() => {
+    if (!retryAt) return;
+    const timer = window.setInterval(() => {
+      setRetrySeconds(Math.max(0, Math.ceil((retryAt - Date.now()) / 1000)));
+      if (Date.now() >= retryAt) window.clearInterval(timer);
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [retryAt]);
 
   useEffect(() => {
     if (authenticated) {
@@ -39,16 +50,22 @@ export function LoginPage({ authenticated }: LoginPageProps) {
     navigate("/products", { replace: true });
   };
 
+  const handleLoginError = (mutationError: Error) => {
+    if (mutationError instanceof ApiError) {
+      setError(mutationError.detail);
+      if (mutationError.status === 429 && mutationError.retryAfterSeconds !== null) {
+        setRetrySeconds(mutationError.retryAfterSeconds);
+        setRetryAt(Date.now() + mutationError.retryAfterSeconds * 1000);
+      }
+      return;
+    }
+    setError(t("login.error"));
+  };
+
   const loginMutation = useMutation({
     mutationFn: () => api.createSession({ email, password }),
     onSuccess: finishLogin,
-    onError: (mutationError) => {
-      if (mutationError instanceof ApiError) {
-        setError(mutationError.detail);
-        return;
-      }
-      setError(t("login.error"));
-    },
+    onError: handleLoginError,
   });
 
   const bootstrapMutation = useMutation({
@@ -60,19 +77,14 @@ export function LoginPage({ authenticated }: LoginPageProps) {
         merchant_name: merchantName,
       }),
     onSuccess: finishLogin,
-    onError: (mutationError) => {
-      if (mutationError instanceof ApiError) {
-        setError(mutationError.detail);
-        return;
-      }
-      setError(t("login.error"));
-    },
+    onError: handleLoginError,
   });
 
   const pending = loginMutation.isPending || bootstrapMutation.isPending;
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (pending || Date.now() < retryAt) return;
     setError("");
     if (needsBootstrap) {
       bootstrapMutation.mutate();
@@ -156,11 +168,16 @@ export function LoginPage({ authenticated }: LoginPageProps) {
             />
           </div>
 
-          {error ? <div className="text-xs font-medium text-red-500 dark:text-red-300">{error}</div> : null}
+          {error ? <div role="alert" className="break-words text-xs font-medium text-red-500 dark:text-red-300">{error}</div> : null}
+          {retrySeconds > 0 ? (
+            <p role="status" className="text-xs text-zinc-500 dark:text-slate-400">
+              {t("login.retryAfter", { seconds: retrySeconds })}
+            </p>
+          ) : null}
 
           <button
             type="submit"
-            disabled={pending}
+            disabled={pending || retrySeconds > 0}
             className="flex w-full items-center justify-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-zinc-900/20 transition-colors hover:bg-zinc-800 disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:to-violet-500 dark:shadow-violet-900/35 dark:ring-1 dark:ring-violet-300/35"
           >
             {needsBootstrap ? t("login.bootstrapSubmit") : t("login.submit")}{" "}

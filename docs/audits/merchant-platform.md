@@ -112,7 +112,9 @@ Operator 再认证有效期 10 分钟，绑定本人 session，由服务端记�
 | 商家停用完整执行语义 | 禁止新消费；尚未发出的 provider 尝试停止；已发出调用据事实落成功/unknown 并结算；保留交付与支持处理入口 | 所有消费执行器与授权快照枚举；测试停用与 admission 并发，不用只关前端按钮验收 |
 | 商家首页/运营概览 | 有界投影与统一 metric 口径；只读数据，点击待办返回原业务对象；运营聚合不暴露商家内容 | 工作区选择、消费/任务明细、时区、已可用 API；原型与指标表由体验组拥有 |
 
-首批实施包：[身份入口](tasks/saas-auth-entry-security.md)、[工作商家](tasks/saas-workspace-context.md)、[账户团队](tasks/saas-account-team.md)、[偏好设置](tasks/saas-preferences-settings.md)、[运营额度](tasks/saas-ops-console.md)。独立 [容量基线](tasks/saas-multimerchant-capacity-baseline.md) 属平台可靠性。共享 auth/schema/Web 壳层默认串行；只有文件、输入和资源均独立才并行。详细步骤由开发者按真实调用链安排，不为每个 endpoint 单独建任务。
+首批实施包：[身份入口](tasks/archive/saas-auth-entry-security.md)、[工作商家](tasks/saas-workspace-context.md)、[账户团队](tasks/saas-account-team.md)、[偏好设置](tasks/saas-preferences-settings.md)、[运营额度](tasks/saas-ops-console.md)。独立 [容量基线](tasks/saas-multimerchant-capacity-baseline.md) 属平台可靠性。共享 auth/schema/Web 壳层默认串行；只有文件、输入和资源均独立才并行。详细步骤由开发者按真实调用链安排，不为每个 endpoint 单独建任务。
+
+2026-09-07 身份入口合同已实现并通过回归：已有账号邀请要求身份证明，凭据入口共享 Redis 原子预算，浏览器写入校验来源，登录显示冷却。Web 728 测试及 17 浏览器用例通过；全部后端包已有通过结果，其中 Agent/额度在独立新测试库补跑通过，原复用库全量运行的失败保留于任务证据。SP-01 对应缺陷已修复；工作商家选择、账户团队及真实第二商家开放尚未交付，不重签 R1 或 S2。
 
 ## 组内序列
 

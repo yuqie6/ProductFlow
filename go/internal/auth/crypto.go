@@ -33,6 +33,7 @@ const (
 	sessionTTL              = 14 * 24 * time.Hour
 	inviteTTL               = 7 * 24 * time.Hour
 	minPasswordRunes        = 8
+	maxPasswordBytes        = 72 // bcrypt's documented input limit
 	bcryptCostDefault       = bcrypt.DefaultCost
 )
 
@@ -55,11 +56,11 @@ func normalizeEmail(raw string) (string, error) {
 }
 
 func validatePassword(password string) error {
+	if len([]byte(password)) > maxPasswordBytes {
+		return fmt.Errorf("密码过长")
+	}
 	if utf8.RuneCountInString(password) < minPasswordRunes {
 		return fmt.Errorf("密码至少 %d 个字符", minPasswordRunes)
-	}
-	if len(password) > 200 {
-		return fmt.Errorf("密码过长")
 	}
 	return nil
 }

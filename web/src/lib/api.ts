@@ -110,11 +110,13 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.
 export class ApiError extends Error {
   status: number;
   detail: string;
+  retryAfterSeconds: number | null;
 
-  constructor(status: number, detail: string) {
+  constructor(status: number, detail: string, retryAfterSeconds: number | null = null) {
     super(detail);
     this.status = status;
     this.detail = detail;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -177,7 +179,13 @@ async function responseApiError(response: Response): Promise<ApiError> {
   } catch {
     detail = response.statusText || detail;
   }
-  return new ApiError(response.status, detail);
+  const retryAfter = response.headers.get("Retry-After")?.trim() ?? "";
+  const seconds = /^\d+$/.test(retryAfter) ? Number(retryAfter) : NaN;
+  return new ApiError(
+    response.status,
+    detail,
+    Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : null,
+  );
 }
 
 export const api = {

@@ -4,11 +4,13 @@ This document is the canonical user-operations source. The in-product `/help` pa
 
 ## 1. First Use
 
-1. Log in with `ADMIN_ACCESS_KEY`.
+1. On an empty site, use `ADMIN_ACCESS_KEY` on the login page to initialize an account and the only development merchant, setting an email and password. Subsequent logins use that email and password.
 2. Open `/settings` and unlock it with `SETTINGS_ACCESS_TOKEN`.
 3. Create provider profiles with Base URL, API key, capabilities, and default models.
 4. Bind profiles, interfaces, and models to `prompt`, `agent`, and `image`.
 5. Save and return to `/products`.
+
+Login and setup show a countdown when attempts are rate limited. Submission becomes available again after the cooldown, and form inputs are retained. A temporary service failure remains retryable and does not indicate a successful login.
 
 All three purposes are required by the core flow:
 
