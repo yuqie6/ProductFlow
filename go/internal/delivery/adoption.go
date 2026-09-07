@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/mediaarchive"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -99,9 +100,9 @@ func (s Service) CreateAdoption(ctx context.Context, productID string, req Creat
 func (s Service) ListAdoptions(ctx context.Context, productID string) (AdoptionListResponse, error) {
 	var out AdoptionListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		var productRow schema.Products
-		if err := pgxTx.Where("id = ?", productID).Take(&productRow).Error; err != nil {
-			return apperr.NotFound("商品不存在")
+		productRow, err := requireProduct(ctx, pgxTx, productID)
+		if err != nil {
+			return err
 		}
 		out.CurrentVersionID = productRow.CurrentDeliveryAdoptionVersionID
 		var versions []schema.DeliveryAdoptionVersions
@@ -227,9 +228,9 @@ func (s Service) ExportAdoption(ctx context.Context, productID, versionID string
 	var filename string
 	var manifest map[string]any
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		var productRow schema.Products
-		if err := pgxTx.Where("id = ?", productID).Take(&productRow).Error; err != nil {
-			return apperr.NotFound("商品不存在")
+		productRow, err := requireProduct(ctx, pgxTx, productID)
+		if err != nil {
+			return err
 		}
 		productName := productRow.Name
 		successItems := []map[string]any{}
@@ -245,6 +246,9 @@ func (s Service) ExportAdoption(ctx context.Context, productID, versionID string
 			}
 			row, err := loadJob(ctx, pgxTx, *item.RenditionJobID)
 			if err != nil {
+				if apperr.IsNotFound(err) && err.Error() == auth.CrossMerchantDetail {
+					return err
+				}
 				return apperr.NotFound("交付图任务不存在")
 			}
 			if row.ProductID != productID || row.Status != "succeeded" || row.ResultAssetID == nil || row.FinishedAt == nil {
@@ -512,9 +516,9 @@ func validateOptionalSourceVersions(ctx context.Context, tx *gorm.DB, productID 
 }
 
 func loadAdoptionVersion(ctx context.Context, tx *gorm.DB, productID, versionID string) (schema.DeliveryAdoptionVersions, *string, error) {
-	var productRow schema.Products
-	if err := tx.WithContext(ctx).Where("id = ?", productID).Take(&productRow).Error; err != nil {
-		return schema.DeliveryAdoptionVersions{}, nil, apperr.NotFound("商品不存在")
+	productRow, err := requireProduct(ctx, tx, productID)
+	if err != nil {
+		return schema.DeliveryAdoptionVersions{}, nil, err
 	}
 	currentID := productRow.CurrentDeliveryAdoptionVersionID
 	target := strings.TrimSpace(versionID)
@@ -707,9 +711,9 @@ func buildAdoptionPreview(
 }
 
 func loadProductName(ctx context.Context, tx *gorm.DB, productID string) (string, error) {
-	var row schema.Products
-	if err := tx.WithContext(ctx).Select("id", "name").Where("id = ?", productID).Take(&row).Error; err != nil {
-		return "", apperr.NotFound("商品不存在")
+	row, err := requireProduct(ctx, tx, productID)
+	if err != nil {
+		return "", err
 	}
 	return row.Name, nil
 }

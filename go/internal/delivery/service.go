@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -56,9 +57,7 @@ func (s Service) Submit(ctx context.Context, sourceAssetID string, specRaw map[s
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		source, err := productLoad(ctx, pgxTx, sourceAssetID)
 		if err != nil {
-			if apperr.IsNotFound(err) {
-				return apperr.NotFound("交付派生原图不存在")
-			}
+			// LoadAssetRow 已对缺失/跨商统一 CrossMerchantDetail；勿改写成领域文案。
 			return err
 		}
 		if err := validateSource(ctx, pgxTx, source); err != nil {
@@ -140,9 +139,6 @@ func (s Service) List(ctx context.Context, sourceAssetID string) (JobListRespons
 	var out JobListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := productLoad(ctx, pgxTx, sourceAssetID); err != nil {
-			if apperr.IsNotFound(err) {
-				return apperr.NotFound("交付派生原图不存在")
-			}
 			return err
 		}
 		var collected []schema.DeliveryRenditionJobs
@@ -305,9 +301,12 @@ func loadJob(ctx context.Context, q *gorm.DB, jobID string) (jobRow, error) {
 	var row schema.DeliveryRenditionJobs
 	err := q.WithContext(ctx).Where("id = ?", jobID).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return jobRow{}, apperr.NotFound("交付派生任务不存在")
+		return jobRow{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
+		return jobRow{}, err
+	}
+	if _, err := requireProduct(ctx, q, row.ProductID); err != nil {
 		return jobRow{}, err
 	}
 	return jobFromModel(row), nil
@@ -317,12 +316,28 @@ func loadJobForUpdate(ctx context.Context, tx *gorm.DB, jobID string) (jobRow, e
 	var row schema.DeliveryRenditionJobs
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", jobID).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return jobRow{}, apperr.NotFound("交付派生任务不存在")
+		return jobRow{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return jobRow{}, err
 	}
+	if _, err := requireProduct(ctx, tx, row.ProductID); err != nil {
+		return jobRow{}, err
+	}
 	return jobFromModel(row), nil
+}
+
+// requireProduct 按工作商家加载商品行；缺失与跨商统一 NotFoundCrossMerchant。
+func requireProduct(ctx context.Context, tx *gorm.DB, productID string) (schema.Products, error) {
+	var row schema.Products
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Where("id = ?", productID), "merchant_id").Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return schema.Products{}, auth.NotFoundCrossMerchant()
+	}
+	if err != nil {
+		return schema.Products{}, err
+	}
+	return row, nil
 }
 
 func loadBySourceHash(ctx context.Context, tx *gorm.DB, sourceID, hash string) (*jobRow, error) {

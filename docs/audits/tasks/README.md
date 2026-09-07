@@ -20,7 +20,7 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [merchant-delivery-localedit.md](merchant-delivery-localedit.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-delivery-localedit | 2026-09-07T13:56:00+08:00 |
+| [merchant-agent-tools.md](merchant-agent-tools.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-agent-tools | 2026-09-07T14:10:00+08:00 |
 | [compete-facts-produce-route.md](compete-facts-produce-route.md) | 图片质量 | 实现 | 认领 | sub-compete/compete-facts-produce-route | 2026-09-07T14:05:00+08:00 |
 | [workbench-remember-last-view.md](workbench-remember-last-view.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [release-r6-readiness-gate.md](release-r6-readiness-gate.md) | 平台可靠性 | 证据 | 开放 | — | — |

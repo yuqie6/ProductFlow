@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -82,6 +83,9 @@ func taskFromModel(m schema.LocalImageEditTasks) taskRow {
 }
 
 func loadTask(ctx context.Context, tx *gorm.DB, productID, taskID string) (taskRow, error) {
+	if err := requireProduct(ctx, tx, productID); err != nil {
+		return taskRow{}, err
+	}
 	var row schema.LocalImageEditTasks
 	err := tx.Where("id = ? AND product_id = ?", taskID, productID).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -100,6 +104,9 @@ func loadTask(ctx context.Context, tx *gorm.DB, productID, taskID string) (taskR
 }
 
 func loadTaskForUpdate(ctx context.Context, tx *gorm.DB, productID, taskID string) (taskRow, error) {
+	if err := requireProduct(ctx, tx, productID); err != nil {
+		return taskRow{}, err
+	}
 	var row schema.LocalImageEditTasks
 	err := tx.Clauses(pfdb.ForUpdate()).Where("id = ? AND product_id = ?", taskID, productID).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -147,26 +154,39 @@ func listReferenceIDs(ctx context.Context, tx *gorm.DB, taskID string) ([]string
 	return ids, nil
 }
 
-func lockProduct(ctx context.Context, tx *gorm.DB, productID string) error {
+func requireProduct(ctx context.Context, tx *gorm.DB, productID string) error {
 	var row schema.Products
-	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", productID).Take(&row).Error
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Where("id = ?", productID), "merchant_id").Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return apperr.NotFound("商品不存在")
+		return auth.NotFoundCrossMerchant()
 	}
 	return err
 }
 
-// lockSource FOR UPDATE 锁商品图并返回 MediaObject 路径。图不属于该商品或不存在返回 404。
-func lockSource(ctx context.Context, tx *gorm.DB, productID, assetID string) (product.ImageAsset, string, error) {
-	var locked schema.ProductImageAssets
-	err := tx.Clauses(pfdb.ForUpdate()).Where("id = ? AND product_id = ?", assetID, productID).Take(&locked).Error
+func lockProduct(ctx context.Context, tx *gorm.DB, productID string) error {
+	var row schema.Products
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", productID), "merchant_id").Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return product.ImageAsset{}, "", apperr.NotFound("商品图片不存在")
+		return auth.NotFoundCrossMerchant()
 	}
+	return err
+}
+
+// lockSource FOR UPDATE 锁商品图并返回 MediaObject 路径。
+// 跨商/缺失统一 NotFoundCrossMerchant；图不属于该商品返回 404「商品图片不存在」。
+func lockSource(ctx context.Context, tx *gorm.DB, productID, assetID string) (product.ImageAsset, string, error) {
+	asset, err := product.LoadAssetRow(ctx, tx, assetID)
 	if err != nil {
 		return product.ImageAsset{}, "", err
 	}
-	asset, err := product.LoadAssetRow(ctx, tx, assetID)
+	if asset.ProductID != productID {
+		return product.ImageAsset{}, "", apperr.NotFound("商品图片不存在")
+	}
+	var locked schema.ProductImageAssets
+	err = tx.Clauses(pfdb.ForUpdate()).Where("id = ? AND product_id = ?", assetID, productID).Take(&locked).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return product.ImageAsset{}, "", apperr.NotFound("商品图片不存在")
+	}
 	if err != nil {
 		return product.ImageAsset{}, "", err
 	}

@@ -206,12 +206,7 @@ func (s Service) List(ctx context.Context, productID string, limit int) (TaskLis
 	}
 	var out TaskListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		var productRow schema.Products
-		err := pgxTx.Where("id = ?", productID).Take(&productRow).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return apperr.NotFound("商品不存在")
-		}
-		if err != nil {
+		if err := requireProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
 		var collected []schema.LocalImageEditTasks

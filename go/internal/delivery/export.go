@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/mediaarchive"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -58,9 +59,9 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 	var filename string
 	var manifest map[string]any
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		var productRow schema.Products
-		if err := pgxTx.Where("id = ?", productID).Take(&productRow).Error; err != nil {
-			return apperr.NotFound("商品不存在")
+		productRow, err := requireProduct(ctx, pgxTx, productID)
+		if err != nil {
+			return err
 		}
 		productName := productRow.Name
 		safeProduct := safeName(productName, "product")
@@ -72,6 +73,9 @@ func (s Service) Export(ctx context.Context, productID string, jobIDs []string, 
 		for index, jobID := range cleaned {
 			row, err := loadJob(ctx, pgxTx, jobID)
 			if err != nil {
+				if apperr.IsNotFound(err) && err.Error() == auth.CrossMerchantDetail {
+					return err
+				}
 				return apperr.NotFound("交付图任务不存在")
 			}
 			if row.ProductID != productID {

@@ -36,7 +36,7 @@
 | 门 | 完成条件 | 当前 |
 |---|---|---|
 | MP-A 身份 | 多角色、邀请/撤销/恢复、最后 Owner 与并发变更、会话失效可验证 | **B0 已交付**（见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)）；业务表隔离仍属 MP-B |
-| MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **B1–B5 已交付**（根归属、商品链、Graph/配方、图库绑定、会话生图，跨商 404）；Agent 工具仍属 B6–B10；完整双商门未过 |
+| MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **B1–B6 已交付**（根归属、商品链、Graph/配方、图库绑定、会话生图、交付/局部编辑，跨商 404）；Agent 工具仍属 B7–B10；完整双商门未过 |
 | MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | 未实现 |
 | MP-D 运营 | 运营密钥不进入商家上下文；停用、支持访问、数据导出有明确权限与审计 | 未实现 |
 
@@ -273,7 +273,7 @@
 | **B3** | Graph+配方 | 矩阵 C\*、D\*：changeset、run、SSE、recipe apply。**已交付**（2026-09-07，见 [merchant-graph-recipe](tasks/archive/merchant-graph-recipe.md)） | 本商 run/SSE/apply | 交叉 workflow/recipe/run；SSE 游标 → 404 | 单商 |
 | **B4** | 图库绑定 | 矩阵 E\*：from-product/session、workflow sync。**已交付**（2026-09-07，见 [merchant-library-binding](tasks/archive/merchant-library-binding.md)；跨商统一 404） | 同商绑定 | **跨商绑定** | 单商 |
 | **B5** | 会话生图 | 矩阵 F\*：generate、SSE、attach。**已交付**（2026-09-07，见 [merchant-image-session](tasks/archive/merchant-image-session.md)；跨商统一 404） | 本商 | 跨商 attach/download/retry | 单商 |
-| **B6** | 交付与局部编辑 | 矩阵 G\* | 本商 job/export/adopt | 跨商 job/task/source | 单商 |
+| **B6** | 交付与局部编辑 | 矩阵 G\*。**已交付**（2026-09-07，见 [merchant-delivery-localedit](tasks/archive/merchant-delivery-localedit.md)；跨商统一 404） | 本商 job/export/adopt | 跨商 job/task/source | 单商 |
 | **B7** | Agent 全链 | 矩阵 H\*、I\*：浏览器+internal+Pi scope 商家字段、25 工具越权 harness | 本商 turn/tool | 伪造 internal scope、跨商 content、确认在撤销后 | 单商；Agent 评测题不改 grader 边界 |
 | **B8** | 队列与前端 | 矩阵 J\*：五 Actor 快照、Restage、recovery；前端 merchant 前缀与 SSE 取消 | 混合队列下本商 UI 正确 | 改信封商家无效；旧订阅；切换迟到 | 单商 |
 | **B9** | 运营面最小集 | A3–A4、A8 支持会话合同草案；商家启停字段 | Op 停用后商家不可写 | 商家角色碰 settings | 仍不开放第二外部商 |
@@ -320,7 +320,7 @@
 ## 验收缺口（相对 MP-B，非本证据任务失败）
 
 - 身份与 Membership：**B0/MP-A 实现已就绪**（密码会话、邀请、最后 Owner；见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)）。
-- 业务根表 `merchant_id` 与查询过滤：**B1 已交付**（跨商 404）；**B2 商品子链/下载/ZIP/workspace/from-recipe 已交付**；**B3 Graph/SSE/recipe apply 已交付**；**B4 图库绑定已交付**；**B5 会话生图已交付**；Agent 工具链与交付/局部编辑仍待 B6–B7。
+- 业务根表 `merchant_id` 与查询过滤：**B1 已交付**（跨商 404）；**B2 商品子链/下载/ZIP/workspace/from-recipe 已交付**；**B3 Graph/SSE/recipe apply 已交付**；**B4 图库绑定已交付**；**B5 会话生图已交付**；**B6 交付/局部编辑已交付**；Agent 工具链仍待 B7。
 - 双商自动化套件与前端切换套件未建。
 - MP-C/MP-D 未开始。
 

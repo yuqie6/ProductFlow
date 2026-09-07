@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/yuqie6/productflow/internal/auth"
 )
 
 func TestExportWritesManifestLineageAndSha256(t *testing.T) {
@@ -294,7 +296,7 @@ func TestExportRejectsUnknownJobWithoutWritingZip(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing job")
 	}
-	if !strings.Contains(err.Error(), "交付图任务不存在") {
+	if !strings.Contains(err.Error(), auth.CrossMerchantDetail) && !strings.Contains(err.Error(), "交付图任务不存在") {
 		t.Fatalf("err %v", err)
 	}
 }
