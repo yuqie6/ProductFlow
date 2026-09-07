@@ -38,9 +38,6 @@ func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID, atte
 	if failErr := failClaimedNode(ctx, e.DB, runID, nodeRunID, attemptID, reason); failErr != nil {
 		return failErr
 	}
-	if qErr := e.finalizeImageQuotaAfterClaimedFailure(ctx, runID, nodeRunID, attemptID); qErr != nil {
-		return qErr
-	}
 	return nil
 }
 

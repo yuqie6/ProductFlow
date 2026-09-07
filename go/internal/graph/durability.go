@@ -278,7 +278,11 @@ func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) 
 		reason = reason[:1000]
 	}
 	var nodeRuns []schema.WorkflowGraphNodeRuns
-	if err := tx.WithContext(ctx).Select("id", "node_id").Where("graph_run_id = ? AND status IN ?", runID, []string{"queued", "running"}).Find(&nodeRuns).Error; err != nil {
+	if err := tx.WithContext(ctx).Select("id", "node_id", "active_attempt_id").Clauses(pfdb.ForUpdate()).Where("graph_run_id = ? AND status IN ?", runID, []string{"queued", "running"}).Find(&nodeRuns).Error; err != nil {
+		return err
+	}
+	merchantID, err := merchantIDForGraphRun(ctx, tx, runID)
+	if err != nil {
 		return err
 	}
 	for _, node := range nodeRuns {
@@ -292,6 +296,13 @@ func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) 
 		}
 		if result.RowsAffected != 1 {
 			continue
+		}
+		attemptID := ""
+		if node.ActiveAttemptID != nil {
+			attemptID = *node.ActiveAttemptID
+		}
+		if err := (Executor{DB: tx}).releaseImageQuota(ctx, merchantID, node.ID, attemptID); err != nil {
+			return err
 		}
 		if err := appendGraphRunEventLocked(ctx, tx, runID, "node.failed", &node.ID, map[string]any{
 			"status": NodeRunFailed, "node_id": node.NodeID, "reason": reason,
@@ -396,6 +407,13 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expect
 		}
 		if result.RowsAffected != 1 {
 			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			return err
+		}
+		merchantID, err := merchantIDForGraphRun(ctx, dbTx, runID)
+		if err != nil {
+			return err
+		}
+		if err := (Executor{DB: dbTx}).releaseImageQuota(ctx, merchantID, nodeRunID, expectedAttemptID); err != nil {
 			return err
 		}
 		if err := appendGraphRunEventLocked(ctx, dbTx, runID, "node.failed", &nodeRunID, map[string]any{

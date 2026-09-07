@@ -2,7 +2,6 @@ package graph
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -117,37 +116,4 @@ func (s Service) finalizeImageQuotaOnCancel(ctx context.Context, merchantID, nod
 		return finalizeQuotaIgnoreMissing(s.quota().MarkUnknown(ctx, merchantID, key))
 	}
 	return finalizeQuotaIgnoreMissing(s.quota().Release(ctx, merchantID, key))
-}
-
-func (e Executor) finalizeImageQuotaAfterClaimedFailure(ctx context.Context, runID, nodeRunID, attemptID string) error {
-	merchantID, err := merchantIDForGraphRun(ctx, e.DB, runID)
-	if err != nil {
-		return err
-	}
-	key := imageNodeQuotaKey(nodeRunID, attemptID)
-	var hold schema.MerchantQuotaHolds
-	err = e.DB.WithContext(ctx).
-		Where("merchant_id = ? AND idempotency_key = ? AND status = ?", merchantID, key, quota.StatusReserved).
-		Take(&hold).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
-	}
-	if err != nil {
-		return apperr.Internal("读取额度预留失败")
-	}
-	var node schema.WorkflowGraphNodeRuns
-	if takeErr := e.DB.WithContext(ctx).Select("status").Where("id = ?", nodeRunID).Take(&node).Error; takeErr != nil {
-		return takeErr
-	}
-	if node.Status == NodeRunUnknown {
-		return e.markImageQuotaUnknown(ctx, merchantID, nodeRunID, attemptID)
-	}
-	started, err := imageProviderEffectExists(ctx, e.DB, nodeRunID, attemptID)
-	if err != nil {
-		return err
-	}
-	if started {
-		return e.settleImageQuota(ctx, merchantID, nodeRunID, attemptID)
-	}
-	return e.releaseImageQuota(ctx, merchantID, nodeRunID, attemptID)
 }
