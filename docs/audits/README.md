@@ -56,7 +56,9 @@
 | workbench-default-entry-walkthrough | 默认入口走查 | 开放 |
 | compete-facts-layout-contract | 事实/排版合同 | 完成归档 |
 | compete-facts-layer-gate | CF-B0 事实分层闸 | 2026-09-07 完成归档 |
-| compete-facts-text-trace | CF-B1 图位文字追溯 | CTO 认领 `sub-compete/…`，执行中 |
+| compete-facts-text-trace | CF-B1 图位文字追溯 | 2026-09-07 完成归档 |
+| compete-facts-impact-preview | CF-B2 变更影响预览 | 开放 |
+| merchant-graph-recipe | 商家平台 B3；Graph/配方隔离 | CTO 认领 `sub-merchant/…`，执行中 |
 | image-quality-content-pilot | 图片质量真实对照 | 费用已授权；开放待隔离栈 |
 | eval-skills | Agent 质量 | 阻塞；保留候选与冻结 A/B |
 | eval-labels / eval-state-live | Agent 质量证据 | 阻塞 |

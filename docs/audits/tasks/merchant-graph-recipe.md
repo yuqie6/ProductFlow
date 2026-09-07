@@ -1,9 +1,9 @@
 # 任务：Graph 与配方商家隔离（B3）
 
-状态：开放
+状态：认领
 类型：实现
-认领者：—
-认领于：—
+认领者：sub-merchant/merchant-graph-recipe
+认领于：2026-09-07T13:36:00+08:00
 业务组：商家平台
 父账本：merchant-platform.md
 完成后可拆：B4 图库绑定或 B5 会话生图（写集不冲突时并行）；完整隔离门未过不开放第二商家
@@ -21,7 +21,7 @@ B2 已隔离商品子链下载/ZIP/workspace。Graph changeset/run/SSE 与 recip
 ## 前置与并行
 
 - 前置：B2 已归档。
-- 排他写入：`go/internal/graph/`、`go/internal/recipe/`（apply/SSE/run 路径）及相关测试、父章程 B3、本文件。勿与 CF-B1（graph 产物元数据）同写冲突文件——认领前核占用。
+- 排他写入：`go/internal/graph/`、`go/internal/recipe/`（apply/SSE/run 路径）及相关测试、父章程 B3、本文件。CF-B1 已归档；勿与 `compete-facts-impact-preview` 同写冲突的 digest/预览文件——认领前核占用；本批优先商家过滤 HTTP/SSE/apply。
 - 不改 Skill/grader、delivery 采用快照、发行脚本。
 
 ## 只改这些文件

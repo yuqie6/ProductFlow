@@ -145,7 +145,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		if result.Payload == nil {
 			return fmt.Errorf("提示词 provider 未返回结构化输出")
 		}
-		return e.persistContentArtifact(ctx, run, *nodeRun, "creative_brief", result, digest, promote, prompt.Name(), func(config map[string]any) map[string]any {
+		return e.persistContentArtifact(ctx, run, *nodeRun, "creative_brief", result, digest, promote, prompt.Name(), nil, func(config map[string]any) map[string]any {
 			return mergeGeneratedBrief(config, result.Payload, mode, DocumentOrigin(node))
 		})
 	case NodeVisualSystem:
@@ -161,7 +161,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		if result.Payload == nil {
 			return fmt.Errorf("提示词 provider 未返回结构化输出")
 		}
-		return e.persistContentArtifact(ctx, run, *nodeRun, "visual_system", result, digest, promote, prompt.Name(), func(config map[string]any) map[string]any {
+		return e.persistContentArtifact(ctx, run, *nodeRun, "visual_system", result, digest, promote, prompt.Name(), nil, func(config map[string]any) map[string]any {
 			return mergeGeneratedOverlay(config, result.Payload, mode, DocumentOrigin(node))
 		})
 	case NodeImagePrompt:
@@ -183,7 +183,14 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 			req.TextPolicy,
 			promptConfigHasAuthoredText(storedPrompt),
 		)
-		return e.persistContentArtifact(ctx, run, *nodeRun, "prompt", result, digest, promote, prompt.Name(), func(config map[string]any) map[string]any {
+		textTrace := TextTraceAsMap(BuildTextTrace(TextTraceInput{
+			Prompt:       result.Payload,
+			Facts:        facts,
+			ImageTypeKey: req.ImageTypeKey,
+		}))
+		return e.persistContentArtifact(ctx, run, *nodeRun, "prompt", result, digest, promote, prompt.Name(), map[string]any{
+			"text_trace": textTrace,
+		}, func(config map[string]any) map[string]any {
 			return mergeGeneratedPrompt(config, result.Payload, mode, DocumentOrigin(node))
 		})
 	case NodeImageGeneration:
@@ -229,7 +236,13 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 		if err := media.RejectGenerationOutput([][]byte{img.Bytes}, img.MIME); err != nil {
 			return err
 		}
-		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, image.Name(), imgReq.PromptArtifactID)
+		imageTrace := TextTraceAsMap(BuildTextTrace(TextTraceInput{
+			Prompt:            promptPayload,
+			Facts:             factsUpstreamOfImage(applied, node.ID, sources),
+			ImageTypeKey:      imgReq.ImageTypeKey,
+			UserImageOverride: nodeHasTextOverride(node.Config),
+		}))
+		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, image.Name(), imgReq.PromptArtifactID, imageTrace)
 	default:
 		return apperr.Validation("不能运行该节点类型")
 	}
@@ -486,6 +499,7 @@ func (e Executor) markUnknownCommitted(ctx context.Context, runID, nodeRunID str
 
 // persistContentArtifact 写入文稿 artifact；seed 且非显式 document_action 时才 auto-adopt 进 live config。
 // promote=false 走 finishUnpromoted，不改节点投影。adopt 前先锁 graph，避免与并行内容节点死锁。
+// artifactMeta（如 text_trace）在校验后并入产物 JSON，不进 writeback / live config。
 // 副作用：workflow_graph_artifacts、node_runs succeeded、可能 WriteTx 节点 config、run.graph_revision。
 func (e Executor) persistContentArtifact(
 	ctx context.Context,
@@ -496,6 +510,7 @@ func (e Executor) persistContentArtifact(
 	digest string,
 	promote bool,
 	providerName string,
+	artifactMeta map[string]any,
 	writeback func(map[string]any) map[string]any,
 ) error {
 	if err := validateGeneratedPayload(artifactType, result.Payload); err != nil {
@@ -526,7 +541,11 @@ func (e Executor) persistContentArtifact(
 		}
 		result.Payload = visibleDocument(snapshotNode.NodeType, limited)
 	}
-	payload, err := json.Marshal(result.Payload)
+	storePayload := cloneMap(result.Payload)
+	for key, value := range artifactMeta {
+		storePayload[key] = cloneValue(value)
+	}
+	payload, err := json.Marshal(storePayload)
 	if err != nil {
 		return err
 	}
@@ -631,6 +650,7 @@ func (e Executor) persistImageArtifact(
 	digest string,
 	promote bool,
 	providerName, promptArtifactID string,
+	textTrace map[string]any,
 ) error {
 	if e.Deps.Assets == nil {
 		return apperr.Validation("节点运行失败")
@@ -700,6 +720,9 @@ func (e Executor) persistImageArtifact(
 			"generation_spec":        spec,
 			"prompt_artifact_id":     emptyToNil(promptArtifactID),
 			"measured_output":        measured,
+		}
+		if len(textTrace) > 0 {
+			payloadMap["text_trace"] = textTrace
 		}
 		payload, err := json.Marshal(payloadMap)
 		if err != nil {
@@ -950,7 +973,8 @@ func hydrateSourcesFromNodeRuns(ctx context.Context, pool *gorm.DB, nodeRuns []g
 				source.VisualPayload = cloneMap(payloadMap)
 			}
 		case "prompt":
-			source.PromptDocument = cloneMap(payloadMap)
+			// text_trace / fact_keys 只挂在产物元数据，不进下游 listing prompt。
+			source.PromptDocument = stripV3PromptPayload(payloadMap)
 		}
 		byNodeRun[*rec.NodeRunID] = source
 	}

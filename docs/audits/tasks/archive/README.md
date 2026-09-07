@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [compete-facts-text-trace.md](compete-facts-text-trace.md) | 完成 | CF-B1 text_trace+卖点一图一理由；≠OCR/采用硬闸/R3 |
 | [brand-visual-reuse.md](brand-visual-reuse.md) | 完成 | 视觉方案版本选择+IQ-CF-07 继承预览；Brand 占位；≠跨商分享 |
 | [merchant-product-chain.md](merchant-product-chain.md) | 完成 | B2 商品子链隔离+跨商404；≠MP-B |
 | [merchant-root-ownership.md](merchant-root-ownership.md) | 完成 | B1 根表 merchant_id+过滤+跨商404；≠MP-B |

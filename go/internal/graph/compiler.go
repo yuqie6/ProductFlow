@@ -12,7 +12,7 @@ import (
 )
 
 var promptStrippedKeys = map[string]struct{}{
-	"images": {}, "fact_keys": {}, "evidence_asset_ids": {},
+	"images": {}, "fact_keys": {}, "evidence_asset_ids": {}, "text_trace": {},
 	"prompt_plan_key": {}, "image_plan_key": {}, "prompt_plan_keys": {}, "image_plan_keys": {},
 }
 
