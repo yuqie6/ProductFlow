@@ -59,7 +59,7 @@
 | delivery-adoption-snapshot | 采用快照 | 2026-09-07 完成归档 |
 | brand-visual-reuse | 品牌视觉复用 | 2026-09-07 完成归档 |
 | workbench-default-entry-walkthrough | 默认入口走查 | 2026-09-07 完成归档；建议暂不全局默认成果 |
-| workbench-conditional-results-default | 有产出时默认成果 | 开放 |
+| workbench-conditional-results-default | 有产出时默认成果 | CTO 认领 `sub-delivery/…`，执行中 |
 | compete-facts-layout-contract | 事实/排版合同 | 完成归档 |
 | compete-facts-layer-gate | CF-B0 事实分层闸 | 2026-09-07 完成归档 |
 | compete-facts-text-trace | CF-B1 图位文字追溯 | 2026-09-07 完成归档 |
