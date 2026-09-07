@@ -93,6 +93,81 @@ func TestApplySubjectPreserveExtractSkipsGenerative(t *testing.T) {
 	}
 }
 
+func TestGateImageProduceRouteSubjectPreserveSuccessMetadata(t *testing.T) {
+	ref := mustSubjectFixturePNG(t, 100, 80, 25, 20, 45, 40)
+	route := ProduceRouteAsMap(BuildProduceRouteRecord(ProduceRouteInput{
+		Route:                ProduceRouteSubjectPreserve,
+		ImageTypeKey:         "hero",
+		HasIdentityReference: true,
+		PromptTexts:          []string{"棚拍主图"},
+	}))
+	gated := gateImageProduceRouteWithSubjectExtract([]ReferenceImage{{
+		Role: "product_identity", Bytes: ref, MIME: "image/png",
+	}}, route)
+	if gated["route_qualified"] != true {
+		t.Fatalf("success must stay qualified: %+v", gated)
+	}
+	check, ok := gated["subject_extract"].(map[string]any)
+	if !ok || check["pass"] != true {
+		t.Fatalf("want subject_extract metadata: %+v", gated)
+	}
+	if check["mask_sha256"] == "" || check["cutout_sha256"] == "" {
+		t.Fatalf("verifiable hashes missing: %+v", check)
+	}
+}
+
+func TestGateImageProduceRouteSubjectPreserveFailureUnqualified(t *testing.T) {
+	solid := mustSolidFixturePNG(t, 48, 48, color.RGBA{200, 200, 200, 255})
+	route := ProduceRouteAsMap(BuildProduceRouteRecord(ProduceRouteInput{
+		Route:                ProduceRouteSubjectPreserve,
+		ImageTypeKey:         "hero",
+		HasIdentityReference: true,
+	}))
+	gated := gateImageProduceRouteWithSubjectExtract([]ReferenceImage{{
+		Role: "product_identity", Bytes: solid, MIME: "image/png",
+	}}, route)
+	if gated["route_qualified"] != false {
+		t.Fatalf("failure must force unqualified: %+v", gated)
+	}
+	if _, ok := gated["subject_extract"].(map[string]any); !ok {
+		t.Fatalf("want subject_extract on failure: %+v", gated)
+	}
+	q := ParseArtifactDeliveryQualification(map[string]any{"produce_route": gated})
+	if RouteAllowsDeliveryPass(q.Route) {
+		t.Fatalf("failed extract must block delivery: %+v", q.Route)
+	}
+}
+
+func TestGateImageProduceRouteGenerativeSkipped(t *testing.T) {
+	ref := mustSubjectFixturePNG(t, 80, 60, 20, 15, 30, 30)
+	route := ProduceRouteAsMap(BuildProduceRouteRecord(ProduceRouteInput{
+		Route:        ProduceRouteGenerative,
+		ImageTypeKey: "scene",
+		PromptTexts:  []string{"场景摄影"},
+	}))
+	gated := gateImageProduceRouteWithSubjectExtract([]ReferenceImage{{
+		Role: "product_identity", Bytes: ref, MIME: "image/png",
+	}}, route)
+	if gated["route_qualified"] != true {
+		t.Fatalf("generative must not be forced unqualified: %+v", gated)
+	}
+	if _, ok := gated["subject_extract"]; ok {
+		t.Fatalf("generative must skip extract: %+v", gated)
+	}
+}
+
+func TestGateImageProduceRouteMissingIdentityUnqualified(t *testing.T) {
+	route := ProduceRouteAsMap(BuildProduceRouteRecord(ProduceRouteInput{
+		Route:                ProduceRouteSubjectPreserve,
+		ImageTypeKey:         "hero",
+		HasIdentityReference: true, // 声明有身份，但入边无字节 → 提取失败
+	}))
+	gated := gateImageProduceRouteWithSubjectExtract(nil, route)
+	if gated["route_qualified"] != false {
+		t.Fatalf("empty refs must force unqualified: %+v", gated)
+	}
+}
+
 func mustSubjectFixturePNG(t *testing.T, w, h, sx, sy, sw, sh int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))

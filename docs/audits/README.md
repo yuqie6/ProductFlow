@@ -90,6 +90,7 @@
 | merchant-mp-c-wire-b3-agent | 商家平台 MP-C B3 Agent 额度接线 | 2026-09-07 完成归档；before_model_request；≠R5 |
 | delivery-export-overlay-fix | 成果页导出叠层可达 | 2026-09-07 完成归档；UI 真实点击；≠R2 |
 | image-quality-subject-extract-b0 | 主体提取 B0 | 2026-09-07 完成归档；角点色差分割；≠R3 |
+| image-quality-subject-extract-apply | 主体提取接入生成路径 | 2026-09-07 完成归档；persist 前自动 Apply；≠R3 |
 | eval-skills | Agent 质量 | 阻塞；保留候选与冻结 A/B |
 | eval-labels / eval-state-live | Agent 质量证据 | 阻塞 |
 | eval-production-mine | Agent 质量 | 阻塞（无生产商户） |
