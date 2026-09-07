@@ -160,6 +160,16 @@ describe("GraphResultsView", () => {
     expect(markup).toContain("data-graph-results-export-adoption");
   });
 
+  it("shows adoption rejection reason and disables adopt when blocked", () => {
+    const markup = renderResults({
+      adoptionBlockByNodeId: new Map([["node-ok", "文字追溯不合格，不能采用为交付"]]),
+      onAdoptItem: vi.fn(),
+    });
+    expect(markup).toContain('data-graph-result-adopt-blocked="true"');
+    expect(markup).toContain("data-graph-result-adopt-reason");
+    expect(markup).toContain("文字追溯不合格，不能采用为交付");
+  });
+
   it("keeps evidence bind entry and omits run for evidence items", () => {
     const markup = renderResults();
     expect(markup).toContain('data-graph-result-kind="evidence"');

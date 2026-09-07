@@ -50,6 +50,7 @@ export interface GraphResultsViewProps {
   onBindEvidence?: (item: GraphResultItem) => void;
   /** slot_key（通常为 nodeId）→ 已采用资产 id；当前产物不等于交付采用。 */
   adoptedAssetBySlot?: ReadonlyMap<string, string>;
+  adoptionBlockByNodeId?: ReadonlyMap<string, string>;
   adoptingNodeId?: string | null;
   exportingAdoption?: boolean;
   onAdoptItem?: (item: GraphResultItem) => void;
@@ -78,6 +79,7 @@ export function GraphResultsView({
   onPreviewImage,
   onBindEvidence,
   adoptedAssetBySlot,
+  adoptionBlockByNodeId,
   adoptingNodeId = null,
   exportingAdoption = false,
   onAdoptItem,
@@ -181,6 +183,7 @@ export function GraphResultsView({
               onPreviewImage={onPreviewImage}
               onBindEvidence={onBindEvidence}
               adoptedAssetBySlot={adoptedAssetBySlot}
+              adoptionBlockByNodeId={adoptionBlockByNodeId}
               adoptingNodeId={adoptingNodeId}
               onAdoptItem={onAdoptItem}
             />
@@ -209,6 +212,7 @@ function ResultSection({
   onPreviewImage,
   onBindEvidence,
   adoptedAssetBySlot,
+  adoptionBlockByNodeId,
   adoptingNodeId,
   onAdoptItem,
 }: {
@@ -229,6 +233,7 @@ function ResultSection({
   onPreviewImage?: (item: GraphResultItem) => void;
   onBindEvidence?: (item: GraphResultItem) => void;
   adoptedAssetBySlot?: ReadonlyMap<string, string>;
+  adoptionBlockByNodeId?: ReadonlyMap<string, string>;
   adoptingNodeId: string | null;
   onAdoptItem?: (item: GraphResultItem) => void;
 }) {
@@ -273,6 +278,7 @@ function ResultSection({
             onPreviewImage={onPreviewImage}
             onBindEvidence={onBindEvidence}
             adoptedAssetId={adoptedAssetBySlot?.get(item.nodeId) ?? null}
+            adoptionBlockReason={adoptionBlockByNodeId?.get(item.nodeId) ?? null}
             adopting={adoptingNodeId === item.nodeId}
             onAdoptItem={onAdoptItem}
           />
@@ -300,6 +306,7 @@ function ResultCard({
   onPreviewImage,
   onBindEvidence,
   adoptedAssetId,
+  adoptionBlockReason,
   adopting,
   onAdoptItem,
 }: {
@@ -320,6 +327,7 @@ function ResultCard({
   onPreviewImage?: (item: GraphResultItem) => void;
   onBindEvidence?: (item: GraphResultItem) => void;
   adoptedAssetId: string | null;
+  adoptionBlockReason: string | null;
   adopting: boolean;
   onAdoptItem?: (item: GraphResultItem) => void;
 }) {
@@ -340,6 +348,7 @@ function ResultCard({
     && onAdoptItem
     && !isAdopted,
   );
+  const adoptBlocked = Boolean(canAdopt && adoptionBlockReason);
 
   return (
     <article
@@ -431,12 +440,13 @@ function ResultCard({
             </IconButton>
             {canAdopt ? (
               <IconButton
-                label={t("graph.results.adopt")}
+                label={adoptionBlockReason ?? t("graph.results.adopt")}
                 size="sm"
                 data-graph-result-adopt
+                data-graph-result-adopt-blocked={adoptBlocked ? "true" : undefined}
                 className="!h-7 !w-7"
                 busy={adopting}
-                disabled={busy || adopting}
+                disabled={busy || adopting || adoptBlocked}
                 onClick={() => onAdoptItem?.(item)}
               >
                 <Check size={12} aria-hidden="true" />
@@ -489,6 +499,16 @@ function ResultCard({
             ) : null}
           </div>
         </div>
+        {adoptBlocked && adoptionBlockReason ? (
+          <p
+            role="status"
+            data-graph-result-adopt-reason
+            className="text-[10px] leading-4 text-state-error"
+            title={adoptionBlockReason}
+          >
+            {adoptionBlockReason}
+          </p>
+        ) : null}
       </div>
     </article>
   );

@@ -148,6 +148,26 @@ func (ds *deliveryServer) attachArtifact(t *testing.T, productID, assetID string
 
 func (ds *deliveryServer) attachArtifactLineage(t *testing.T, productID, assetID string) (graphID, runID, nodeRunID string) {
 	t.Helper()
+	return ds.attachArtifactLineageWithPayload(t, productID, assetID, qualifiedAdoptionArtifactPayload())
+}
+
+func qualifiedAdoptionArtifactPayload() map[string]any {
+	return map[string]any{
+		"text_trace": map[string]any{
+			"schema_version": 1, "text_qualified": true, "user_image_override": false,
+			"entries": []any{}, "fact_keys": []any{},
+		},
+		"produce_route": map[string]any{
+			"schema_version": 1, "route": "subject_preserve",
+			"appearance_may_change": false, "route_qualified": true,
+		},
+	}
+}
+
+func (ds *deliveryServer) attachArtifactLineageWithPayload(
+	t *testing.T, productID, assetID string, payload map[string]any,
+) (graphID, runID, nodeRunID string) {
+	t.Helper()
 	graphID = clockid.New()
 	nodeID := clockid.New()
 	runID = clockid.New()
@@ -155,6 +175,10 @@ func (ds *deliveryServer) attachArtifactLineage(t *testing.T, productID, assetID
 	artifactID := clockid.New()
 	digest := strings.Repeat("a", 64)
 	hash := strings.Repeat("b", 64)
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := ds.pool.Exec(context.Background(), `
 		INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at)
 		VALUES ($1, $2, '交付图', TRUE, 3, 1, NOW(), NOW())
@@ -186,8 +210,8 @@ func (ds *deliveryServer) attachArtifactLineage(t *testing.T, productID, assetID
 		INSERT INTO workflow_graph_artifacts (
 			id, graph_id, node_id, node_run_id, artifact_type, schema_version, graph_revision,
 			payload_json, payload_hash, input_digest, product_image_asset_id, created_at
-		) VALUES ($1, $2, $3, $4, 'image', 3, 1, '{}'::jsonb, $5, $6, $7, NOW())
-	`, artifactID, graphID, nodeID, nodeRunID, hash, digest, assetID); err != nil {
+		) VALUES ($1, $2, $3, $4, 'image', 3, 1, $5::jsonb, $6, $7, $8, NOW())
+	`, artifactID, graphID, nodeID, nodeRunID, string(payloadJSON), hash, digest, assetID); err != nil {
 		t.Fatal(err)
 	}
 	return graphID, runID, nodeRunID

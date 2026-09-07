@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/mediaarchive"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -20,7 +21,8 @@ import (
 )
 
 // CreateAdoption 持久化新的不可变交付采用版本，并把商品当前指针切到该版本。
-// 文稿 O1–O7 候选采用不走此路径。quality_status=fail 的图位不得进入合格集，整次创建拒绝。
+// 文稿 O1–O7 候选采用不走此路径。quality_status=fail、文字溢出、或 graph 产物
+// text_qualified/route_qualified 为假时整次创建拒绝；客户端 quality_status 不能绕过。
 func (s Service) CreateAdoption(ctx context.Context, productID string, req CreateAdoptionRequest) (AdoptionVersionResponse, error) {
 	if len(req.Slots) < 1 {
 		return AdoptionVersionResponse{}, apperr.Validation("交付采用至少需要一个图位")
@@ -48,6 +50,9 @@ func (s Service) CreateAdoption(ctx context.Context, productID string, req Creat
 			return err
 		}
 		if err := validateOptionalSourceVersions(ctx, pgxTx, productID, req); err != nil {
+			return err
+		}
+		if err := validateAdoptionGraphQualification(ctx, pgxTx, productID, prepared); err != nil {
 			return err
 		}
 
@@ -464,6 +469,32 @@ func mapAdoptionSpecError(slotKey string, err error) error {
 		return apperr.Validationf("图位 %s 交付格式不支持或规格无效", slotKey)
 	}
 	return apperr.Validationf("图位 %s 交付规格无效", slotKey)
+}
+
+// validateAdoptionGraphQualification 强制消费产物 text_qualified / route_qualified。
+// 策略：显式 false → 整次拒绝（含客户端谎报 pass）；无追溯元数据 → 不得 quality_status=pass，
+// 仅允许 unchecked（不进合格导出集）。
+func validateAdoptionGraphQualification(ctx context.Context, tx *gorm.DB, productID string, slots []preparedSlot) error {
+	for _, slot := range slots {
+		payload, found, err := graph.LoadImageArtifactPayloadForAdoption(ctx, tx, productID, slot.sourceAssetID, slot.sourceNodeID)
+		if err != nil {
+			return err
+		}
+		var q graph.ArtifactDeliveryQualification
+		if found {
+			q = graph.ParseArtifactDeliveryQualification(payload)
+		}
+		if q.HasTextTrace && !q.TextQualified {
+			return apperr.Validationf("图位 %s 文字追溯不合格，不能采用为交付", slot.slotKey)
+		}
+		if q.HasProduceRoute && !graph.RouteAllowsDeliveryPass(q.Route) {
+			return apperr.Validationf("图位 %s 产图路线不合格，不能采用为交付", slot.slotKey)
+		}
+		if slot.qualityStatus == "pass" && !graph.ArtifactAllowsQualifiedAdoption(q) {
+			return apperr.Validationf("图位 %s 缺少合格追溯元数据，不能标为合格采用", slot.slotKey)
+		}
+	}
+	return nil
 }
 
 func validateOptionalSourceVersions(ctx context.Context, tx *gorm.DB, productID string, req CreateAdoptionRequest) error {

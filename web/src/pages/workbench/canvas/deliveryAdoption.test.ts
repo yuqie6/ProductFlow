@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { DeliveryAdoptionVersion, GraphProjection } from "../../../lib/types";
 import {
   adoptedAssetBySlot,
+  adoptionGateMessageKey,
   buildAdoptionSlotsReplacingNode,
+  evaluateAdoptionGate,
 } from "./deliveryAdoption";
 
 const graph = {
@@ -14,6 +16,10 @@ const graph = {
       id: "node-hero",
       node_type: "image_generation",
       title: "主图",
+      current_artifact_payload: {
+        text_trace: { text_qualified: true },
+        produce_route: { route: "subject_preserve", route_qualified: true },
+      },
       config: {
         image_type_key: "hero",
         delivery_spec: {
@@ -100,5 +106,48 @@ describe("deliveryAdoption", () => {
       nodeId: "node-detail",
       sourceAssetId: "asset-1",
     })).toEqual({ error: "missing_delivery_spec" });
+  });
+
+  it("blocks adopt when text_qualified is false even if client wants pass", () => {
+    expect(evaluateAdoptionGate({
+      text_trace: { text_qualified: false },
+      produce_route: { route_qualified: true },
+    })).toEqual({ ok: false, code: "text_unqualified" });
+    expect(buildAdoptionSlotsReplacingNode({
+      graph,
+      current: null,
+      nodeId: "node-hero",
+      sourceAssetId: "asset-1",
+      qualityStatus: "pass",
+      artifactPayload: {
+        text_trace: { text_qualified: false },
+        produce_route: { route_qualified: true },
+      },
+    })).toEqual({ error: "text_unqualified" });
+    expect(adoptionGateMessageKey("text_unqualified")).toBe("graph.results.adoptTextUnqualified");
+  });
+
+  it("blocks adopt when route_qualified is false", () => {
+    expect(evaluateAdoptionGate({
+      text_trace: { text_qualified: true },
+      produce_route: { route_qualified: false },
+    })).toEqual({ ok: false, code: "route_unqualified" });
+  });
+
+  it("downgrades pass to unchecked when qualification metadata is missing", () => {
+    const built = buildAdoptionSlotsReplacingNode({
+      graph,
+      current: null,
+      nodeId: "node-hero",
+      sourceAssetId: "asset-1",
+      qualityStatus: "pass",
+      artifactPayload: {},
+    });
+    expect(built).toEqual([
+      expect.objectContaining({
+        quality_status: "unchecked",
+        source_asset_id: "asset-1",
+      }),
+    ]);
   });
 });

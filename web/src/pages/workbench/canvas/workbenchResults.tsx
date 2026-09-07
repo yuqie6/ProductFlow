@@ -19,7 +19,9 @@ import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditCont
 import { graphEdgeRoleLabelKey, missingRequiredRunNodes, missingRunNodesSummary } from "./graphCatalog";
 import {
   adoptedAssetBySlot,
+  adoptionGateMessageKey,
   buildAdoptionSlotsReplacingNode,
+  evaluateAdoptionGate,
 } from "./deliveryAdoption";
 import { projectGraphResults, type GraphResultItem } from "./resultProjection";
 import { GraphResultsView } from "./GraphResultsView";
@@ -139,6 +141,19 @@ export function WorkbenchResultsLayer({
     () => adoptedAssetBySlot(adoptionQuery.data ?? null),
     [adoptionQuery.data],
   );
+  const adoptionBlockByNodeId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const node of graph.nodes) {
+      if (node.node_type !== "image_generation") continue;
+      const gate = evaluateAdoptionGate(
+        node.current_artifact_payload as Record<string, unknown> | null | undefined,
+      );
+      if (!gate.ok) {
+        map.set(node.id, t(adoptionGateMessageKey(gate.code)));
+      }
+    }
+    return map;
+  }, [graph.nodes, t]);
   const blockedReasons = useMemo(() => {
     const reasons: Record<string, string> = {};
     for (const node of graph.nodes) {
@@ -195,6 +210,9 @@ export function WorkbenchResultsLayer({
       if ("error" in slots) {
         if (slots.error === "missing_delivery_spec") {
           throw new ApiError(400, t("graph.results.adoptNeedSpec"));
+        }
+        if (slots.error === "text_unqualified" || slots.error === "route_unqualified") {
+          throw new ApiError(400, t(adoptionGateMessageKey(slots.error)));
         }
         throw new ApiError(400, t("graph.results.adoptNeedImage"));
       }
@@ -266,6 +284,7 @@ export function WorkbenchResultsLayer({
         onPreviewImage={onPreviewImage ? previewImage : undefined}
         onBindEvidence={onBindNode ? bindEvidence : undefined}
         adoptedAssetBySlot={adoptedMap}
+        adoptionBlockByNodeId={adoptionBlockByNodeId}
         adoptingNodeId={adoptMutation.isPending ? adoptMutation.variables?.nodeId ?? null : null}
         exportingAdoption={exportMutation.isPending}
         onAdoptItem={(item) => adoptMutation.mutate(item)}

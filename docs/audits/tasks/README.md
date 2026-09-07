@@ -20,7 +20,6 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [compete-adoption-hard-gate.md](compete-adoption-hard-gate.md) | 图片质量 | 实现 | 认领 | sub-iq/compete-adoption-hard-gate | 2026-09-07T16:14:58+08:00 |
 | [image-quality-content-pilot.md](image-quality-content-pilot.md) | 图片质量 | 证据 | 认领 | sub-iq/image-quality-content-pilot | 2026-09-07T16:14:58+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |

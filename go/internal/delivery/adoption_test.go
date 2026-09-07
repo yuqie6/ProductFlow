@@ -240,12 +240,23 @@ func (ds *deliveryServer) uploadExtraAsset(t *testing.T, productID string) strin
 
 func (ds *deliveryServer) attachArtifactOnGraph(t *testing.T, productID, graphID, assetID string) {
 	t.Helper()
+	ds.attachArtifactOnGraphWithPayload(t, productID, graphID, assetID, qualifiedAdoptionArtifactPayload())
+}
+
+func (ds *deliveryServer) attachArtifactOnGraphWithPayload(
+	t *testing.T, productID, graphID, assetID string, payload map[string]any,
+) {
+	t.Helper()
 	nodeID := clockid.New()
 	runID := clockid.New()
 	nodeRunID := clockid.New()
 	artifactID := clockid.New()
 	digest := strings.Repeat("c", 64)
 	hash := strings.Repeat("d", 64)
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := ds.pool.Exec(context.Background(), `
 		INSERT INTO workflow_graph_nodes (
 			id, graph_id, node_type, title, position_x, position_y, config_json, created_at, updated_at
@@ -271,9 +282,76 @@ func (ds *deliveryServer) attachArtifactOnGraph(t *testing.T, productID, graphID
 		INSERT INTO workflow_graph_artifacts (
 			id, graph_id, node_id, node_run_id, artifact_type, schema_version, graph_revision,
 			payload_json, payload_hash, input_digest, product_image_asset_id, created_at
-		) VALUES ($1, $2, $3, $4, 'image', 3, 1, '{}'::jsonb, $5, $6, $7, NOW())
-	`, artifactID, graphID, nodeID, nodeRunID, hash, digest, assetID); err != nil {
+		) VALUES ($1, $2, $3, $4, 'image', 3, 1, $5::jsonb, $6, $7, $8, NOW())
+	`, artifactID, graphID, nodeID, nodeRunID, string(payloadJSON), hash, digest, assetID); err != nil {
 		t.Fatal(err)
 	}
 	_ = productID
+}
+
+func TestDeliveryAdoptionRejectsUnqualifiedGraphArtifacts(t *testing.T) {
+	ds := newDeliveryServer(t)
+	spec := map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"}
+
+	mustReject := func(name string, payload map[string]any, quality string, wantSubstr string) {
+		t.Helper()
+		created := ds.createProduct(t)
+		productID := created.Product.ID
+		assetID := created.CreatedAssets[0].ID
+		ds.attachArtifactLineageWithPayload(t, productID, assetID, payload)
+		resp := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+			"slots": []map[string]any{{
+				"slot_key": "hero-1", "sort_order": 0, "source_asset_id": assetID,
+				"delivery_spec": spec, "quality_status": quality,
+			}},
+		})
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			raw, _ := io.ReadAll(resp.Body)
+			t.Fatalf("%s want 400 got %d %s", name, resp.StatusCode, raw)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(raw), wantSubstr) {
+			t.Fatalf("%s body %s want substr %q", name, raw, wantSubstr)
+		}
+	}
+
+	textFail := qualifiedAdoptionArtifactPayload()
+	textFail["text_trace"] = map[string]any{"text_qualified": false}
+	mustReject("fake pass + text_qualified=false", textFail, "pass", "文字追溯不合格")
+
+	routeFail := qualifiedAdoptionArtifactPayload()
+	routeFail["produce_route"] = map[string]any{
+		"route": "subject_preserve", "route_qualified": false,
+		"unresolved_items": []any{"保留主体路线质检失败"},
+	}
+	mustReject("fake pass + route_qualified=false", routeFail, "pass", "产图路线不合格")
+	mustReject("unchecked + route_qualified=false", routeFail, "unchecked", "产图路线不合格")
+
+	mustReject("pass without metadata", map[string]any{}, "pass", "缺少合格追溯元数据")
+
+	created := ds.createProduct(t)
+	productID := created.Product.ID
+	assetID := created.CreatedAssets[0].ID
+	ds.attachArtifactLineageWithPayload(t, productID, assetID, qualifiedAdoptionArtifactPayload())
+	ok := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+		"slots": []map[string]any{{
+			"slot_key": "hero-1", "sort_order": 0, "source_asset_id": assetID,
+			"delivery_spec": spec, "quality_status": "pass",
+		}},
+	})
+	ds.mustStatus(t, ok, http.StatusCreated)
+	ok.Body.Close()
+
+	uncheckedMissing := ds.createProduct(t)
+	uncheckedAsset := uncheckedMissing.CreatedAssets[0].ID
+	ds.attachArtifactLineageWithPayload(t, uncheckedMissing.Product.ID, uncheckedAsset, map[string]any{})
+	uncheckedOK := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+uncheckedMissing.Product.ID+"/delivery-adoptions", map[string]any{
+		"slots": []map[string]any{{
+			"slot_key": "hero-1", "sort_order": 0, "source_asset_id": uncheckedAsset,
+			"delivery_spec": spec, "quality_status": "unchecked",
+		}},
+	})
+	ds.mustStatus(t, uncheckedOK, http.StatusCreated)
+	uncheckedOK.Body.Close()
 }

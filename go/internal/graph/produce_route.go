@@ -133,7 +133,7 @@ func BuildProduceRouteRecord(in ProduceRouteInput) ProduceRouteRecord {
 	return rec
 }
 
-// RouteAllowsDeliveryPass 未解决项存在时不得进入已交付合格集（判据侧；采用闸由体验组消费）。
+// RouteAllowsDeliveryPass 未解决项存在时不得进入已交付合格集；CreateAdoption 强制消费。
 func RouteAllowsDeliveryPass(rec ProduceRouteRecord) bool {
 	return rec.RouteQualified
 }

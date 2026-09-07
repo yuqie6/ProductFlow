@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [compete-adoption-hard-gate.md](compete-adoption-hard-gate.md) | 完成 | CreateAdoption 强制 text/route_qualified；无元数据禁 pass；≠R3 |
 | [merchant-r1-close-ruling.md](merchant-r1-close-ruling.md) | 完成 | 总纲 R1 通过；夹具双商；CreateMerchant 仍 409；≠MP-C/D |
 | [release-r6-close-ruling.md](release-r6-close-ruling.md) | 完成 | 总纲 R6 通过；残余非宣称已列；≠R1–R5/SLA |
 | [release-r6-resource-budget.md](release-r6-resource-budget.md) | 完成 | 空闲/轻负载足迹+对应表；非 SLA；本门≠自动关 R6 |

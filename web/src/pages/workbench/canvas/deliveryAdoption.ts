@@ -21,6 +21,43 @@ export interface DeliveryAdoptionSlotDraft {
   quality_status?: "pass" | "fail" | "unchecked";
 }
 
+/** 服务端硬闸对齐：显式不合格禁止采用；缺元数据仍可 unchecked，不得自称 pass。 */
+export type AdoptionGateCode = "text_unqualified" | "route_unqualified";
+
+export type AdoptionGateResult =
+  | { ok: true; canMarkPass: boolean }
+  | { ok: false; code: AdoptionGateCode };
+
+export function evaluateAdoptionGate(
+  payload: Record<string, unknown> | null | undefined,
+): AdoptionGateResult {
+  const textTrace = asRecord(payload?.text_trace);
+  const produceRoute = asRecord(payload?.produce_route);
+
+  if (textTrace && textTrace.text_qualified === false) {
+    return { ok: false, code: "text_unqualified" };
+  }
+  if (produceRoute && produceRoute.route_qualified === false) {
+    return { ok: false, code: "route_unqualified" };
+  }
+
+  const canMarkPass = Boolean(
+    textTrace
+    && textTrace.text_qualified === true
+    && produceRoute
+    && produceRoute.route_qualified === true,
+  );
+  return { ok: true, canMarkPass };
+}
+
+export function adoptionGateMessageKey(code: AdoptionGateCode):
+  | "graph.results.adoptTextUnqualified"
+  | "graph.results.adoptRouteUnqualified" {
+  return code === "text_unqualified"
+    ? "graph.results.adoptTextUnqualified"
+    : "graph.results.adoptRouteUnqualified";
+}
+
 export function adoptedAssetBySlot(
   version: DeliveryAdoptionVersion | null | undefined,
 ): ReadonlyMap<string, string> {
@@ -38,11 +75,20 @@ export function buildAdoptionSlotsReplacingNode(input: {
   nodeId: string;
   sourceAssetId: string;
   qualityStatus?: "pass" | "unchecked";
-}): DeliveryAdoptionSlotDraft[] | { error: "missing_delivery_spec" | "missing_asset" } {
+  artifactPayload?: Record<string, unknown> | null;
+}): DeliveryAdoptionSlotDraft[] | {
+  error: "missing_delivery_spec" | "missing_asset" | AdoptionGateCode;
+} {
   if (!input.sourceAssetId) return { error: "missing_asset" };
   const node = input.graph.nodes.find((item) => item.id === input.nodeId);
   if (!node || node.node_type !== "image_generation") {
     return { error: "missing_asset" };
+  }
+  const payload = input.artifactPayload
+    ?? (node.current_artifact_payload as Record<string, unknown> | null | undefined);
+  const gate = evaluateAdoptionGate(payload);
+  if (!gate.ok) {
+    return { error: gate.code };
   }
   const deliverySpec = parseWorkflowDeliverySpec(node.config?.delivery_spec);
   if (!deliverySpec) return { error: "missing_delivery_spec" };
@@ -54,6 +100,9 @@ export function buildAdoptionSlotsReplacingNode(input: {
     .filter((slot) => slot.slot_key !== input.nodeId)
     .map((slot) => slotToDraft(slot));
 
+  const requested = input.qualityStatus ?? "unchecked";
+  const qualityStatus = requested === "pass" && gate.canMarkPass ? "pass" : "unchecked";
+
   const next: DeliveryAdoptionSlotDraft = {
     slot_key: input.nodeId,
     sort_order: 0,
@@ -61,7 +110,7 @@ export function buildAdoptionSlotsReplacingNode(input: {
     source_asset_id: input.sourceAssetId,
     source_node_id: input.nodeId,
     delivery_spec: deliverySpec,
-    quality_status: input.qualityStatus ?? "unchecked",
+    quality_status: qualityStatus,
   };
   const merged = [...retained, next]
     .sort((left, right) => left.slot_key.localeCompare(right.slot_key))
@@ -79,4 +128,9 @@ function slotToDraft(slot: DeliveryAdoptionSlot): DeliveryAdoptionSlotDraft {
     delivery_spec: slot.delivery_spec,
     quality_status: slot.quality_status === "fail" ? "unchecked" : slot.quality_status,
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }

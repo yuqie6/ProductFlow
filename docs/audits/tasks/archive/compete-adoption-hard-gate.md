@@ -1,18 +1,19 @@
 # 任务：交付采用硬闸消费 text/route_qualified
 
-状态：认领
+状态：完成
 类型：实现
 认领者：sub-iq/compete-adoption-hard-gate
 认领于：2026-09-07T16:14:58+08:00
+完成于：2026-09-07T16:26:00+08:00
 业务组：图片质量
 父账本：image-quality.md
 完成后可拆：主体提取链 / OCR 闸（另发）；≠R3
 
-任务合同以本文件为准；认领、阻塞、审核与关闭遵循 [Issue 协议](README.md)。按 [所有权前置规则](README.md#认领与并行) 已确认认领。
+任务合同以本文件为准；认领、阻塞、审核与关闭遵循 [Issue 协议](../README.md)。按 [所有权前置规则](../README.md#认领与并行) 已确认认领。
 
 ## 问题来源
 
-[IQ-CF-08](../image-quality.md#compete-facts-layout) / CF-B1·B3：`text_qualified` / `route_qualified` 判据已在 graph 产物侧就绪；[delivery-adoption-snapshot](archive/delivery-adoption-snapshot.md) 仅按客户端 `quality_status=fail` 拒绝采用。客户端可把不合格图标为 `pass` 绕过。总纲方向 3 要求不合格图不得进入已采用交付合格集。
+[IQ-CF-08](../../image-quality.md#compete-facts-layout) / CF-B1·B3：`text_qualified` / `route_qualified` 判据已在 graph 产物侧就绪；[delivery-adoption-snapshot](delivery-adoption-snapshot.md) 仅按客户端 `quality_status=fail` 拒绝采用。客户端可把不合格图标为 `pass` 绕过。总纲方向 3 要求不合格图不得进入已采用交付合格集。
 
 ## 做成什么样
 
@@ -33,7 +34,7 @@
 - 必要时 `go/internal/graph` 导出只读解析辅助（不改评分门槛）
 - `web/src/pages/workbench/canvas/deliveryAdoption.ts(+test)`、`GraphResultsView` 相关拒绝展示
 - `docs/audits/image-quality.md`（IQ-CF-08 状态）
-- 本文件
+- `docs/audits/tasks/archive/compete-adoption-hard-gate.md`（本文件）
 
 ## 不要碰
 
@@ -61,11 +62,26 @@
 - 原因：无
 - 解除条件：无
 - 跟进者：无
-- 交接：无
+- 交接：已归档；交付随本任务提交。跟进 OCR/主体提取另发；≠R3。
 
 ## 证据
 
+### 协调者复验
+
+| 检查 | 结果 |
+|---|---|
+| graph/delivery 定向 Go | PASS |
+| Vitest deliveryAdoption + GraphResultsView（12） | PASS |
+
+
 - 命令 / 日期 / 结果：
-- 交付定位：随本任务提交
-- 审核者 / 结论：
-- Issue 结果 / 业务门槛结果 / 剩余缺口：
+  - 2026-09-07：`bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/graph/ -count=1 -run "TestParseArtifactDeliveryQualification|TestRouteAllows|TestTextTraceAsMap" && go test -C go ./internal/delivery/ -count=1 -run "TestDeliveryAdoption|TestMerchantDeliveryIsolation"'` → PASS
+  - 2026-09-07：`pnpm --dir web exec vitest run src/pages/workbench/canvas/deliveryAdoption.test.ts src/pages/workbench/canvas/GraphResultsView.test.tsx` → 12 passed
+  - 2026-09-07：`just docs-check` → Documentation contract check passed
+- 交付定位：随本任务提交（用 `git log --follow -- docs/audits/tasks/archive/compete-adoption-hard-gate.md` 查询）
+- 审核者 / 结论：CTO（本会话）通过——服务端硬闸与正反测可采信；≠R3。
+- Issue 结果 / 业务门槛结果 / 剩余缺口：完成；IQ-CF-08 服务端消费已接；残余 OCR/主体提取/R3。
+  - **选定策略（无元数据）**：缺 `text_trace` 或 `produce_route`（或找不到 image artifact）时，**拒绝 `quality_status=pass`**；允许 `unchecked`（不进合格导出集）。显式 `text_qualified=false` 或 `route_qualified=false`（`RouteAllowsDeliveryPass` 为假）→ **整次 CreateAdoption 拒绝**，客户端谎报 `pass` 无效。
+  - 实现：`graph.ParseArtifactDeliveryQualification` / `LoadImageArtifactPayloadForAdoption`；`delivery.validateAdoptionGraphQualification`；前端 `evaluateAdoptionGate` + 成果卡片拒绝文案。
+  - 父章程 IQ-CF-08 仍为 `部分完成`（OCR 成片对照、主体提取链、R3 未宣称）。
+  - **未宣称**：R3；OCR 闸；主体提取链；IMG 42/32；Skill/grader；开放第二商。
