@@ -65,6 +65,8 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.DELETE("/v2/product-image-assets/:asset_id", h.requireDeletion, h.deleteAsset)
 	api.POST("/v3/products", h.createV3)
 	api.POST("/v3/products/from-recipe", h.createFromRecipe)
+	api.GET("/v3/products/:product_id/brand-selection", h.getBrandSelection)
+	api.PUT("/v3/products/:product_id/brand-selection", h.putBrandSelection)
 	api.GET("/v2/agent-product-workspaces/options", h.workspaceOptions)
 	api.POST("/v2/agent-product-workspaces/drafts", h.createDraftWorkspace)
 	api.POST("/v2/agent-product-workspaces", h.createWorkspace)
@@ -191,6 +193,33 @@ func (h HTTP) get(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, detail)
+}
+
+// getBrandSelection 是 GET /api/v3/products/:product_id/brand-selection。
+func (h HTTP) getBrandSelection(c *gin.Context) {
+	out, err := h.Service.GetBrandSelection(c.Request.Context(), c.Param("product_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// putBrandSelection 是 PUT /api/v3/products/:product_id/brand-selection：绑定或清除本商家 Brand。
+func (h HTTP) putBrandSelection(c *gin.Context) {
+	var body struct {
+		BrandID *string `json:"brand_id"`
+	}
+	if err := bindJSON(c, &body); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.SetBrandSelection(c.Request.Context(), c.Param("product_id"), body.BrandID)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // download 是 GET /api/v2/product-image-assets/:asset_id/download：200 原图/变体；缺文件 404。

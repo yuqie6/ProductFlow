@@ -209,19 +209,84 @@ func TestResolveInheritanceBrandExistsNoMerge(t *testing.T) {
 	got := visualsystem.ResolveInheritance(visualsystem.ResolveInput{
 		ProductID: "prod-branded",
 		BrandID:   "brand-1",
-		BrandPayload: map[string]any{
-			"colors": []any{map[string]any{"value": "#00AA00"}},
-		},
+		// 已选定品牌但无可解析风格载荷 → 诚实占位，不合并。
+		BrandPayload:   nil,
 		ProductDefault: map[string]any{"style": []any{"默认"}},
 	})
 	if got.BrandPlaceholder.Reason != visualsystem.BrandReasonExistsNoMerge {
 		t.Fatalf("reason=%s", got.BrandPlaceholder.Reason)
 	}
 	if got.Layers[2].Active {
-		t.Fatal("brand layer must stay inactive until style merge ships")
+		t.Fatal("brand layer must stay inactive without resolvable style")
 	}
 	if _, ok := got.EffectivePayload["colors"]; ok {
-		t.Fatalf("brand colors must not merge yet: %+v", got.EffectivePayload)
+		t.Fatalf("brand colors must not merge without payload: %+v", got.EffectivePayload)
+	}
+}
+
+func TestResolveInheritanceBrandMergesBetweenDefaultAndScheme(t *testing.T) {
+	selectedID := "ver-scheme"
+	brandVer := "ver-brand"
+	brandSys := "sys-brand"
+	brandName := "品牌方案"
+	got := visualsystem.ResolveInheritance(visualsystem.ResolveInput{
+		ProductID: "prod-branded",
+		BrandID:   "brand-1",
+		BrandPayload: map[string]any{
+			"style":  []any{"品牌冷色"},
+			"colors": []any{map[string]any{"role": "accent", "value": "#00AA00"}},
+		},
+		BrandVersionID:  &brandVer,
+		BrandSystemID:   &brandSys,
+		BrandSystemName: &brandName,
+		SelectedVersionID: &selectedID,
+		SelectedPayload: map[string]any{
+			"colors": []any{map[string]any{"role": "accent", "value": "#111111"}},
+		},
+		ProductDefault: map[string]any{
+			"style":  []any{"默认"},
+			"colors": []any{map[string]any{"role": "accent", "value": "#CCCCCC"}},
+		},
+	})
+	if got.BrandPlaceholder.Reason != visualsystem.BrandReasonMerged {
+		t.Fatalf("reason=%s", got.BrandPlaceholder.Reason)
+	}
+	if !got.Layers[2].Active {
+		t.Fatal("brand layer must be active when style resolvable")
+	}
+	colors, _ := got.EffectivePayload["colors"].([]any)
+	color, _ := colors[0].(map[string]any)
+	if color["value"] != "#111111" {
+		t.Fatalf("selected scheme must beat brand: %+v", got.EffectivePayload)
+	}
+	style, _ := got.EffectivePayload["style"].([]any)
+	if len(style) != 1 || style[0] != "品牌冷色" {
+		t.Fatalf("brand style should fill when scheme omits style: %+v", got.EffectivePayload["style"])
+	}
+}
+
+func TestResolveInheritanceBrandBeatsDefaultWithoutScheme(t *testing.T) {
+	got := visualsystem.ResolveInheritance(visualsystem.ResolveInput{
+		ProductID: "prod-brand-only",
+		BrandID:   "brand-2",
+		BrandPayload: map[string]any{
+			"colors": []any{map[string]any{"value": "#00AA00"}},
+			"facts":  map[string]any{"capacity": "不应进入"},
+		},
+		ProductDefault: map[string]any{
+			"colors": []any{map[string]any{"value": "#EEEEEE"}},
+		},
+	})
+	if !got.Layers[2].Active {
+		t.Fatal("expected active brand layer")
+	}
+	colors, _ := got.EffectivePayload["colors"].([]any)
+	color, _ := colors[0].(map[string]any)
+	if color["value"] != "#00AA00" {
+		t.Fatalf("brand must beat default: %+v", got.EffectivePayload)
+	}
+	if _, ok := got.EffectivePayload["facts"]; ok {
+		t.Fatalf("facts must not enter style chain: %+v", got.EffectivePayload)
 	}
 }
 

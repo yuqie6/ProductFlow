@@ -326,6 +326,32 @@ func TestBrandsTablePresentAfterApply(t *testing.T) {
 	}
 }
 
+func TestProductsBrandIDPresentAfterApply(t *testing.T) {
+	pool := testdb.Pool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	gdb, err := db.OpenGorm(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'products'
+		  AND column_name = 'brand_id'
+	`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("products.brand_id missing: n=%d err=%v", n, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM pg_constraint
+		WHERE conname = 'fk_products_brand_id'
+	`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("fk_products_brand_id: n=%d err=%v", n, err)
+	}
+}
 
 func TestQuotaPriceCatalogPresentAfterApply(t *testing.T) {
 	pool := testdb.Pool(t)

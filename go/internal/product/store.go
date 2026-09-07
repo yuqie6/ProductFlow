@@ -101,6 +101,7 @@ func productFromSchema(rec schema.Products) Product {
 		Category:          rec.Category,
 		Price:             rec.Price,
 		SourceNote:        rec.SourceNote,
+		BrandID:           rec.BrandID,
 		CoverImageAssetID: rec.CoverImageAssetID,
 		IntakeVersion:     rec.IntakeSchemaVersion,
 		FactSetVersionID:  rec.CurrentFactSetVersionID,

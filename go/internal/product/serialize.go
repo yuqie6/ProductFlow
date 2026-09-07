@@ -19,6 +19,7 @@ func serializeDetail(p Product) Detail {
 		Category:          p.Category,
 		Price:             p.Price,
 		SourceNote:        p.SourceNote,
+		BrandID:           p.BrandID,
 		CoverImageAssetID: p.CoverImageAssetID,
 		Intake:            intake,
 		CreatedAt:         p.CreatedAt,

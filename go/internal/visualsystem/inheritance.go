@@ -27,23 +27,32 @@ var ForbiddenStyleChainKeys = map[string]struct{}{
 }
 
 // ResolveInheritance 按 IQ-CF-07 合并：本商品覆盖 > 选定方案版本 > 品牌层 > 产品默认。
-// 事实与身份参考不参与本函数。品牌色合并尚未接线：有 BrandID 时诚实返回 brand_exists_no_style_merge，仍不合并 BrandPayload。
+// 事实与身份参考不参与本函数。品牌层：未选定 → brand_not_selected；已选定但无可解析 style/colors →
+// brand_exists_no_style_merge；已选定且 BrandPayload 可解析时合并并 Active。
 func ResolveInheritance(input ResolveInput) InheritanceView {
-	brand := brandPlaceholderFor(input)
 	defaults := filterStyleChain(input.ProductDefault)
 	if defaults == nil {
 		defaults = map[string]any{}
 	}
+	brandPayload := filterStyleChain(input.BrandPayload)
 	selectedPayload := filterStyleChain(input.SelectedPayload)
 	override := filterStyleChain(input.ProductOverride)
 
+	brandID := strings.TrimSpace(input.BrandID)
+	brandActive := brandID != "" && len(brandPayload) > 0
+	brand := brandPlaceholderFor(brandID, brandActive)
+
 	effective := cloneMap(defaults)
+	if brandActive {
+		for key, value := range brandPayload {
+			effective[key] = cloneValue(value)
+		}
+	}
 	if selectedPayload != nil {
 		for key, value := range selectedPayload {
 			effective[key] = cloneValue(value)
 		}
 	}
-	// 品牌层：本切片不合并 BrandPayload（残余：全量品牌色合并）。
 	if override != nil {
 		for key, value := range override {
 			effective[key] = cloneValue(value)
@@ -51,6 +60,20 @@ func ResolveInheritance(input ResolveInput) InheritanceView {
 	}
 	if len(effective) == 0 {
 		effective = map[string]any{}
+	}
+
+	brandLayer := LayerContribution{
+		Layer:       LayerBrandVersion,
+		Active:      brandActive,
+		VersionID:   input.BrandVersionID,
+		SystemID:    input.BrandSystemID,
+		SystemName:  input.BrandSystemName,
+		Payload:     brandPayload,
+		Note:        noteBrand(brandActive, brand),
+	}
+	if !brandActive {
+		brandLayer.Placeholder = &brand
+		brandLayer.Payload = nil
 	}
 
 	layers := []LayerContribution{
@@ -69,12 +92,7 @@ func ResolveInheritance(input ResolveInput) InheritanceView {
 			Payload:    selectedPayload,
 			Note:       noteSelected(input.SelectedVersionID != nil && strings.TrimSpace(*input.SelectedVersionID) != ""),
 		},
-		{
-			Layer:       LayerBrandVersion,
-			Active:      false,
-			Placeholder: &brand,
-			Note:        brand.Detail,
-		},
+		brandLayer,
 		{
 			Layer:   LayerProductDefault,
 			Active:  true,
@@ -106,17 +124,30 @@ type ResolveInput struct {
 	SelectedPayload    map[string]any
 	ProductDefault     map[string]any
 	NewerVersion       *VersionView
-	// BrandID 非空表示品牌实体已选定；本切片仍不合并风格色。
+	// BrandID 非空表示商品已选定品牌；合并要求 BrandPayload 含可解析 style/colors。
 	BrandID string
-	// BrandPayload 预留；全量品牌色合并属下一切片，当前忽略。
-	BrandPayload map[string]any
+	// BrandPayload 来自 Brand.visual_system_id 指向方案的当前（最新）版本；仅 style/colors 进入链。
+	BrandPayload    map[string]any
+	BrandVersionID  *string
+	BrandSystemID   *string
+	BrandSystemName *string
 }
 
-func brandPlaceholderFor(input ResolveInput) BrandPlaceholder {
-	if strings.TrimSpace(input.BrandID) != "" {
+func brandPlaceholderFor(brandID string, brandActive bool) BrandPlaceholder {
+	if brandActive {
+		return MergedBrandPlaceholder()
+	}
+	if brandID != "" {
 		return BrandExistsPlaceholder()
 	}
 	return DefaultBrandPlaceholder()
+}
+
+func noteBrand(active bool, brand BrandPlaceholder) string {
+	if active {
+		return "品牌挂接视觉方案的当前版本已并入风格色；选定方案与本商品覆盖优先"
+	}
+	return brand.Detail
 }
 
 // filterStyleChain 只保留 style/colors，并剥离子身份/事实键。nil 入参保持 nil。

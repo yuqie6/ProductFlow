@@ -5,11 +5,13 @@ import (
 	"time"
 )
 
-// Brand 层占位状态：表已建，但商品未选定品牌，或品牌存在尚未并入风格色。
+// Brand 层占位状态：表已建；未选定、已选定但无可解析风格、或已合并。
 const (
 	BrandStatusUnavailable     = "unavailable"
+	BrandStatusAvailable       = "available"
 	BrandReasonNotSelected     = "brand_not_selected"
 	BrandReasonExistsNoMerge   = "brand_exists_no_style_merge"
+	BrandReasonMerged          = "brand_style_merged"
 	// BrandReasonNotReady 保留别名，指向 brand_not_selected（表已存在，不再表示「表缺失」）。
 	BrandReasonNotReady = BrandReasonNotSelected
 )
@@ -22,10 +24,10 @@ const (
 	LayerProductDefault  = "product_default"
 )
 
-// BrandPlaceholder 明确声明品牌层未贡献风格；不静默合并未接线的品牌色。
+// BrandPlaceholder 声明品牌层贡献状态；未合并时 status=unavailable。
 type BrandPlaceholder struct {
-	Status string `json:"status"` // unavailable
-	Reason string `json:"reason"` // brand_not_selected | brand_exists_no_style_merge
+	Status string `json:"status"` // unavailable | available
+	Reason string `json:"reason"` // brand_not_selected | brand_exists_no_style_merge | brand_style_merged
 	Detail string `json:"detail"` // 用户可读说明
 }
 
@@ -38,12 +40,21 @@ func DefaultBrandPlaceholder() BrandPlaceholder {
 	}
 }
 
-// BrandExistsPlaceholder 表示品牌实体存在，但本切片尚未合并品牌风格色（接线合同：下一切片）。
+// BrandExistsPlaceholder 表示品牌已选定，但无可解析的品牌风格载荷（无 visual_system 或无 style/colors）。
 func BrandExistsPlaceholder() BrandPlaceholder {
 	return BrandPlaceholder{
 		Status: BrandStatusUnavailable,
 		Reason: BrandReasonExistsNoMerge,
-		Detail: "品牌已存在，但品牌色/风格合并尚未接线；继承链跳过本层",
+		Detail: "品牌已选定，但无可解析的品牌风格载荷；继承链跳过本层",
+	}
+}
+
+// MergedBrandPlaceholder 表示品牌层 style/colors 已并入 EffectivePayload。
+func MergedBrandPlaceholder() BrandPlaceholder {
+	return BrandPlaceholder{
+		Status: BrandStatusAvailable,
+		Reason: BrandReasonMerged,
+		Detail: "已合并品牌挂接视觉方案当前版本的风格色",
 	}
 }
 
@@ -91,7 +102,7 @@ type LayerContribution struct {
 }
 
 // InheritanceView 是商品视觉继承解析结果；优先级对本商品覆盖 > 选定方案版本 > 品牌层 > 产品默认。
-// 品牌层：未选定 → brand_not_selected；有 BrandID 但未接线合并 → brand_exists_no_style_merge。
+// 品牌层：未选定 → brand_not_selected；已选定但无可解析风格 → brand_exists_no_style_merge；可解析则 Active + brand_style_merged。
 type InheritanceView struct {
 	ProductID             string              `json:"product_id"`
 	SelectedVersionID     *string             `json:"selected_visual_system_version_id"`

@@ -12,6 +12,7 @@ type Product struct {
 	Category          *string // nil 表示未填类目
 	Price             *string // nil 表示未填价格
 	SourceNote        *string // nil 表示未填商品说明
+	BrandID           *string // nil 表示未选定本商家 Brand
 	CoverImageAssetID *string
 	IntakeVersion     *int            // Agent 工作区 intake 版本；无图出生为 nil
 	IntakeJSON        json.RawMessage // 图种选择与参考图 id；无值时空
@@ -65,10 +66,17 @@ type Detail struct {
 	Category          *string         `json:"category"`    // nil 表示未填
 	Price             *string         `json:"price"`       // nil 表示未填
 	SourceNote        *string         `json:"source_note"` // nil 表示未填
+	BrandID           *string         `json:"brand_id"`    // nil 表示未选定 Brand
 	CoverImageAssetID *string         `json:"cover_image_asset_id"`
 	Intake            json.RawMessage `json:"intake"` // 无值时序列化为 JSON null
 	CreatedAt         time.Time       `json:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at"`
+}
+
+// BrandSelectionView 是商品当前选定的本商家 Brand。
+type BrandSelectionView struct {
+	ProductID string  `json:"product_id"`
+	BrandID   *string `json:"brand_id"`
 }
 
 // AssetResponse 是商品图的 Web 合同。id 是 ProductImageAsset id；URL 由身份推导，不含存储路径。

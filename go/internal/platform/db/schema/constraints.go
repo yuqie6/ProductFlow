@@ -2244,5 +2244,13 @@ END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_brands_visual_system_id ON public.brands USING btree (visual_system_id);`,
 	`DROP TRIGGER IF EXISTS trg_brands_fill_merchant_id ON brands;`,
 	`CREATE TRIGGER trg_brands_fill_merchant_id BEFORE INSERT ON brands FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+
+	// Brand B1: product selects same-merchant brand; style merge reads Brand.visual_system_id current version.
+	`DO $c$ BEGIN
+ALTER TABLE products ADD CONSTRAINT fk_products_brand_id FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_products_brand_id ON public.products USING btree (brand_id);`,
 }
 

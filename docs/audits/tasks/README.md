@@ -20,7 +20,6 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [merchant-brand-product-select-b1.md](merchant-brand-product-select-b1.md) | 商家平台 | 实现 | 认领 | sub-mpc/merchant-brand-product-select-b1 | 2026-09-07T18:35:00+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |

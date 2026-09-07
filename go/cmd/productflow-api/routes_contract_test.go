@@ -77,6 +77,8 @@ var goOpsExtras = map[string]bool{
 	"GET /api/v3/products/{}/visual-selection":                                          true,
 	"PUT /api/v3/products/{}/visual-selection":                                          true,
 	"POST /api/v3/products/{}/visual-inheritance":                                       true,
+	"GET /api/v3/products/{}/brand-selection":                                           true,
+	"PUT /api/v3/products/{}/brand-selection":                                           true,
 	"GET /api/v3/brands":                                                                true,
 	"POST /api/v3/brands":                                                               true,
 	"GET /api/v3/brands/{}":                                                             true,

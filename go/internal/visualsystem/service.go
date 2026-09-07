@@ -237,7 +237,7 @@ func (s Service) Impact(ctx context.Context, systemID, versionID string) (Impact
 func (s Service) GetSelection(ctx context.Context, productID string) (SelectionView, error) {
 	var out SelectionView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if err := lockProduct(ctx, pgxTx, productID); err != nil {
+		if _, err := lockProduct(ctx, pgxTx, productID); err != nil {
 			return err
 		}
 		var sel schema.ProductVisualSelections
@@ -281,7 +281,7 @@ func (s Service) Select(ctx context.Context, in SelectInput) (SelectionView, err
 	}
 	var out SelectionView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if err := lockProduct(ctx, pgxTx, in.ProductID); err != nil {
+		if _, err := lockProduct(ctx, pgxTx, in.ProductID); err != nil {
 			return err
 		}
 		ver, err := loadVersion(ctx, pgxTx, versionID)
@@ -323,15 +323,25 @@ func (s Service) Select(ctx context.Context, in SelectInput) (SelectionView, err
 }
 
 // Inheritance 解析商品视觉继承，并提示同方案是否有更新版本可显式采用。
+// 品牌风格来源：products.brand_id → brands.visual_system_id → 该方案当前（最新）版本的 style/colors。
 func (s Service) Inheritance(ctx context.Context, productID string, productOverride map[string]any) (InheritanceView, error) {
 	var out InheritanceView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if err := lockProduct(ctx, pgxTx, productID); err != nil {
+		product, err := lockProduct(ctx, pgxTx, productID)
+		if err != nil {
 			return err
 		}
 		input := ResolveInput{ProductID: productID, ProductOverride: productOverride, ProductDefault: map[string]any{}}
+		if product.BrandID != nil {
+			if brandID := strings.TrimSpace(*product.BrandID); brandID != "" {
+				input.BrandID = brandID
+				if err := attachBrandStyle(ctx, pgxTx, &input, brandID); err != nil {
+					return err
+				}
+			}
+		}
 		var sel schema.ProductVisualSelections
-		err := pgxTx.WithContext(ctx).Where("product_id = ?", productID).Take(&sel).Error
+		err = pgxTx.WithContext(ctx).Where("product_id = ?", productID).Take(&sel).Error
 		if err == nil {
 			ver, err := loadVersion(ctx, pgxTx, sel.VisualSystemVersionID)
 			if err != nil {
@@ -376,6 +386,52 @@ func (s Service) Inheritance(ctx context.Context, productID string, productOverr
 	return out, err
 }
 
+// attachBrandStyle 装载 Brand.visual_system_id 指向方案的当前版本载荷；缺失/无风格时保持 BrandID，由 ResolveInheritance 诚实占位。
+func attachBrandStyle(ctx context.Context, pgxTx *gorm.DB, input *ResolveInput, brandID string) error {
+	var brand schema.Brands
+	q := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Where("id = ?", brandID), "merchant_id")
+	err := q.Take(&brand).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if brand.VisualSystemID == nil || strings.TrimSpace(*brand.VisualSystemID) == "" {
+		return nil
+	}
+	sys, err := loadSystem(ctx, pgxTx, strings.TrimSpace(*brand.VisualSystemID))
+	if err != nil {
+		if apperr.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	var ver schema.VisualSystemVersions
+	err = pgxTx.WithContext(ctx).
+		Where("visual_system_id = ?", sys.ID).
+		Order("version DESC").
+		Take(&ver).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	payload, err := decodePayloadJSON(ver.PayloadJSON)
+	if err != nil {
+		return nil
+	}
+	input.BrandPayload = payload
+	verID := ver.ID
+	sysID := sys.ID
+	sysName := sys.Name
+	input.BrandVersionID = &verID
+	input.BrandSystemID = &sysID
+	input.BrandSystemName = &sysName
+	return nil
+}
+
 func normalizePayload(payload map[string]any) (string, string, error) {
 	if payload == nil {
 		payload = map[string]any{}
@@ -404,14 +460,14 @@ func loadSystem(ctx context.Context, tx *gorm.DB, systemID string) (schema.Visua
 	return row, err
 }
 
-func lockProduct(ctx context.Context, tx *gorm.DB, productID string) error {
+func lockProduct(ctx context.Context, tx *gorm.DB, productID string) (schema.Products, error) {
 	var row schema.Products
 	q := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}), "merchant_id")
-	err := q.Select("id").Where("id = ?", productID).Take(&row).Error
+	err := q.Where("id = ?", productID).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return auth.NotFoundCrossMerchant()
+		return schema.Products{}, auth.NotFoundCrossMerchant()
 	}
-	return err
+	return row, err
 }
 
 func loadVersion(ctx context.Context, tx *gorm.DB, versionID string) (schema.VisualSystemVersions, error) {

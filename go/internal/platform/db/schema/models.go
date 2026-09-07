@@ -786,6 +786,7 @@ type Products struct {
 	Category                           *string   `gorm:"column:category;type:varchar(120)"`
 	Price                              *string   `gorm:"column:price;type:numeric(10,2)"`
 	SourceNote                         *string   `gorm:"column:source_note;type:text"`
+	BrandID                            *string   `gorm:"column:brand_id;type:varchar(36)"`
 	CreatedAt                          time.Time `gorm:"column:created_at;type:timestamptz;not null"`
 	UpdatedAt                          time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
 	CoverImageAssetID                  *string   `gorm:"column:cover_image_asset_id;type:varchar(36)"`

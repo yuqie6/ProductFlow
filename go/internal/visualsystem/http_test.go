@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/brand"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/config"
@@ -51,6 +52,7 @@ func newVSServer(t *testing.T) *vsServer {
 	mediaStore := media.Store{Files: storage.Local{Root: t.TempDir()}}
 	product.HTTP{Service: product.Service{DB: gdb, Media: mediaStore}, Settings: settingsStore}.Register(engine)
 	visualsystem.HTTP{Service: visualsystem.Service{DB: gdb}, Settings: settingsStore}.Register(engine)
+	brand.HTTP{Service: brand.Service{DB: gdb}, Settings: settingsStore}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	vs := &vsServer{pool: pool, db: gdb, srv: srv, client: &http.Client{}}
@@ -212,5 +214,134 @@ func TestVisualSystemSaveSelectAppendDoesNotSilentUpdate(t *testing.T) {
 	}
 	if sel.VisualSystemVersionID != v2.ID {
 		t.Fatalf("explicit adopt failed: %s", sel.VisualSystemVersionID)
+	}
+}
+
+func TestBrandSelectionMergesIntoInheritance(t *testing.T) {
+	vs := newVSServer(t)
+	productID := vs.createProduct(t)
+
+	// 无 Brand → brand_not_selected
+	emptyInh := vs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/visual-inheritance", map[string]any{})
+	if emptyInh.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(emptyInh.Body)
+		emptyInh.Body.Close()
+		t.Fatalf("empty inheritance %d %s", emptyInh.StatusCode, raw)
+	}
+	var emptyView visualsystem.InheritanceView
+	vs.decode(t, emptyInh, &emptyView)
+	if emptyView.BrandPlaceholder.Reason != visualsystem.BrandReasonNotSelected {
+		t.Fatalf("expected brand_not_selected got %s", emptyView.BrandPlaceholder.Reason)
+	}
+
+	brandSys := vs.doJSON(t, http.MethodPost, "/api/v3/visual-systems", map[string]any{
+		"name": "品牌视觉",
+		"payload": map[string]any{
+			"style":  []any{"品牌冷色"},
+			"colors": []any{map[string]any{"role": "accent", "value": "#00AA00"}},
+		},
+	})
+	if brandSys.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(brandSys.Body)
+		brandSys.Body.Close()
+		t.Fatalf("brand system %d %s", brandSys.StatusCode, raw)
+	}
+	var brandSystem visualsystem.SystemView
+	vs.decode(t, brandSys, &brandSystem)
+
+	createdBrand := vs.doJSON(t, http.MethodPost, "/api/v3/brands", map[string]any{
+		"name": "杯品牌", "visual_system_id": brandSystem.ID,
+	})
+	if createdBrand.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(createdBrand.Body)
+		createdBrand.Body.Close()
+		t.Fatalf("create brand %d %s", createdBrand.StatusCode, raw)
+	}
+	var brandView brand.View
+	vs.decode(t, createdBrand, &brandView)
+
+	selected := vs.doJSON(t, http.MethodPut, "/api/v3/products/"+productID+"/brand-selection", map[string]any{
+		"brand_id": brandView.ID,
+	})
+	if selected.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(selected.Body)
+		selected.Body.Close()
+		t.Fatalf("brand select %d %s", selected.StatusCode, raw)
+	}
+	selected.Body.Close()
+
+	productSys := vs.doJSON(t, http.MethodPost, "/api/v3/visual-systems", map[string]any{
+		"name": "商品方案",
+		"payload": map[string]any{
+			"colors": []any{map[string]any{"role": "accent", "value": "#111111"}},
+		},
+	})
+	var productSystem visualsystem.SystemView
+	vs.decode(t, productSys, &productSystem)
+	sel := vs.doJSON(t, http.MethodPut, "/api/v3/products/"+productID+"/visual-selection", map[string]any{
+		"visual_system_version_id": productSystem.CurrentVersion.ID,
+	})
+	if sel.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(sel.Body)
+		sel.Body.Close()
+		t.Fatalf("visual select %d %s", sel.StatusCode, raw)
+	}
+	sel.Body.Close()
+
+	inh := vs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/visual-inheritance", map[string]any{})
+	if inh.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(inh.Body)
+		inh.Body.Close()
+		t.Fatalf("inheritance %d %s", inh.StatusCode, raw)
+	}
+	var inheritance visualsystem.InheritanceView
+	vs.decode(t, inh, &inheritance)
+	if inheritance.BrandPlaceholder.Reason != visualsystem.BrandReasonMerged {
+		t.Fatalf("reason=%s", inheritance.BrandPlaceholder.Reason)
+	}
+	if !inheritance.Layers[2].Active {
+		t.Fatal("brand layer should be active")
+	}
+	colors, _ := inheritance.EffectivePayload["colors"].([]any)
+	color, _ := colors[0].(map[string]any)
+	if color["value"] != "#111111" {
+		t.Fatalf("scheme must beat brand colors: %+v", inheritance.EffectivePayload)
+	}
+	style, _ := inheritance.EffectivePayload["style"].([]any)
+	if len(style) != 1 || style[0] != "品牌冷色" {
+		t.Fatalf("brand style should fill gap: %+v", inheritance.EffectivePayload["style"])
+	}
+}
+
+func TestBrandSelectionWithoutVisualStaysPlaceholder(t *testing.T) {
+	vs := newVSServer(t)
+	productID := vs.createProduct(t)
+	createdBrand := vs.doJSON(t, http.MethodPost, "/api/v3/brands", map[string]any{"name": "无方案品牌"})
+	if createdBrand.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(createdBrand.Body)
+		createdBrand.Body.Close()
+		t.Fatalf("create brand %d %s", createdBrand.StatusCode, raw)
+	}
+	var brandView brand.View
+	vs.decode(t, createdBrand, &brandView)
+
+	selected := vs.doJSON(t, http.MethodPut, "/api/v3/products/"+productID+"/brand-selection", map[string]any{
+		"brand_id": brandView.ID,
+	})
+	if selected.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(selected.Body)
+		selected.Body.Close()
+		t.Fatalf("brand select %d %s", selected.StatusCode, raw)
+	}
+	selected.Body.Close()
+
+	inh := vs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/visual-inheritance", map[string]any{})
+	var inheritance visualsystem.InheritanceView
+	vs.decode(t, inh, &inheritance)
+	if inheritance.BrandPlaceholder.Reason != visualsystem.BrandReasonExistsNoMerge {
+		t.Fatalf("reason=%s", inheritance.BrandPlaceholder.Reason)
+	}
+	if inheritance.Layers[2].Active {
+		t.Fatal("brand layer must stay inactive without resolvable style")
 	}
 }
