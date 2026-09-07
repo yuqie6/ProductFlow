@@ -8,7 +8,7 @@
 
 ## 组职责与交接
 
-2026-09-07 正式版职责校准：本组负责 [总纲第 5 节](../ROADMAP.md#5-正常体验的最低要求) 的创建、成果浏览、修图、采用、交付和复用体验。[完整成果投影](tasks/archive/delivery-workbench-projection.md)、[采用/交付快照](tasks/archive/delivery-adoption-snapshot.md) 与 [品牌视觉复用](tasks/archive/brand-visual-reuse.md) 已交付。保留现有画布默认与手动入口；是否切换默认由后续走查证据决定。基础配方 preview/原子确认、局部编辑和 ZIP 已有实现，不重复发布。
+2026-09-07 正式版职责校准：本组负责 [总纲第 5 节](../ROADMAP.md#5-正常体验的最低要求) 的创建、成果浏览、修图、采用、交付和复用体验。[完整成果投影](tasks/archive/delivery-workbench-projection.md)、[采用/交付快照](tasks/archive/delivery-adoption-snapshot.md) 与 [品牌视觉复用](tasks/archive/brand-visual-reuse.md) 已交付。保留现有画布默认与手动入口；[默认入口走查](tasks/archive/workbench-default-entry-walkthrough.md) **建议暂不全局切到成果**，可选跟进 [有产出时默认成果](tasks/workbench-conditional-results-default.md)。基础配方 preview/原子确认、局部编辑和 ZIP 已有实现，不重复发布。
 
 当前没有真实商户用户，内部走查只说明工程可用性。商家平台负责权限语义；本组按其固定合同提供清楚的商家上下文和角色操作入口。二维组合或品牌版本等跨层实现由协调者指定唯一主任务及排他范围，图片质量提供固定质量合同。
 
@@ -95,6 +95,7 @@ O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；�
 | 完整配方创建入口 | [canvas-full-recipe-entry](tasks/archive/canvas-full-recipe-entry.md)：创建页只读预览、取消无写入、同事务创建首图、丢响应重试不重复；PG 59、Web 650、浏览器 7 passed | 1440/1024/390 业务操作，24 组语言/主题布局；来源身份、资产与结果不继承。素材占位需重新选图，文稿须按新商品审阅；未代替商家效率或真实 provider 验收 |
 | 局部编辑 | [canvas-local-edit-flow](tasks/archive/canvas-local-edit-flow.md)：隔离 mock Chromium 2 passed，20.2s；providers/localedit Go 通过 | 核检查器入口、谱系、采用/撤销、提交失败不覆盖；未覆盖真实 OpenAI/Gemini 质量或商家任务耗时。现有 filmstrip 不等于镜头列表主界面 |
 | 成果工作视图 | [delivery-workbench-projection](tasks/archive/delivery-workbench-projection.md)：投影/视图 Vitest 16 passed；`just web-build`/`docs-check` 通过；开发站 1440/1280/390 走查切换、定位、`scope=node` 运行 | 默认仍为流程视图；opt-in E2E 未跑；不证明商户效率或应改默认 |
+| 默认入口走查 | [workbench-default-entry-walkthrough](tasks/archive/workbench-default-entry-walkthrough.md)：共享 dev 浏览器路径创建→（代理）出图→成果→定位；Vitest 成果/采用 17 + 视觉/配方 9 passed | **建议暂不全局默认成果**；可选 [有产出时默认成果](tasks/workbench-conditional-results-default.md)。采用/导出/视觉 API 在共享旧 API 进程为 404；未新建出图、无完整配方样本 |
 | 交付采用快照 | [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md)：Go 采用/并发/导出一致；成果视图采用/导出接线；schema `delivery_adoption_*`；Vitest 14 | 浏览器整链 opt-in 未跑；质量判据仍依赖图片质量组判定输入；不宣称 R2 全部通过 |
 | 品牌视觉复用 | [brand-visual-reuse](tasks/archive/brand-visual-reuse.md)：商家内视觉方案版本 CRUD；商品显式选择；IQ-CF-07 继承预览（Brand 占位）；追加版本不静默改选择；配方创建预览列继承/待填；Vitest + Go 包测 | 浏览器整链未跑；Brand 表仍占位；未宣称跨商家分享 |
 
@@ -154,4 +155,4 @@ just docs-check
 
 [完整配方创建入口](tasks/archive/canvas-full-recipe-entry.md) 已修复：新建页直接预览并事务确认，不经过默认 birth graph 或无图工作台。已有图不可覆盖、取消不创建商品/图、目标身份及重试去重保持。前单入口 FAIL 保留为历史；临时 probe 已移除，正向路径纳入常规资产与配方门禁。[局部编辑](tasks/archive/canvas-local-edit-flow.md) 已修复：mock 绑定下检查器可完成消除/换字/重绘、采用或只留图库，失败不改节点当前图。商家任务耗时与镜头列表主界面仍未知，本组当前没有已发布的后续实现单。
 
-其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。
+其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。默认入口若跟进实现，须单独认领写范围（条件默认 vs 记忆上次视图），且先确认共享/隔离栈已挂载 delivery-adoption 与 visual-systems 路由。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。

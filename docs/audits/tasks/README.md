@@ -23,8 +23,8 @@
 | [merchant-image-session.md](merchant-image-session.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-image-session | 2026-09-07T13:45:00+08:00 |
 | [merchant-library-binding.md](merchant-library-binding.md) | 商家平台 | 实现 | 开放 | — | — |
 | [compete-facts-impact-preview.md](compete-facts-impact-preview.md) | 图片质量 | 实现 | 认领 | sub-compete/compete-facts-impact-preview | 2026-09-07T13:45:00+08:00 |
-| [workbench-default-entry-walkthrough.md](workbench-default-entry-walkthrough.md) | 工作流体验 | 证据 | 认领 | sub-delivery/workbench-default-entry-walkthrough | 2026-09-07T13:42:00+08:00 |
-| [release-n-to-n1-upgrade.md](release-n-to-n1-upgrade.md) | 平台可靠性 | 实现 | 开放 | — | — |
+| [workbench-conditional-results-default.md](workbench-conditional-results-default.md) | 工作流体验 | 实现 | 开放 | — | — |
+| [release-n-to-n1-upgrade.md](release-n-to-n1-upgrade.md) | 平台可靠性 | 实现 | 认领 | sub-release/release-n-to-n1-upgrade | 2026-09-07T13:48:00+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |

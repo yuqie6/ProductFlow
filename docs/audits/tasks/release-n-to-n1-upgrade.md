@@ -1,9 +1,9 @@
 # 任务：N→N+1 升级合同与夹具（B5）
 
-状态：开放
+状态：认领
 类型：实现
-认领者：—
-认领于：—
+认领者：sub-release/release-n-to-n1-upgrade
+认领于：2026-09-07T13:48:00+08:00
 业务组：平台可靠性
 父账本：performance-governance.md
 完成后可拆：R6 汇总另门；不宣称 R6
