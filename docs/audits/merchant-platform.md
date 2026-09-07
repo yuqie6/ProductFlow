@@ -29,7 +29,7 @@
 3. 在相同身份合同上交付商家额度与 Operator 运营控制，复用平台提供的固定消费事实；缺字段或原子预留入口时将其纳入完整因果切片。
 4. 双商家正反用例、成员撤销和混合负载验收；把受影响身份/授权合同交给 Agent 质量独立固定题目，自进化消费已固定输入。
 
-现阶段：B10/MP-B 与总纲 **R1 已裁定通过**（夹具双商口径）；**在运营明确邀请前仍不得对互不信任的第二商家开放产品注册**（`CreateMerchant` 保持 409）。
+现阶段：B10/MP-B 与总纲 **R1 已裁定通过**（夹具双商口径）；**在运营明确邀请前仍不得对互不信任的第二商家开放产品注册**（`CreateMerchant` 保持 409）。[总纲 R2/R5 对照刷新](tasks/archive/roadmap-r2-r5-refresh.md) 已归档（两门仍未通过）。新商家额度引导进行中（工作树看板）。
 
 ## 验收与现状
 
@@ -37,7 +37,7 @@
 |---|---|---|
 | MP-A 身份 | 多角色、邀请/撤销/恢复、最后 Owner 与并发变更、会话失效可验证 | **通过**（B0，见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)；邀请/角色/撤销/最后 Owner 自动化） |
 | MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **通过**（B10，2026-09-07，见 [merchant-isolation-gate](tasks/archive/merchant-isolation-gate.md)）；**未开放**第二互不信任商家产品上线；≠ MP-C/MP-D |
-| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0–B4 + localedit + source-note + 价格目录骨架**已交付（+[localedit](tasks/archive/merchant-mp-c-wire-localedit.md)+[source-note](tasks/archive/merchant-mp-c-wire-source-note.md)+[price-catalog-b0](tasks/archive/merchant-mp-c-price-catalog-b0.md)）。**总纲 R5 未通过**（见 [merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）：价格目录已可核验但仍属内部单价种子；仍缺入口展示单价产品面、unknown 到期策略；≠真实支付 |
+| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0–B4 + localedit + source-note + 价格目录骨架**已交付（+[localedit](tasks/archive/merchant-mp-c-wire-localedit.md)+[source-note](tasks/archive/merchant-mp-c-wire-source-note.md)+[price-catalog-b0](tasks/archive/merchant-mp-c-price-catalog-b0.md)）。**总纲 R5 未通过**（见 [merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）：价格目录已可核验但仍属内部单价种子；仍缺入口展示单价产品面、unknown 到期策略、新商家可用余额引导（进行中）；≠真实支付 |
 | MP-D 运营 | 运营密钥不进入商家上下文；停用、支持访问、数据导出有明确权限与审计 | 未实现（A8 合同草案仅） |
 
 **总纲 R1：** **通过**（2026-09-07，见 [merchant-r1-close-ruling](tasks/archive/merchant-r1-close-ruling.md)）。证据口径：测试夹具双商 + 多角色 + 成员撤销 + HTTP/资源/队列/事件/Agent/后台交叉拒绝；**≠** 产品上线第二互不信任商；**≠** MP-C/MP-D。
