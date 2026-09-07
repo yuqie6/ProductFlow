@@ -42,7 +42,8 @@
 |---|---|---|
 | merchant-isolation-contract | 商家平台覆盖矩阵 | 2026-09-07 完成归档；下一项 B0 `merchant-identity-skeleton` |
 | merchant-identity-skeleton | 商家平台 B0；User/Merchant/Membership | CTO 认领 `sub-merchant/…`，执行中 |
-| delivery-workbench-projection | 工作流体验新任务；基于已有 Graph 的成果入口 | 2026-09-07 CTO 认领 `sub-delivery/…`，并行执行中 |
+| delivery-workbench-projection | 工作流体验成果视图 | 2026-09-07 完成归档；默认仍为流程 |
+| delivery-adoption-snapshot | 工作流体验；交付采用与版本快照 | CTO 认领 `sub-delivery/…`，执行中 |
 | release-readiness-baseline | 平台可靠性；发行差距已归档 | 2026-09-07 完成归档；下一项 B1 `release-compose-proxy-overlay` |
 | release-compose-proxy-overlay | 平台可靠性 B1 | 2026-09-07 完成归档；nginx+prod-ports |
 | release-versioned-artifact | 平台可靠性 B2；版本化发行物 | 新发布开放 |

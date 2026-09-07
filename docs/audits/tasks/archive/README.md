@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [delivery-workbench-projection.md](delivery-workbench-projection.md) | 完成 | 成果/流程切换；全量生图投影；默认仍流程；Vitest 16；≠采用快照 |
 | [compete-facts-layout-contract.md](compete-facts-layout-contract.md) | 完成 | IQ-CF-01…08、CF-B0…B5；与采用快照 IQ-CF-08 交接；≠R3 |
 | [release-compose-proxy-overlay.md](release-compose-proxy-overlay.md) | 完成 | nginx→go-api；prod-ports overlay；隔离四项探活通过；≠R6/全量 build |
 | [merchant-isolation-contract.md](merchant-isolation-contract.md) | 完成 | 归并 69 / 展开 214 路由等；B0–B10；无未裁定边界；隔离未实现 |

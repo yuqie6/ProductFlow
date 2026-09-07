@@ -29,7 +29,7 @@ import type {
 } from "../../../lib/types";
 import { inspectableGraphNodeId } from "../canvas/graphCatalog";
 import { GraphAddNodePanel } from "../canvas/GraphAddNodePanel";
-import { GraphCanvasPanel, type GraphCanvasActions, type GraphCanvasCommitNodeInput } from "../canvas/GraphCanvasPanel";
+import { GraphCanvasPanel, type GraphCanvasActions, type GraphCanvasCommitNodeInput, type WorkbenchMainView } from "../canvas/GraphCanvasPanel";
 import { GraphLibraryPanel } from "../canvas/GraphLibraryPanel";
 import { GraphNodeInspector } from "../canvas/GraphNodeInspector";
 import { GraphRunsPanel } from "../canvas/GraphRunsPanel";
@@ -143,6 +143,7 @@ export function ProductWorkbenchSurface({
   const [recipeApplication, setRecipeApplication] = useState<WorkflowRecipeApplicationResult | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
+  const [mainView, setMainView] = useState<WorkbenchMainView>("flow");
   const [canvasBusy, setCanvasBusy] = useState(false);
   const [agentEditing, setAgentEditing] = useState(false);
   const [chromeCollapsed, setChromeCollapsed] = useState(
@@ -537,6 +538,14 @@ export function ProductWorkbenchSurface({
             onBeforeRun={beforeRun}
             agentEditing={agentEditing}
             onOpenLocalEdit={localEdit.openLocalImageEdit}
+            onPreviewImage={(assetId, alt) => setPreviewImage({
+              previewUrl: api.getProductImageAssetMediaUrl(assetId, "preview"),
+              downloadUrl: api.getProductImageAssetMediaUrl(assetId),
+              filename: alt,
+              alt,
+            })}
+            mainView={mainView}
+            onMainViewChange={setMainView}
             chromeCollapsed={chromeCollapsed}
             onToggleChrome={() => setChromeCollapsed((current) => !current)}
             onBindNode={(nodeId) => {

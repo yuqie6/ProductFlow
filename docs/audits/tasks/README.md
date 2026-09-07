@@ -21,10 +21,9 @@
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
 | [merchant-identity-skeleton.md](merchant-identity-skeleton.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-identity-skeleton | 2026-09-07T12:03:00+08:00 |
-| [delivery-workbench-projection.md](delivery-workbench-projection.md) | 工作流体验 | 实现 | 认领 | sub-delivery/delivery-workbench-projection | 2026-09-07T11:55:25+08:00 |
 | [release-versioned-artifact.md](release-versioned-artifact.md) | 平台可靠性 | 实现 | 开放 | — | — |
 | [compete-facts-layer-gate.md](compete-facts-layer-gate.md) | 图片质量 | 实现 | 认领 | sub-image/compete-facts-layer-gate | 2026-09-07T12:16:30+08:00 |
-| [delivery-adoption-snapshot.md](delivery-adoption-snapshot.md) | 工作流体验 | 实现 | 阻塞 | — | — |
+| [delivery-adoption-snapshot.md](delivery-adoption-snapshot.md) | 工作流体验 | 实现 | 认领 | sub-delivery/delivery-adoption-snapshot | 2026-09-07T12:26:00+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |

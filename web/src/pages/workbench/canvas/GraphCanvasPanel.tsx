@@ -7,7 +7,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, ChevronRight, Images, ListChecks, Play, Redo2, Undo2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { Button } from "../../../components/ui/button";
@@ -73,6 +73,24 @@ import {
 import { GraphShotFilmstrip } from "./GraphShotFilmstrip";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
 import { projectGraphShots, type GraphShotProjection } from "./shotProjection";
+
+const WorkbenchResultsViewSwitcher = lazy(async () => {
+  const module = await import("./workbenchResults");
+  return { default: module.WorkbenchResultsViewSwitcher };
+});
+const WorkbenchResultsLayer = lazy(async () => {
+  const module = await import("./workbenchResults");
+  return { default: module.WorkbenchResultsLayer };
+});
+
+export type WorkbenchMainView = "flow" | "results";
+
+function graphHasResultWorkbenchItems(graph: GraphProjection): boolean {
+  return graph.nodes.some((node) => (
+    node.node_type === "image_generation"
+    || (node.node_type === "image_asset" && node.config?.role === "evidence")
+  ));
+}
 
 export interface GraphCanvasCommitNodeInput {
   nodeId: string;
@@ -161,6 +179,10 @@ export function GraphCanvasPanel({
   onBindNode,
   onBusyChange,
   onBeforeRun,
+  onOpenLocalEdit,
+  onPreviewImage,
+  mainView: mainViewProp,
+  onMainViewChange,
   chromeCollapsed = false,
   onToggleChrome,
   agentEditing = false,
@@ -176,6 +198,9 @@ export function GraphCanvasPanel({
   onBusyChange?: (busy: boolean) => void;
   onBeforeRun?: () => Promise<void>;
   onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
+  onPreviewImage?: (assetId: string, alt: string) => void;
+  mainView?: WorkbenchMainView;
+  onMainViewChange?: (view: WorkbenchMainView) => void;
   chromeCollapsed?: boolean;
   onToggleChrome?: () => void;
   agentEditing?: boolean;
@@ -223,6 +248,12 @@ export function GraphCanvasPanel({
   } | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [filmstripVisible, setFilmstripVisible] = useState(restoredCanvas.filmstripVisible);
+  const [mainViewState, setMainViewState] = useState<WorkbenchMainView>("flow");
+  const mainView = mainViewProp ?? mainViewState;
+  const setMainView = useCallback((view: WorkbenchMainView) => {
+    if (mainViewProp === undefined) setMainViewState(view);
+    onMainViewChange?.(view);
+  }, [mainViewProp, onMainViewChange]);
   const [focusRequest, setFocusRequest] = useState<GraphCanvasFocusRequest | null>(null);
   const [runningShotGroupId, setRunningShotGroupId] = useState<string | null>(null);
   const runningShotGroupRef = useRef<string | null>(null);
@@ -417,6 +448,8 @@ export function GraphCanvasPanel({
     [graph, runsQuery.data?.items],
   );
   const hasShotGroups = shotProjections.length > 0;
+  const hasResultItems = useMemo(() => graphHasResultWorkbenchItems(graph), [graph]);
+  const showFlowView = mainView === "flow";
   const queuedRuns = graphQueuedRuns(runsQuery.data?.items);
   const runningRuns = graphRunningRuns(runsQuery.data?.items);
   const liveRun = runningRuns[0] ?? queuedRuns[0] ?? null;
@@ -872,6 +905,32 @@ export function GraphCanvasPanel({
     }));
   }, []);
 
+  const requestResultFlowFocus = useCallback((nodeId: string, groupId: string | null) => {
+    setMainView("flow");
+    void (async () => {
+      try {
+        if (enteredGroupIdRef.current && groupId !== enteredGroupIdRef.current) {
+          setEnteredGroupId(null);
+          setViewport(readStoredWorkflowCanvasViewport(graphRef.current.id));
+        }
+        await onSelect([nodeId]);
+        setFocusRequest((current) => ({
+          nodeIds: [nodeId],
+          version: (current?.version ?? 0) + 1,
+          padding: 0.28,
+          duration: 220,
+        }));
+      } catch {
+        return;
+      }
+    })();
+  }, [onSelect, setMainView]);
+
+  const submitResultNodeRun = useCallback((nodeId: string) => {
+    hideRunPreview();
+    void submitRun({ scope: "node", node_id: nodeId }).catch(() => undefined);
+  }, [hideRunPreview, submitRun]);
+
   const handleViewportChange = useCallback((next: WorkflowCanvasViewport, groupId: string | null) => {
     if (!isWorkflowCanvasViewportScopeActive(enteredGroupIdRef.current, groupId)) return;
     setViewport(next);
@@ -1170,7 +1229,12 @@ export function GraphCanvasPanel({
               </span>
             </Tooltip>
           ) : null}
-          {hasShotGroups ? (
+          {hasResultItems ? (
+            <Suspense fallback={null}>
+              <WorkbenchResultsViewSwitcher mainView={mainView} onMainViewChange={setMainView} />
+            </Suspense>
+          ) : null}
+          {hasShotGroups && showFlowView ? (
             <IconButton label={t("graph.canvas.shotsView")} aria-pressed={filmstripVisible} variant={filmstripVisible ? "secondary" : "ghost"} onClick={() => setFilmstripVisible((visible) => !visible)}>
               <Images size={16} aria-hidden="true" />
             </IconButton>
@@ -1179,7 +1243,7 @@ export function GraphCanvasPanel({
             <ProductWorkbenchCanvasChromeToggle embedded collapsed={chromeCollapsed} maximizeLabel={t("detail.maximizeCanvas")} restoreLabel={t("detail.restoreCanvas")} onToggle={onToggleChrome} />
           ) : null}
         </div>
-        {enteredGroup ? (
+        {enteredGroup && showFlowView ? (
           <nav
             data-graph-group-breadcrumb
             aria-label={t("workbench.breadcrumb")}
@@ -1197,8 +1261,9 @@ export function GraphCanvasPanel({
             <span className="min-w-0 truncate px-1 font-semibold text-text-primary">{enteredGroup.title}</span>
           </nav>
         ) : null}
-        <div className="absolute inset-0 min-h-0 overflow-hidden">
-          <GraphWorkflowCanvas
+        <div className="absolute inset-0 min-h-0 overflow-hidden" data-graph-main-view-panel={mainView}>
+          {showFlowView ? (
+            <GraphWorkflowCanvas
             graph={graph}
             catalog={catalog}
             selectedNodeIds={selectedNodeIds}
@@ -1282,8 +1347,33 @@ export function GraphCanvasPanel({
               }]);
             }}
           />
+          ) : (
+            <Suspense fallback={null}>
+              <WorkbenchResultsLayer
+                graph={graph}
+                catalog={catalog}
+                runs={runsQuery.data?.items}
+                runsLoading={runsQuery.isLoading}
+                runsFetching={runsQuery.isFetching}
+                runsError={runsQuery.error}
+                onRetryRuns={() => void runsQuery.refetch()}
+                busy={runControlsBusy}
+                runningNodeId={runningNodeId}
+                selectedNodeIds={selectedNodeIds}
+                plannedActions={plannedActions}
+                onSelect={onSelect}
+                onRequestFlowFocus={requestResultFlowFocus}
+                onSubmitNodeRun={submitResultNodeRun}
+                onHideRunPreview={hideRunPreview}
+                onPreviewRun={showRunPreview}
+                onOpenLocalEdit={onOpenLocalEdit}
+                onPreviewImage={onPreviewImage}
+                onBindNode={onBindNode}
+              />
+            </Suspense>
+          )}
         </div>
-        {hasShotGroups ? (
+        {hasShotGroups && showFlowView ? (
           <GraphShotFilmstrip
             shots={shotProjections}
             runsLoading={runsQuery.isLoading}
