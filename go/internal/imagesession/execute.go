@@ -58,6 +58,10 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		return e.releaseIdle(ctx, taskID)
 	}
 	if err := e.runGeneration(ctx, taskID, attemptID, sessionID); err != nil {
+		var persistErr effectPersistenceError
+		if errors.As(err, &persistErr) {
+			return err
+		}
 		if errors.Is(err, queue.ErrLater) {
 			return err
 		}
@@ -343,7 +347,9 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 			images = [][]byte{result.Bytes}
 		}
 		if len(images) != batch {
-			_ = e.markEffect(ctx, taskID, attemptID, candidate, "unknown", unknownDetail)
+			if markErr := e.markEffect(ctx, taskID, attemptID, candidate, "unknown", unknownDetail); markErr != nil {
+				return markErr
+			}
 			return unknownErr{}
 		}
 		if err := media.RejectGenerationOutput(images, result.MIME); err != nil {
@@ -352,7 +358,9 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 			if errors.As(err, &ae) {
 				detail = ae.Detail
 			}
-			_ = e.markEffect(ctx, taskID, attemptID, candidate, "failed", detail)
+			if markErr := e.markEffect(ctx, taskID, attemptID, candidate, "failed", detail); markErr != nil {
+				return markErr
+			}
 			return err
 		}
 		for i, data := range images {
@@ -362,7 +370,9 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 				if errors.Is(err, errCancelled) || errors.Is(err, errStale) {
 					return err
 				}
-				_ = e.markEffect(ctx, taskID, attemptID, candidate, "unknown", unknownDetail)
+				if markErr := e.markEffect(ctx, taskID, attemptID, candidate, "unknown", unknownDetail); markErr != nil {
+					return markErr
+				}
 				return unknownErr{}
 			}
 		}
@@ -401,24 +411,28 @@ func (e Executor) yieldCompletedBatch(ctx context.Context, taskID, attemptID str
 	})
 }
 
+// effectPersistenceError keeps a failed ledger write out of business retry classification.
+// The task remains running for recovery and the queue retains its envelope.
+type effectPersistenceError struct{ error }
+
+func (e effectPersistenceError) Unwrap() error { return e.error }
+
 func (e Executor) recordGenerateFailure(ctx context.Context, taskID, attemptID string, candidate int, genErr error) error {
 	persistCtx, cancelPersist := persistContext(ctx)
 	defer cancelPersist()
+	result, detail, outcome := "unknown", unknownDetail, error(unknownErr{})
 	var ae apperr.Error
-	if errors.As(genErr, &ae) && ae.Status == 400 {
-		_ = e.markEffect(persistCtx, taskID, attemptID, candidate, "failed", ae.Detail)
-		return genErr
+	switch {
+	case errors.As(genErr, &ae) && ae.Status == 400:
+		result, detail, outcome = "failed", ae.Detail, genErr
+	case IsUncertainProviderFailure(genErr):
+	case IsRetryableProviderFailure(genErr) || IsConfirmedProviderFailure(genErr):
+		result, detail, outcome = "failed", genErr.Error(), genErr
 	}
-	if IsUncertainProviderFailure(genErr) {
-		_ = e.markEffect(persistCtx, taskID, attemptID, candidate, "unknown", unknownDetail)
-		return unknownErr{}
+	if err := e.markEffect(persistCtx, taskID, attemptID, candidate, result, detail); err != nil {
+		return err
 	}
-	if IsRetryableProviderFailure(genErr) || IsConfirmedProviderFailure(genErr) {
-		_ = e.markEffect(persistCtx, taskID, attemptID, candidate, "failed", genErr.Error())
-		return genErr
-	}
-	_ = e.markEffect(persistCtx, taskID, attemptID, candidate, "unknown", unknownDetail)
-	return unknownErr{}
+	return outcome
 }
 
 func (e Executor) raiseIfCancelled(ctx context.Context, taskID, attemptID string) error {
@@ -488,7 +502,7 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 
 // markEffect 更新该起始序号的账本。result=applied 同时写 reconciliation_state，给对账查询用。
 func (e Executor) markEffect(ctx context.Context, taskID, attemptID string, start int, result, detail string) error {
-	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		var task schema.ImageSessionGenerationTasks
 		if err := pgxTx.Clauses(pfdb.ForUpdate()).Where("id = ?", taskID).Take(&task).Error; err != nil {
 			return err
@@ -520,6 +534,10 @@ func (e Executor) markEffect(ctx context.Context, taskID, attemptID string, star
 		}
 		return nil
 	})
+	if err != nil && !errors.Is(err, errStale) {
+		return effectPersistenceError{err}
+	}
+	return err
 }
 
 // saveCandidate 把一张生成图落成会话素材并挂到本轮。取消或 attempt 失效时 compensation 删刚写的文件。
