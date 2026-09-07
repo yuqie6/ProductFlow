@@ -49,11 +49,12 @@
 | release-compose-proxy-overlay | 发行 B1 | 完成归档 |
 | release-versioned-artifact | 发行 B2 | 2026-09-07 完成归档 |
 | release-backup-restore | 发行 B3；备份恢复 | 2026-09-07 完成归档 |
-| release-d3-restore-drill | 发行 B4；D3 恢复演练 | CTO 认领 `sub-release/…`，执行中 |
+| release-d3-restore-drill | 发行 B4；D3 恢复演练 | 2026-09-07 完成归档 |
+| release-n-to-n1-upgrade | 发行 B5；N→N+1 | 开放 |
 | delivery-workbench-projection | 成果视图 | 完成归档；默认仍为流程 |
 | delivery-adoption-snapshot | 采用快照 | 2026-09-07 完成归档 |
 | brand-visual-reuse | 品牌视觉复用 | 2026-09-07 完成归档 |
-| workbench-default-entry-walkthrough | 默认入口走查 | 开放 |
+| workbench-default-entry-walkthrough | 默认入口走查 | CTO 认领 `sub-delivery/…`，执行中 |
 | compete-facts-layout-contract | 事实/排版合同 | 完成归档 |
 | compete-facts-layer-gate | CF-B0 事实分层闸 | 2026-09-07 完成归档 |
 | compete-facts-text-trace | CF-B1 图位文字追溯 | 2026-09-07 完成归档 |
