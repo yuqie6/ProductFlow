@@ -4,6 +4,8 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [saas-design-alignment.md](saas-design-alignment.md) | 完成 | 纠正账号与管理员范围、六组现行合同，删除支持占位；收费/采用政策待独立裁定 |
+| [saas-workspace-context.md](saas-workspace-context.md) | 取消 | 用户明确普通账号自有一个商家，撤销多组织切换；本轮未提交增量已清除 |
 | [smtp-public-registration.md](smtp-public-registration.md) | 完成 | SMTP 环境默认与公开验证码注册；退役邀请和设置二次解锁；整仓 Go 保留已复现的基线失败 |
 | [saas-auth-entry-security.md](saas-auth-entry-security.md) | 完成 | 邀请身份证明、Redis 原子准入、来源校验和登录冷却；多商家体验待交付 |
 | [delivery-inspector-confirm-facts-null.md](delivery-inspector-confirm-facts-null.md) | 完成 | 确认事实 impact-preview null.length 兜底；≠R2 |

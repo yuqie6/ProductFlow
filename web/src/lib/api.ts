@@ -244,17 +244,6 @@ export const api = {
   getMerchantQuotaPrice(merchantId: string): Promise<QuotaPriceVersion> {
     return request(`/api/merchants/${encodeURIComponent(merchantId)}/quota/price`);
   },
-  getSupportAccessContract(): Promise<{
-    contract_version: number;
-    implemented: boolean;
-    summary: string;
-    rules: string[];
-    session_fields: string[];
-    audit_fields: string[];
-    actions: string[];
-  }> {
-    return request("/api/ops/support-contract");
-  },
   listProducts(input?: {
     page?: number;
     page_size?: number;

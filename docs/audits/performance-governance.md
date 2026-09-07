@@ -14,9 +14,9 @@
 4. 正常交互与后台恢复可以共存；锁、连接、扫描、响应体和媒体内存的成本与实际工作量相称。
 5. 发布判断绑定代码版本、配置、数据形状和有效证据；能说明哪些已验证，哪些仍不确定。
 
-当前部署从单管理员、单开发商家 bootstrap 开始，公开注册已可创建普通 User 的自有 Merchant；完整多商家 SaaS 仍是目标。身份、隔离与商业额度由 [商家平台](merchant-platform.md) 负责；本组增加发行、安装、备份恢复、稳定版升级、调用消费事实及多商家资源限制职责。它们是正式版必要增量，不能继续以 live demo 边界无限后置；实现仍须按 [总纲](../ROADMAP.md) 的固定合同拆分，不零散添加 tenant 字段。
+当前部署从单管理员 bootstrap 开始；公开注册可创建普通 User 与其自有 Merchant。正式版身份合同是：普通账号只拥有一个 Merchant；商品、素材、Graph、Agent/Delivery 等后台任务均按 `merchant_id` 归属。目标合同允许平台管理员在显式 `merchant_id` 上管理所有商家的已有商品，管理不改变归属；不存在跨账号的全局商品实体，也不以工作区或商家切换、Owner/Editor/Viewer 团队或支持会话实现此能力。完整多商家 SaaS 仍是目标。身份、隔离与商业额度由 [商家平台](merchant-platform.md) 负责；本组增加发行、安装、备份恢复、稳定版升级、调用消费事实及多商家资源限制职责。它们是正式版必要增量，不能继续以 live demo 边界无限后置；实现仍须按 [总纲](../ROADMAP.md) 的固定合同拆分，不零散添加抽象 tenant 字段。
 
-组内 [发行基线调查](tasks/archive/release-readiness-baseline.md) 已在源码只读基线 `d6709c4a` 上给出运行单元、持久面、差距分类与演练合同（见 [自托管发行与恢复基线](#self-host-release-baseline)）。备份必须含数据库、媒体、必要 Pi 数据及可解密/可启动配置；首个稳定版起提供明确升级路径，不恢复 retired V1/v2。真实安装/恢复/升级路径与演练证据已有 B1–B5 及 B6 汇总；干净候选重跑见 [release-r6-clean-candidate-gate](tasks/archive/release-r6-clean-candidate-gate.md)（G-07 在 `e8cb494d`+最窄修补上 PASS，修补已入库于 `67b0f309`）。[release-r6-pin-and-formal-d4](tasks/archive/release-r6-pin-and-formal-d4.md) 已产出 pin `0.0.0-67b0f3092158`（≡G-07 交付 SHA）并对 `0.0.0-5ed2b916b569`→该 pin 跑通正式 D4（非等价 retag）。[release-r6-resource-budget](tasks/archive/release-r6-resource-budget.md) 已在隔离项目对该 pin 采证空闲/轻负载容器足迹与部署规模对应表（观测依据建议 ≥2 vCPU / ≥4 GiB；**非 SLA**）。维护者裁定见 [release-r6-close-ruling](tasks/archive/release-r6-close-ruling.md)：**总纲 R6 通过**（残余满载/多商/staging 等为非宣称，≠SLA/≠R1–R5）。商业定价、余额与支持裁定归商家平台，实际调用事实、重复执行、unknown、原子预留执行正确性与公平资源调度由本组承担必要实现，一条完整交易链只建一套账本。
+组内 [发行基线调查](tasks/archive/release-readiness-baseline.md) 已在源码只读基线 `d6709c4a` 上给出运行单元、持久面、差距分类与演练合同（见 [自托管发行与恢复基线](#self-host-release-baseline)）。备份必须含数据库、媒体、必要 Pi 数据及可解密/可启动配置；首个稳定版起提供明确升级路径，不恢复 retired V1/v2。真实安装/恢复/升级路径与演练证据已有 B1–B5 及 B6 汇总；干净候选重跑见 [release-r6-clean-candidate-gate](tasks/archive/release-r6-clean-candidate-gate.md)（G-07 在 `e8cb494d`+最窄修补上 PASS，修补已入库于 `67b0f309`）。[release-r6-pin-and-formal-d4](tasks/archive/release-r6-pin-and-formal-d4.md) 已产出 pin `0.0.0-67b0f3092158`（≡G-07 交付 SHA）并对 `0.0.0-5ed2b916b569`→该 pin 跑通正式 D4（非等价 retag）。[release-r6-resource-budget](tasks/archive/release-r6-resource-budget.md) 已在隔离项目对该 pin 采证空闲/轻负载容器足迹与部署规模对应表（观测依据建议 ≥2 vCPU / ≥4 GiB；**非 SLA**）。维护者裁定见 [release-r6-close-ruling](tasks/archive/release-r6-close-ruling.md)：**总纲 R6 通过**（残余满载/多商/staging 等为非宣称，≠SLA/≠R1–R5）。商业定价、余额与运营授权裁定归商家平台，实际调用事实、重复执行、unknown、原子预留执行正确性与公平资源调度由本组承担必要实现，一条完整交易链只建一套账本。
 
 | 交付问题 | 本组负责 | 交接边界 |
 |---|---|---|
@@ -95,14 +95,14 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 |---|---|---|---|
 | Graph/Agent 锁序，PERF-01、PERF-02、PERF-03 | 显式持 run 锁追加事件；自动采用先 run 后 graph；Agent 先 projection 后 execution/Task | [Graph 并发任务](tasks/archive/perf-graph-adopt-concurrent.md)；Agent `recovery_fencing_scanner_test.go`、`draft_confirm_lock_order_test.go` 有回归 | 实际积压与并发下的等待、饥饿和取消响应；已通过的窄测试不重复开修复单 |
 | 执行权与恢复，PERF-05、PERF-11 | Graph 行 lease、迟到结果围栏；各域有界发现与单聚合事务。连续生图每信封至多一次 provider 调用，确认批次后续投；已 applied 不重放，不可证明结果 unknown 且不可自动重试，无 parked question。心跳未过期不恢复，晚到终态不能覆盖 unknown。 | [故障可见状态](tasks/archive/perf-imagesession-recovery-visible.md)；[批次续投回归](../history/agent-runtime-timeline.md#2026-09-06-连续生图按已确认批次续投)；`graph/execute_test.go`、各域 `recovery_test.go`；[历史进程证据](../history/agent-runtime-timeline.md#platform-reliability-evidence) | 连续生图顺序候选不再累计占用同一 30 分钟 handler，但单 provider 调用与写库仍受该上限约束。进程崩溃后的闲置恢复仍为最后 heartbeat + 默认 90 分钟 + 10s 扫描及批次等待。长积压、坏条目和 checkpoint 后信封释放失败的恢复延迟仍需对应证据。 |
-| 入队、投递和容量，PERF-04、PERF-06 | [入队 admission 修复](tasks/archive/perf-imagesession-enqueue-admission.md)、[满批续投](tasks/archive/perf-dispatcher-backlog.md) 已交付 | 500 条突发单/双副本 PENDING→SENT 历史 p95 0.438/0.279s；[慢恢复共存](../history/agent-runtime-timeline.md#2026-09-05-慢恢复与正常投递共存)：1000 条过期连续生图任务、恢复写入人为延迟 100ms，最终投递 p95 0.442/0.265s，25 条延期未认领；采证起点曾出现一次未复现的时间矛盾，已保留失败并加强提交证据屏障 | 该固定场景支持保留双循环；数据库连接/IO 饱和、不同域长积压及坏条目对后续恢复域的影响仍待测。全库槽是现行单商家设计，不能用加 worker 代替容量推导 |
+| 入队、投递和容量，PERF-04、PERF-06 | [入队 admission 修复](tasks/archive/perf-imagesession-enqueue-admission.md)、[满批续投](tasks/archive/perf-dispatcher-backlog.md) 已交付 | 500 条突发单/双副本 PENDING→SENT 历史 p95 0.438/0.279s；[慢恢复共存](../history/agent-runtime-timeline.md#2026-09-05-慢恢复与正常投递共存)：1000 条过期连续生图任务、恢复写入人为延迟 100ms，最终投递 p95 0.442/0.265s，25 条延期未认领；采证起点曾出现一次未复现的时间矛盾，已保留失败并加强提交证据屏障 | 该固定场景支持保留双循环；数据库连接/IO 饱和、不同域长积压及坏条目对后续恢复域的影响仍待测。全库生图槽是服务级并发约束，任务仍按 merchant_id 归属；不要把共享容量槽误读为跨商家数据权限，也不能用加 worker 代替容量推导 |
 | 实时通道，PERF-07 | 共享 LISTEN、退订释放、通知丢失回 PG、Agent gap repair | `platform/notify/replica_field_test.go`；历史 `web-e2e-agent-sse` 5 passed | 多副本订阅回读、fallback、连接池和慢客户端总成本；LISTEN 数与浏览器 SSE 数分别计量 |
 | Graph 工作台读取，PERF-09 | 摘要/详情、批量投影、轻量 status read 与 bundle gate | [Graph 专项原始记录](../history/agent-runtime-timeline.md#platform-graph-read-history)：25k runs/100k node-runs；HTTP、TTI、按需详情各有证据 | 历史浏览器 fixture 无 active run，Graph SSE=0；活跃执行与真实详情打开分布不能借用该结果 |
 | 连续生图读取，PERF-08 | 详情任务三组各最多 20、去重最多 60；history keyset；[目标规模 HTTP gate](tasks/archive/perf-imagesession-http-load.md) 已交付。Status/SSE 返回该会话全部 queued/running，省略 `prompt`，固定宽度 300 条活动任务仍 `<1MiB`。 | 25k 会话 HTTP：详情 258,037B、p95 16.33ms。活动集：[perf-imagesession-active-status](tasks/archive/perf-imagesession-active-status.md) 26/100/300 条 queued+running+effect，查询次数恒为 8；修改前 300 条 Status ≥1MiB，省略 prompt 后包内 HTTP 与隔离规模门通过 | COUNT/关联扫描、真实 prompt 宽度超过夹具、多订阅并发和生产分布仍待评估 |
 | Agent Session 读取，PERF-12 | cursor page、批量会话摘要/count、`activity_at` 排序；每会话最多返回 20 conversation 摘要。Turn 列表改为批量关联读取 | [目标规模 HTTP](../history/agent-runtime-timeline.md#2026-09-05-agent-读取容量与-turn-批量投影)：25k sessions、27k conversations、单对话 1000 Turns，四条真实读取路径通过固定宽度门；50 条 Turn 页查询 54→5，p95 28.70→8.93ms，正文不变 | 无独立 Session GET 详情接口，详情成本按实际 Turn GET 测量。并发、更长正文、journal/SSE 与真实访问分布不由该单客户端门推定 |
 | journal/ACK 与可观测性，PERF-13 | 批量 PG append、WAL/ACK、恢复前缀确认；[journal 调查](tasks/archive/arch-journal-assessment.md)结论为保留现状 | 标准容量历史 PG batch p95 232.8ms，本地 WAL p95 0.81ms；[问题答案身份修复](tasks/archive/agent-question-answer-identity.md)含第二问 SIGKILL | 当前 batch 指标是 count 和 `last_ms` gauge，不能计算持续 p95；histogram、锁等待和告警是否需要补，跟随具体诊断/部署需求 |
 | 媒体内存 | 共享 ZIP writer 逐文件写临时包，事务只冻结条目身份；商品图库 HTTP 在打包完成后发送文件并清理 | writer 历史门保留；[真实 HTTP 门](../history/agent-runtime-timeline.md#2026-09-05-商品图库-zip-http-内存与传输)：100 张有效 PNG 共 469.19MiB，ZIP 469.35MiB，额外进程 RSS 上界 37.37MiB；鉴权、哈希、传输中断清理与限制拒绝通过；[首文件核验点取消](../history/agent-runtime-timeline.md#2026-09-05-商品图库打包期间-http-取消)已测 | 单客户端、同内容硬链接、暖文件缓存；不覆盖并发导出、临时存储饱和、压缩/磁盘写入中断、完整像素解码、JPEG/WebP 或交付导出 HTTP |
-| SaaS，PERF-10 | 当前实现单商家，正式版目标已确定多商家 | [ROADMAP](../ROADMAP.md)、[商家平台](merchant-platform.md) | 已进入正式版主线；本组负责调用事实、容量与发行恢复，按完整隔离合同协作 |
+| SaaS，PERF-10 | 当前 bootstrap/验证环境常用单商家；目标产品合同为普通账号各自一个 Merchant，允许平台管理员按显式商家上下文管理所有商家的已有商品。商品与任务按 `merchant_id` 归属 | [ROADMAP](../ROADMAP.md)、[商家平台](merchant-platform.md) | 已进入正式版主线；本组负责调用事实、容量与发行恢复，按完整隔离合同协作 |
 
 所有权调查的结论可以是保持现状。AR-02 未证明 journal 数据丢失，拆 confirm 循环也未消除 TurnRuntime 必知分支；不能因为还有协议边界测试缺口就自动重启运行时重构。
 
@@ -256,7 +256,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 |---|---|---|---|
 | PostgreSQL | `productflow-postgres-data` → `/var/lib/postgresql/data` | 业务、journal、outbox、`provider_profiles`、`app_settings` | **必备**；一致点以逻辑 dump 或停写后文件系统快照为准 |
 | 媒体与日志 | `productflow-storage` 或 `STORAGE_HOST_PATH` → `/app/storage`：`media/{uuid前2位}/{uuid}{ext}`、同目录 `.variants/`、`logs/` | 字节权威在磁盘；DB `media_objects.storage_path` 引用 | **必备**原图；变体可重建但恢复后缺原图会 `missing_file`/`verification_status=missing` |
-| Pi / Agent 本地 | `productflow-agent-data` → `/data`：`publisher.json`、`agent-service.lock`、`runs/`、`sessions/`、`workspaces/` | **非**业务权威；模型 loop / handoff 材料 | **必备**（总纲与任务合同）；缺则重启后 lease owner / 会话续跑材料受损，PG journal 仍在 |
+| Pi / Agent 本地 | `productflow-agent-data` → `/data`：`publisher.json`、`agent-service.lock`、`runs/`、`sessions/`、`workspaces/` | **非**业务权威；模型 loop / handoff 材料（运行目录，不是用户工作区或切换状态） | **必备**（总纲与任务合同）；缺则重启后 lease owner / 会话续跑材料受损，PG journal 仍在 |
 | 演化轨迹 | `productflow-agent-traces`；默认 `AGENT_EVOLUTION_TRACES=0` | 诊断，非业务 | 可选；开启则纳入备份清单 |
 | Redis AOF | `productflow-redis-data` | 可丢 broker | 建议纳入一致点以免残留信封；**恢复后以 PG `async_dispatches` 再投递为准**，不把 Redis 当业务真相 |
 | 启动密钥文件 | 部署者持有的 `.env`（勿入库） | 启动与会话 | **必备**；与 PG 同代 |
@@ -295,7 +295,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 3. **无备份/恢复工具与一致点自动化**：**B3 已交付脚本与 runbook**；**B4 已交付隔离全栈 D3 演练证据**（登录/媒体/Agent health/版本身份；在途作业 UNKNOWN）。仍缺：R6；真实在途 lease / unknown 作业夹具实跑。
 4. **无稳定版 N→N+1 升级包**：**B5 已交付合同与脚本**——`scripts/release-upgrade.sh`（预检→备份→换 pin→migrate→冒烟；migrate 失败停 app 层并钉回 N pin / 指引 `release-restore`）；`release/README.md` 与 CONTEXT / docs/README 歧义已收窄。等价夹具见 [release-n-to-n1-upgrade](tasks/archive/release-n-to-n1-upgrade.md)。**正式 D4**（非 retag）已在 pin 对 `0.0.0-5ed2b916b569`→`0.0.0-67b0f3092158` 采证（见 [release-r6-pin-and-formal-d4](tasks/archive/release-r6-pin-and-formal-d4.md)）。默认单副本资源足迹观测见 [release-r6-resource-budget](tasks/archive/release-r6-resource-budget.md)。资源预算门已归档；**总纲 R6 已通过**（见 close-ruling；满载等为残余非宣称）。
 5. **开发端口默认可达 PG/Redis/metrics**：开发 `docker-compose.yml` 仍映射本机调试端口；**生产式叠用** `docker-compose.prod-ports.yml` 已提供（B1），不把 PG/Redis/metrics 发布到宿主。
-6. **正式 Operator/商家初始化**：仍为单 `ADMIN_ACCESS_KEY`；多商家引导属商家平台，发行侧缺对接点说明。
+6. **正式 Operator/商家初始化**：管理员 bootstrap、SMTP 普通账号注册与密码会话已有实现；发行候选仍需验证多商家隔离与管理员商品管理对接点。
 7. **诊断包**：无脱敏一键诊断交付物。
 
 **缺验证（机制或文档有，无隔离证据）**
@@ -351,6 +351,8 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 
 验收命令方向（实跑任务填写具体隔离项目名）：`docker compose config`；healthz 四处；针对性 `pg_restore`/`psql` 探针查询；媒体 HTTP；`go test` migrate 包（不替代 D4）；候选全量仍走 G-07。本调查仅跑 `just docs-check` 与 `git diff --check`。
 
+下方 B1–B6 表保留各次交付当时的中间状态；其中 B6 的早期 FAIL 是历史窗口，后续干净候选、pin+D4 和关闭裁定已经更新当前结论。历史证据不重写，当前发行判断以最新关闭裁定为准。
+
 ### 后续修复批次（建议顺序）
 
 | 批次 | 结果 | 环境 | 验收 |
@@ -365,6 +367,8 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 未知输入（保持开放）：生产主机 OS/磁盘、备份介质、公网 DNS/TLS、真实商用数据规模、可接受停机策略、首个稳定版日期、是否要求 provider 密钥加密、多商家就绪时间线。不在此填写容量、RPO/RTO 或 SLA 数字。
 
 ## 维护约定
+
+本节日期条目是历史变更记录，按原样保留；较早的“R6 未通过”只描述当时窗口，不能覆盖后续 pin/D4/关闭裁定。当前结论见上方目标段与最新关闭裁定链接。
 
 - 新事实回写其唯一 owner：稳定行为写 ARCHITECTURE/PRD/USER_GUIDE，未来方向写 ROADMAP，本页写风险与验收判断，详细复现和采证留 issue。
 - 本页不重复维护开放任务数量或认领状态；任务关闭时只更新受影响结论与证据链接。无开放 issue 不代表无风险，有观测缺口也不自动产生实现单。

@@ -5,7 +5,7 @@ import { api } from "../../lib/api";
 import { activeMerchantId } from "../../lib/merchantBoundary";
 import { useI18n } from "../../lib/preferences";
 
-/** Op 面最小接线：商家启停 + A8 支持合同占位说明。 */
+/** Op 面最小接线：当前商家启停；完整管理员跨商管理另行交付。 */
 export function MerchantOpsPanel() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -14,12 +14,6 @@ export function MerchantOpsPanel() {
     queryFn: api.getSessionState,
     retry: false,
   });
-  const supportQuery = useQuery({
-    queryKey: ["support-access-contract"],
-    queryFn: api.getSupportAccessContract,
-    retry: false,
-  });
-
   const merchantId = activeMerchantId(sessionQuery.data);
   const membership = sessionQuery.data?.memberships?.find((item) => item.merchant_id === merchantId)
     ?? sessionQuery.data?.memberships?.[0];
@@ -69,12 +63,6 @@ export function MerchantOpsPanel() {
           <span>{suspended ? t("settings.merchantOps.activate") : t("settings.merchantOps.suspend")}</span>
         </button>
       </div>
-      {supportQuery.data ? (
-        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-          {t("settings.merchantOps.supportDraft")}
-          {supportQuery.data.implemented ? null : ` · ${t("settings.merchantOps.supportNotReady")}`}
-        </p>
-      ) : null}
     </section>
   );
 }

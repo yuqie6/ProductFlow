@@ -34,6 +34,10 @@ for (const width of [390, 1440]) {
         }
         return route.fulfill({ json: { items: config } });
       });
+      const retiredSupportRequests: string[] = [];
+      page.on("request", (request) => {
+        if (request.url().includes("/api/ops/support-")) retiredSupportRequests.push(request.url());
+      });
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto("/settings?section=mail");
@@ -54,6 +58,7 @@ for (const width of [390, 1440]) {
       await expect(page.locator("#smtp_password")).toHaveValue("");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath("smtp-settings.png"), fullPage: true });
+      expect(retiredSupportRequests).toEqual([]);
       expect(errors).toEqual([]);
     });
   }

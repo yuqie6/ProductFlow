@@ -1,6 +1,6 @@
 # 任务：同一账号在不同标签页明确选择商家并安全切换工作区
 
-状态：开放
+状态：取消
 类型：实现
 认领者：—
 认领于：—
@@ -8,7 +8,11 @@
 父账本：merchant-platform.md
 完成后可拆：saas-account-team；saas-preferences-settings
 
-任务状态、认领及提交遵循 [Issue 协议](README.md)。
+任务状态、认领及提交遵循 [Issue 协议](../README.md)。
+
+## 取消裁定
+
+2026-09-08 用户明确一个普通账号自有一个商家，取消多商家切换产品路线。本轮未提交 Web 增量已经清除，执行代理停止，无该任务新增运行资源。以下原合同仅作历史记录，不再指导开发；账号隔离和管理员权限由 [设计校准](saas-design-alignment.md) 整合。取消不等于原验收通过。
 
 ## 问题来源
 
@@ -23,7 +27,7 @@
 
 ## 前置与并行
 
-- 前置：[saas-auth-entry-security](archive/saas-auth-entry-security.md) 已交付并固定 cookie/来源合同。
+- 前置：[saas-auth-entry-security](saas-auth-entry-security.md) 已交付并固定 cookie/来源合同。
 - 冻结输入：MP-01 至 MP-04、已有 worker merchant 快照；两商家由测试夹具创建。产品 CreateMerchant 的历史开发限制由公开注册任务单独替换，本任务不宣称注册入口开放。
 - 运行资源：隔离 PG、Redis、API/Web/worker、mock provider；不用共享开发栈做退出/停用实验。
 - 全链客户端和商家 middleware 排他；涉及各 SSE reader 时协调者核对实际文件后锁定，不能与其它工作台任务并行写共享文件。

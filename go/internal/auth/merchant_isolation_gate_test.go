@@ -149,11 +149,11 @@ func TestMerchantIsolationGateB10(t *testing.T) {
 	})
 
 	t.Run("partition_A_ops", func(t *testing.T) {
-		// 正：Op 可读 support-contract
-		ok := do(http.MethodGet, "/api/ops/support-contract", "", dual.CookiesA, nil)
+		// 正：Op 可读现有 settings provider-config
+		ok := do(http.MethodGet, "/api/settings/provider-config", "", dual.CookiesA, nil)
 		ok.Body.Close()
 		if ok.StatusCode != http.StatusOK {
-			t.Fatalf("op support-contract %d", ok.StatusCode)
+			t.Fatalf("op provider-config %d", ok.StatusCode)
 		}
 		// 反：商家 B 角色碰 settings / ops
 		deny := do(http.MethodGet, "/api/settings", "", dual.CookiesB, nil)
@@ -161,10 +161,10 @@ func TestMerchantIsolationGateB10(t *testing.T) {
 		if deny.StatusCode != http.StatusForbidden {
 			t.Fatalf("B settings want 403 got %d", deny.StatusCode)
 		}
-		denyOps := do(http.MethodGet, "/api/ops/support-contract", "", dual.CookiesB, nil)
+		denyOps := do(http.MethodGet, "/api/settings/provider-config", "", dual.CookiesB, nil)
 		denyOps.Body.Close()
 		if denyOps.StatusCode != http.StatusForbidden {
-			t.Fatalf("B ops want 403 got %d", denyOps.StatusCode)
+			t.Fatalf("B provider-config want 403 got %d", denyOps.StatusCode)
 		}
 	})
 
@@ -260,7 +260,7 @@ func TestMerchantIsolationGateSuiteInventory(t *testing.T) {
 		pkg       string
 	}
 	inventory := []entry{
-		{"A", "TestOperatorSuspendBlocksMerchantWrites / TestSupportContractDraftOpOnly / gate partition_A", "TestMerchantRoleForbiddenOnSettingsAndQueue / TestSecondMerchantRejected", "auth"},
+		{"A", "TestOperatorSuspendBlocksMerchantWrites / TestOperatorProviderConfigOnly / gate partition_A", "TestMerchantRoleForbiddenOnSettingsAndQueue / TestSecondMerchantRejected", "auth"},
 		{"B", "TestMerchantProductChainIsolation / TestMerchantRootOwnershipProductIsolation / gate 合法读写", "同测跨商 404", "product"},
 		{"C", "TestMerchantGraphIsolation", "同测跨商 changeset/run/SSE 404", "graph"},
 		{"D", "TestMerchantRecipeIsolation", "同测跨商 recipe/apply 404", "recipe"},

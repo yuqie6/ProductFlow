@@ -48,7 +48,7 @@ func TestMerchantRoleForbiddenOnSettingsAndQueue(t *testing.T) {
 	for _, path := range []string{
 		"/api/settings",
 		"/api/generation-queue",
-		"/api/ops/support-contract",
+		"/api/settings/provider-config",
 	} {
 		resp := as.do(t, http.MethodGet, path, "", editorCookies)
 		body, _ := io.ReadAll(resp.Body)
@@ -248,34 +248,14 @@ func TestOperatorSuspendBlocksMerchantWrites(t *testing.T) {
 	}
 }
 
-func TestSupportContractDraftOpOnly(t *testing.T) {
+func TestOperatorProviderConfigOnly(t *testing.T) {
 	as := newAuthServer(t)
 	opCookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
-	doc := as.do(t, http.MethodGet, "/api/ops/support-contract", "", opCookies)
+	doc := as.do(t, http.MethodGet, "/api/settings/provider-config", "", opCookies)
 	defer doc.Body.Close()
 	if doc.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(doc.Body)
-		t.Fatalf("contract %d %s", doc.StatusCode, raw)
-	}
-	var contract auth.SupportAccessContract
-	if err := json.NewDecoder(doc.Body).Decode(&contract); err != nil {
-		t.Fatal(err)
-	}
-	if contract.ContractVersion != auth.SupportContractVersion || contract.Implemented {
-		t.Fatalf("contract %#v", contract)
-	}
-	if len(contract.SessionFields) == 0 || len(contract.AuditFields) == 0 {
-		t.Fatalf("missing field lists %#v", contract)
-	}
-
-	create := as.do(t, http.MethodPost, "/api/ops/support-sessions", `{"merchant_id":"x","purpose":"debug"}`, opCookies)
-	body, _ := io.ReadAll(create.Body)
-	create.Body.Close()
-	if create.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("create session %d %s", create.StatusCode, body)
-	}
-	if !bytes.Contains(body, []byte(auth.SupportNotImplemented)) {
-		t.Fatalf("detail %s", body)
+		t.Fatalf("provider config %d %s", doc.StatusCode, raw)
 	}
 
 	state := as.do(t, http.MethodGet, "/api/auth/session", "", opCookies)
@@ -285,10 +265,30 @@ func TestSupportContractDraftOpOnly(t *testing.T) {
 	_ = json.NewDecoder(state.Body).Decode(&stateBody)
 	state.Body.Close()
 	editorCookies := editorMember(t, as, opCookies, stateBody.Memberships[0].MerchantID)
-	deny := as.do(t, http.MethodGet, "/api/ops/support-contract", "", editorCookies)
+	deny := as.do(t, http.MethodGet, "/api/settings/provider-config", "", editorCookies)
 	deny.Body.Close()
 	if deny.StatusCode != http.StatusForbidden {
-		t.Fatalf("editor support-contract %d", deny.StatusCode)
+		t.Fatalf("editor provider config %d", deny.StatusCode)
+	}
+}
+
+func TestRemovedSupportRoutesReturnNotFound(t *testing.T) {
+	as := newAuthServer(t)
+	opCookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/ops/support-contract"},
+		{http.MethodPost, "/api/ops/support-sessions"},
+		{http.MethodGet, "/api/ops/support-sessions/removed"},
+		{http.MethodPost, "/api/ops/support-sessions/removed/end"},
+	} {
+		resp := as.do(t, route.method, route.path, "", opCookies)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("removed route %s %s returned %d", route.method, route.path, resp.StatusCode)
+		}
 	}
 }
 

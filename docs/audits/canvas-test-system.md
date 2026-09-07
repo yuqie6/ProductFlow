@@ -8,9 +8,11 @@
 
 ## 组职责与交接
 
-2026-09-07 正式版职责校准：本组负责 [总纲第 5 节](../ROADMAP.md#5-正常体验的最低要求) 的创建、成果浏览、修图、采用、交付和复用体验。[完整成果投影](tasks/archive/delivery-workbench-projection.md)、[采用/交付快照](tasks/archive/delivery-adoption-snapshot.md) 与 [品牌视觉复用](tasks/archive/brand-visual-reuse.md) 已交付。[默认入口走查](tasks/archive/workbench-default-entry-walkthrough.md) 建议暂不全局切到成果；[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) **已交付**（条件默认，完成 ≠ 全局一律成果）。基础配方 preview/原子确认、局部编辑和 ZIP 已有实现，不重复发布。[商家成图任务闭环采证](tasks/archive/delivery-merchant-image-loop-gate.md) **本门 PASS**（mock；≠R2 全过）。
+2026-09-08 正式版职责校准：本组负责 [总纲第 5 节](../ROADMAP.md#5-正常体验的最低要求) 的创建、成果浏览、修图、采用、交付和复用体验。[完整成果投影](tasks/archive/delivery-workbench-projection.md)、[采用/交付快照](tasks/archive/delivery-adoption-snapshot.md) 与 [品牌视觉复用](tasks/archive/brand-visual-reuse.md) 已交付。[默认入口走查](tasks/archive/workbench-default-entry-walkthrough.md) 建议暂不全局切到成果；[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) **已交付**（条件默认，完成 ≠ 全局一律成果）。基础配方 preview/原子确认、局部编辑和 ZIP 已有实现，不重复发布。[商家成图任务闭环采证](tasks/archive/delivery-merchant-image-loop-gate.md) **本门 PASS**（mock；≠R2 全过）。
 
-当前没有真实商户用户，内部走查只说明工程可用性。商家平台负责权限语义；本组按其固定合同提供清楚的商家上下文和角色操作入口。二维组合或品牌版本等跨层实现由协调者指定唯一主任务及排他范围，图片质量提供固定质量合同。
+当前没有真实商户用户，内部走查只说明工程可用性。普通账号固定对应一个自有 Merchant；目标合同允许平台管理员在明确的 `merchant_id` 上管理各商家的已有商品，商品与任务归属不变。商家流程不以团队角色、工作区或商家切换、支持会话为前置；商家内跨商品图库和视觉复用不表示跨账号共享。商家平台负责权限语义；本组按其固定合同提供清楚的商家上下文和权限操作入口。二维组合或品牌版本等跨层实现由协调者指定唯一主任务及排他范围，图片质量提供固定质量合同。
+
+当前验收优先首次套图、指定修改、选定下载和下一商品复用。批量及更宽的多商品批跑属于独立扩展，不作为小范围试用或本组核心路径的硬前置。
 
 本组按商家结果承担必要的前后端完整修复，不按页面或代码目录切断责任。以下是调查与交付边界，不要求每次任务遍历全部模块。前端入口主要位于 `web/src/pages/workbench/`。
 
@@ -23,9 +25,10 @@
 | 复用工作 | 明确资产绑定、固定当前结果、配方预览与确认，视觉方案版本保存/选定/显式采用，避免带入错误来源或覆盖目标商品 | `graphAssetDrop.ts`、`recipeSave.ts`、`RecipeLibraryPanel.tsx`、`VisualReuseControls.tsx`、`go/internal/recipe/`、`go/internal/visualsystem/` |
 
 - 图片质量组负责图片内容与视觉要求及其生成链优化；本组负责选择、修改、运行和取用是否符合用户意图。下载文件正确不等于图片质量合格。
+- IQ-CF-08 只提供身份、文字和路线声明的质量判定；不合格图是否在采用或交付入口被拦截，当前仍待用户裁定。现有采用硬闸是已实现事实与冻结证据，不能单独扩大为本组新增流程的前置。
 - Agent 质量组负责模型理解、决策与工具行为；本组验证既有 Agent 写入与手动编辑、运行的交错合同，不以模型评分作为确定性操作修复的前置。
 - 平台可靠性组负责执行基础设施、故障收敛与资源成本；本组负责相应用户状态与恢复入口。同一根因只指定一张主任务，必要跨层修复由该任务交付。
-- 连续图片会话、全局素材组织等相邻能力不因共用资产就全部并入本组；按具体问题协调所有权。路线图中的新界面不自动成为本次实现范围。
+- 连续生图任务、商家内跨商品素材组织等相邻能力不因共用资产就全部并入本组；它们不是支持会话或跨账号全局商品流程的前置，按具体问题协调所有权。路线图中的新界面不自动成为本次实现范围。
 
 ## 验收怎样判断
 
@@ -163,4 +166,4 @@ just docs-check
 
 [完整配方创建入口](tasks/archive/canvas-full-recipe-entry.md) 已修复：新建页直接预览并事务确认，不经过默认 birth graph 或无图工作台。已有图不可覆盖、取消不创建商品/图、目标身份及重试去重保持。前单入口 FAIL 保留为历史；临时 probe 已移除，正向路径纳入常规资产与配方门禁。[局部编辑](tasks/archive/canvas-local-edit-flow.md) 已修复：mock 绑定下检查器可完成消除/换字/重绘、采用或只留图库，失败不改节点当前图。商家任务耗时与镜头列表主界面仍未知，本组当前没有已发布的后续实现单。
 
-其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) 已按条件默认实现；[记忆上次视图](tasks/archive/workbench-remember-last-view.md) 已交付商品级显式偏好。采用/视觉核心路径浏览器证据见 [delivery-r2-core-path-gate](tasks/archive/delivery-r2-core-path-gate.md)（本门 PASS，≠R2 全过）。导出按钮叠层可达见 [delivery-export-overlay-fix](tasks/archive/delivery-export-overlay-fix.md)（已修，≠R2 全过）。§5.4 局部编辑复验见 [delivery-r2-local-edit-retest](tasks/archive/delivery-r2-local-edit-retest.md)（本门 PASS，≠R2 全过）。商家成图闭环（含 Brand 复用）见 [delivery-merchant-image-loop-gate](tasks/archive/delivery-merchant-image-loop-gate.md)（本门 PASS / mock，≠R2 全过）。前端 Brand 占位已对齐 B0（`brand_not_selected` / `brand_exists_no_style_merge`）；商品选定 Brand 与品牌色合并已有 B1/本门证据；批量无限制批跑仍为缺口（≠R2 全过）。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。
+其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) 已按条件默认实现；[记忆上次视图](tasks/archive/workbench-remember-last-view.md) 已交付商品级显式偏好。采用/视觉核心路径浏览器证据见 [delivery-r2-core-path-gate](tasks/archive/delivery-r2-core-path-gate.md)（本门 PASS，≠R2 全过）。导出按钮叠层可达见 [delivery-export-overlay-fix](tasks/archive/delivery-export-overlay-fix.md)（已修，≠R2 全过）。§5.4 局部编辑复验见 [delivery-r2-local-edit-retest](tasks/archive/delivery-r2-local-edit-retest.md)（本门 PASS，≠R2 全过）。商家成图闭环（含 Brand 复用）见 [delivery-merchant-image-loop-gate](tasks/archive/delivery-merchant-image-loop-gate.md)（本门 PASS / mock，≠R2 全过）。前端 Brand 占位已对齐 B0（`brand_not_selected` / `brand_exists_no_style_merge`）；商品选定 Brand 与品牌色合并已有 B1/本门证据；批量无限制批跑仍为独立扩展缺口，不是当前核心路径的硬前置（≠R2 全过）。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。

@@ -1,10 +1,10 @@
 # ProductFlow Roadmap
 
-Updated 2026-09-07. This is an English summary of the [authoritative product direction and release design](ROADMAP.md), which contains the detailed competitor sources, acceptance contracts and decisions. Current capabilities remain in [PRD](PRD.en.md) and [Architecture](ARCHITECTURE.en.md). The requirements below are planned, not delivered features.
+Updated 2026-09-08. This is an English summary of the [authoritative product direction and release design](ROADMAP.md), which contains the detailed competitor sources, acceptance contracts and decisions. Current capabilities remain in [PRD](PRD.en.md) and [Architecture](ARCHITECTURE.en.md). The requirements below are planned, not delivered features.
 
 ## Product and Stage
 
-The intended product is a self-hostable, multi-merchant SaaS. The project owner will also operate an instance of the same product. Self-hosting describes deployment control; multiple merchants describe application isolation. The unreleased development baseline starts with one administrator and one bootstrap development merchant; public email registration and Operator SMTP configuration are implemented and have passed real-browser and real SMTP/IMAP mail-receipt verification. Full multi-merchant isolation and workspace UX are not implemented.
+The intended product is a self-hostable, multi-merchant SaaS. The project owner will also operate an instance of the same product. Self-hosting describes deployment control; multiple merchants describe application isolation. The unreleased development baseline starts with one administrator and one bootstrap development merchant; public email registration and Operator SMTP configuration are implemented and have passed real-browser and real SMTP/IMAP mail-receipt verification. Each ordinary account owns one merchant. Administrators manage products belonging to any merchant; the complete administration UI is not implemented. Team roles and workspace switching are outside the current product scope.
 
 The primary job is a complete usable product-image delivery: organize supported facts, plan a set, generate, revise, select, export and reuse approved work for the next product. Agent, Graph, providers and self-evolution support this outcome.
 
@@ -16,13 +16,13 @@ The Chinese roadmap records dated official sources for Designkit, 51aic, Gaoding
 
 Sets, Agent assistance, local editing and workflow reuse already appear across competitors. ProductFlow must provide straightforward creation, result inspection, editing, comparison, selection, export and reuse. Potential differentiation is the combined effect of source-backed product facts, controlled revisions, deterministic text/layout where precision matters, and reusable approved visual decisions. These remain hypotheses until complete-task comparisons show less rework and better usable output.
 
-Existing recipe preview, atomic creation, idempotency, source-identity stripping, local edits and ZIP delivery should be reused. An outcome view is a projection of the same Graph; it must cover ungrouped image nodes and multiple outputs per group. The existing canvas remains the default until task observations justify a change.
+Existing recipe preview, atomic creation, idempotency, source-identity stripping, local edits and ZIP delivery should be reused. An outcome view is a projection of the same Graph; it must cover ungrouped image nodes and multiple outputs per group. The current workbench remembers each product's selected view; without a preference, products with results open the results view.
 
 ## Multi-Merchant and Commercial Requirements
 
-Merchant is the tenant. Users access merchants through memberships; brands, products and delivery channels belong within that boundary. Planned roles are merchant Owner, Editor and Viewer, plus a separate site Operator. One user can belong to multiple merchants.
+Each ordinary account owns one merchant containing its products, assets, jobs and quota. User stores login identity; Merchant stores business ownership. Existing Membership records do not justify a multi-organization UI. Team roles, invitations and workspace switching are excluded. A platform administrator can manage products across merchants through explicit administrator authorization. Products retain their owner; there is no separate global-product entity and no temporary support session prerequisite.
 
-Isolation must cover HTTP/use cases, resource references, media variants, exports, queues, retries, SSE, browser caches, Agent contracts and internal callbacks. A payload merchant ID or internal bearer token cannot grant access. Switching merchants does not reassign existing tasks. Partial implementation must not expose a second mutually untrusted merchant.
+Isolation must cover HTTP/use cases, resource references, media variants, exports, queues, retries, SSE, browser caches, Agent contracts and internal callbacks. A payload merchant ID or internal bearer token cannot grant access. Logout or account changes must clear old data and subscriptions; accepted jobs retain their original actor and merchant. Partial implementation must not expose a second mutually untrusted merchant.
 
 The first supported topology is a single-host Compose deployment with PostgreSQL, Redis, local media and the current Go/Node/Web services. Providers are configured by the site Operator; deployment-level BYOK is supported by this design, while merchant-specific keys are a later extension.
 
@@ -34,7 +34,7 @@ From the first stable release, installation, consistent backups, restoration and
 
 1. Freeze complete tenant coverage and implementation slices; deliver the outcome-view increment and an evidence-based installation/restoration gap inventory.
 2. Deliver an internal two-merchant build with complete identity, resource, media, event, asynchronous and Agent isolation, plus accountable usage and resource limits.
-3. Deliver public-registration trial workflows: complete image sets, controlled edits, selected delivery snapshots, basic precise text/layout and merchant-scoped visual reuse, with applicable quality and recovery evidence.
+3. Deliver public-registration trial workflows: complete image sets, controlled edits, selected delivery snapshots, merchant-scoped visual reuse and verified quality within the declared supported operations; batch production and a full text editor have independent acceptance, with applicable quality and recovery evidence.
 4. Ship a stable self-hosted release with fixed artifacts, supported configuration and installation/restoration/upgrade evidence. The operated site uses the same artifacts.
 5. Add public paid operation based on actual trial feedback, pricing and payment decisions. Expand batch production, channels and specialist features only with supporting demand, quality and cost evidence.
 
@@ -47,3 +47,5 @@ Six groups own independently verifiable outcomes: Merchant Platform, Workflow Ex
 Self-evolution retains automatic discovery, causal validation, instruction/code candidates, bounded iterations and one final user approval. It starts from a valid frozen development package without waiting for production feedback or every evaluation layer. Hidden evaluation material, authorization and spending boundaries remain outside candidate modification.
 
 Existing evaluation IDs, frozen thresholds, candidates and evidence are preserved. Production mining is scheduled after an actual authorized commercial environment exists. New paid experiments still require their own applicable authorization.
+
+Product policies require explicit user decisions. Unknown provider cost does not determine customer charges, and limited image checks cannot silently become universal adoption restrictions. Historical evaluation scores remain tied to their original scope. Account and operations work no longer depends on team management, workspace selection or an unspecified reauthentication mechanism.

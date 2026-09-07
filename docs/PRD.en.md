@@ -4,9 +4,9 @@
 
 ProductFlow currently implements a product-visual production workspace plus User/Merchant identity and merchant ownership foundations. The user supplies real product references and delivery goals. A workflow Agent clarifies product facts, visual-system rules, and per-image prompts, then creates an editable, executable, reusable image-production workflow.
 
-The project has no formal commercial release or commercial merchant users yet. The development mainline accepts breaking changes and may require recreating the database and storage. It maintains one schema-v3 graph, API, and execution model. The current development bootstrap still creates the only development merchant; public registration is implemented and has passed real-browser and real SMTP/IMAP mail-receipt verification. Full tenancy, billing and supported long-term upgrades are not implemented capabilities.
+The project has no formal commercial release or commercial merchant users yet. The development mainline accepts breaking changes and may require recreating the database and storage. It maintains one schema-v3 graph, API, and execution model. The current development bootstrap still creates the only development merchant; public registration is implemented and has passed real-browser and real SMTP/IMAP mail-receipt verification. Account management, administrator product management and real payments remain incomplete; quota and stable-release recovery/upgrade mechanisms have scoped evidence.
 
-The intended product is a self-hostable, multi-merchant SaaS, also operated by the project owner as a service using the same product. Full multi-merchant isolation, workspace switching, and operations UX are not implemented; the [release roadmap](ROADMAP.en.md) owns the planned isolation, experience, competitive and deployment requirements. This PRD describes connected capabilities only.
+The intended product is a self-hostable, multi-merchant SaaS, also operated by the project owner as a service using the same product. Each ordinary account owns one merchant. Workspace switching and team UX are excluded; administrator access to products across merchants remains a target, and existing isolation does not establish a complete administration flow; the [release roadmap](ROADMAP.en.md) owns the planned isolation, experience, competitive and deployment requirements. This PRD describes connected capabilities only.
 
 ### 1.1 Account entry
 
@@ -16,7 +16,7 @@ The development stack reads startup defaults from `.env.dev` as `SMTP_HOST`, `SM
 
 The user entry is the Register mode on the existing `/login` page; no separate `/register` route is added.
 
-The code is a random six-digit value valid for 10 minutes, with a 60-second resend interval and at most five failed attempts per challenge; resending invalidates the previous challenge. Existing email/password login remains. A real-browser flow has verified successful code delivery, SMTP send and IMAP receipt, registration into `/products`, an ordinary User session with its own Merchant and Owner membership, a 410 response for replaying the old code, and successful password login. This evidence covers the registration slice and does not establish whole-site publication or password recovery. Referrals and rebates are out of scope for this phase and remain a future decision. Existing merchant membership management remains; direct association of additional existing users is deferred to a separate design.
+The code is a random six-digit value valid for 10 minutes, with a 60-second resend interval and at most five failed attempts per challenge; resending invalidates the previous challenge. Existing email/password login remains. A real-browser flow has verified successful code delivery, SMTP send and IMAP receipt, registration into `/products`, an ordinary User session with its own Merchant and Owner membership, a 410 response for replaying the old code, and successful password login. This evidence covers the registration slice and does not establish whole-site publication or password recovery. Referrals and rebates are out of scope for this phase and remain a future decision. Existing Membership is an implementation detail; team expansion is outside current scope.
 
 ## 2. Target Users
 
@@ -120,14 +120,14 @@ The public registration page and its SMTP settings projection are part of the cu
 - Every reference node binds one explicit ProductImageAsset.
 - The visual system is a workflow-level shared constraint. Per-image prompts may record explicit exceptions.
 - GenerationSpec, provider-effective parameters, and measured output remain separate. DeliverySpec creates deterministic renditions without regenerating or replacing the source image.
-- Every generated result enters the product library. There is no rejected-draft or delivery-manifest state.
+- Every generated result enters the product library. Explicit delivery adoption snapshots persist selected assets; reruns do not change historical selections or automatically delete other results.
 - The Agent conversation can be closed at any time. With it closed or never opened, canvas add, connect, inspect, run, undo, and recipes stay available. A failed or unknown Turn must not lock the canvas.
 - Workflow reuse comes only from user-saved recipes.
 - Provider purposes are `prompt`, `agent`, and `image`.
 
 ## 7. Non-Goals
 
-- Full multi-tenancy, expanded team roles, billing, and usage settlement.
+- Multi-organization workspace switching, expanded team roles and real payments; existing account isolation and internal quota remain maintained.
 - Automatic publishing to ecommerce or ad platforms.
 - Automatically classifying and deleting images the user dislikes.
 - Loading an entire product library into Agent context.
@@ -140,4 +140,4 @@ The public registration page and its SMTP settings projection are part of the cu
 - Uploads, workflow results, and image-session attachments are manageable in one product image library. Cross-product long-lived media lives in `/media-library`.
 - Provider configuration, Agent Turns, workflow runs, and image jobs have explicit failure and restart state.
 - Current code and documentation describe one online workflow contract.
-- The main repository does not promise lossless upgrades for deployed instances. Deployments that need a stable snapshot should fork.
+- The development baseline can break compatibility. Operating-data upgrades from the first stable release follow release/README.md; retired experimental paradigms do not gain compatibility readers.

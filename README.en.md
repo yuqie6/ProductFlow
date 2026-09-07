@@ -54,7 +54,7 @@ The intended product is a self-hostable, multi-merchant SaaS, also operated by t
 ## Current Scope
 
 - Deployment bootstrap creates the operator and initial merchant. SMTP email verification lets users register their own merchant; complete workspace and operations interfaces remain under development.
-- No multi-tenancy, team permissions, billing, hosted accounts, automatic publishing, ad delivery, or video generation.
+- No multi-organization workspace switching, team UI, real payments, automatic publishing, ad delivery, or video generation. Public registration, per-account merchant ownership and internal quota are implemented; complete administrator product management remains planned.
 - Public demo data and local development databases may be recreated during breaking updates.
 - Empty and existing databases run `just go-migrate` / `productflow-migrate`. The main repository does not backfill or keep compatibility layers for old data.
 

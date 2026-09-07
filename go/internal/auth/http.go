@@ -85,7 +85,6 @@ func (h HTTP) Register(engine *gin.Engine) {
 	merchants.DELETE("/:merchant_id/memberships/:user_id", h.revokeMembership)
 	merchants.POST("/:merchant_id/memberships/:user_id/restore", h.restoreMembership)
 
-	h.registerSupportOps(engine)
 }
 
 func (h HTTP) accessRequired(c *gin.Context) (bool, error) {

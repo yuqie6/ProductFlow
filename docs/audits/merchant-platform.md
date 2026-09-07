@@ -1,148 +1,79 @@
 # 商家平台组
 
-本组于 2026-09-07 按用户确认的可自托管多商家 SaaS 目标设立。负责同一部署内不同商家的身份、成员、数据权限、商业额度和运营控制。身份/隔离 B0–B10 和部分额度能力已经交付，完整账户与运营体验尚未交付；测试夹具不构成真实商家开放证据。产品决策、实体与角色见 [正式版总纲](../ROADMAP.md)，本文件拥有组内合同、交付顺序与验收结论。
+2026-09-08 按用户明确意图修订。产品是自托管 SaaS，同一站点服务多个商家账号；每个普通账号自有一个商家空间。平台管理员可管理各商家的商品，商品归属不变。组内负责身份、资源隔离、额度与管理权限，当前实现和目标分开记录。
 
 ## 责任与边界
 
-| 本组拥有的结果 | 覆盖范围 | 交接 |
-|---|---|---|
-| 操作者身份可靠 | User、会话、公开注册、恢复、Membership、角色、撤销 | 前后端共同交付；不复用 lease owner 充当用户 |
-| 所有商家资源隔离 | 商品、事实、Graph、素材、配方、Session、任务、下载、事件与缓存 | 一项隔离切片负责完整必要链路，不逐模块转单 |
-| 受理后的任务归属稳定 | 入队、重试、取消、Agent 合同、内部回调与确认 | 复用平台可靠性的 lease/outbox/fencing，不建第二套执行器 |
-| 商家权益与消费可解释 | 额度授权、价格版本、预留/结算/核对、运营调账 | 平台可靠性提供持久调用事实和执行约束；两组不得各造一本余额账 |
-| 运营与商家权限分开 | 商家启停、成员恢复、密钥权限、支持会话与审计 | 部署、备份、发行与资源容量归平台可靠性 |
+| 结果 | 范围 |
+|---|---|
+| 账号可用 | 邮箱注册、登录、本人资料/密码/会话与账号自有商家 |
+| 数据隔离 | 商品、素材、Graph、配方、Agent、任务、媒体和下载的服务端归属 |
+| 管理员可管理 | 管理商家及其商品、任务、额度、站点设置；保留真实操作人 |
+| 消费可解释 | 调用事实、商家额度、预留与核对分开，价格与例外政策由用户裁定 |
+
+商品交付体验归工作流体验，成片质量归图片质量，执行与备份恢复归平台可靠性。自进化不授予候选改变账号或收费政策的权力。
 
 ## 必须保持的合同
 
-- MP-01：Merchant 是租户，User 通过有效 Membership 访问；Brand/Product/渠道都不能替代商家根边界。站点 Operator 与商家 Owner 权限不同。
-- MP-02：资源在服务端验证所有权与操作权限，来自浏览器或 Agent 的商家 ID 不授予权限。共享管理员 cookie 不能回退为正式多商家访问方式。
-- MP-03：根记录、子资源引用、媒体/缩略图/交付包、SSE、缓存、后台作业与 Go→Pi 工具范围保持同一商家。UUID 不作为授权依据。
-- MP-04：任务受理时固定发起者、商家与操作授权快照，执行时检查相应商家运行策略；切换商家不改变原任务归属。成员撤销停止其读取、订阅和新动作，后续确认重新鉴权。
-- MP-05：每个可消费入口有同一用量归属和幂等合同；预留、实际尝试、未知、释放、结算和人工调整可追踪。未知用量不是零消费，网络超时不自动授权重跑。
-- MP-06：首版为共享 PostgreSQL、显式归属、bootstrap 后的公开邮箱注册和实例级 provider 凭据。商家 BYOK、跨商家分享和自动收款按独立就绪条件扩展；推荐和返利本阶段不实现，未来另行决定。
-- MP-07：完整隔离门未过前不能对互不信任的商家开放。分批代码提交不构成第二商家可用的发布声明。
+- MP-01：普通账号对应一个自有商家。User 与 Merchant 可保留身份/业务分工，现有 Membership 不构成继续建设多组织产品的依据。团队角色、成员邀请、工作区选择不在当前范围。
+- MP-02：普通用户的资源授权由会话和服务端商家归属决定；客户端 ID 和不可猜路径不授予权限。
+- MP-03：商品及其素材、运行、下载、SSE、后台作业和 Agent 工具保持同一商家归属；同商跨商品复用不等于跨账号共享。
+- MP-04：已受理任务固定 actor 与 merchant，重试/恢复不变；退出、账号切换、停用后的新授权与事件检查保持真实有效。
+- MP-05：预留、调用尝试、未知、释放、结算和调账有可追踪事实；供应商成本不直接等于用户收费。未知不自动授权重复调用。
+- MP-06：公开邮箱注册与管理员实例级 provider 凭据继续复用。支付、推荐返利、商家 BYOK 待实际需求独立设计。
+- MP-07：跨账号隔离、持久化与真实质量验收保留；单个旧门通过不宣称完整管理后台或外部发布完成。
 
 <a id="saas-platform-design"></a>
 
 ## 公开注册试用版 SaaS 平台设计
 
-本节为目标合同，尚未整体实现；不回写历史 MP-A/MP-B 验收。公开注册切片已实现，并已有真实浏览器、SMTP/IMAP 收取及 Web 证据；整体 SaaS 和外部发布仍按单独授权与完整合同处理。页面与完整流程见 [ROADMAP §15](../ROADMAP.md#15-公开注册试用版-saas-设计交接)。具体 task 状态只在看板维护。历史邀请设计仅作档案，不是当前入口。
+### 身份与权限
 
-### 身份与范围不变量
-
-| ID | 目标合同 | 当前基础与必要增量 |
+| 操作 | 普通商家账号 | 平台管理员 |
 |---|---|---|
-| SP-01 | User 会话证明本人；公开注册先验证邮箱，再创建普通账号与其自有商家 | 复用 Users/AuthSessions；注册 challenge、密码和创建事务已实现，并有浏览器、SMTP/IMAP 收取与注册会话证据 |
-| SP-02 | 工作商家是每标签页的明确选择，每请求服务端验证；无成员的 Operator 可管理站点 | 复用 header 和 merchant context；补 sessionStorage 选择、原生媒体/SSE query 与非商家路由分离 |
-| SP-03 | 成员/角色 mutation 的授权、最后 Owner 检查和变更在同一商家事务中串行 | 扩展现有 Membership；所有相关 writer 统一锁序，不用各自 actor→target 锁造成互锁 |
-| SP-04 | 个人、商家、实例配置分别拥有字段，不使用统一的任意 JSON 配置入口 | 个人偏好新增强类型存储；商家资料与现有 app_settings 分离 |
-| SP-05 | Operator 读取运营元数据不等于取得商家业务身份；支持访问必须有用途、期限和审计 | support.go 当前 501，仅草案；运营列表不得临时塞一个 merchant context 绕过支持授权 |
-| SP-06 | 商家消费仍由唯一 quota account/hold/event 解释，界面不能改变扣费事实 | 复用已交付 Reserve/Settle/Release/unknown、price；补分页读取和操作后回读 |
-| SP-07 | 新消费受商家状态和当前权限约束，已发出的调用据事实结算；停用不隐式退款 | 沿现有 queue/worker merchant snapshot 逐入口验证；未完成的跨执行器行为单独交付 |
-| SP-08 | 任何新商家开放必须满足完整试用合同；内部双商夹具和身份门通过不自动解除限制 | bootstrap 后公开注册创建普通 User、自有 Merchant、Owner Membership 和试用额度；SMTP 与注册事务已有回归证据，外部发布仍需单独授权 |
+| 本人资料、密码、会话 | 本人 | 本人 |
+| 商品、素材、生产与交付 | 自有商家 | 可管理各商家商品；完整跨商后台待实现 |
+| 商家资料与消费查询 | 自有商家 | 跨商管理查询 |
+| 调账、商家启停、站点 provider | 拒绝 | 明确权限、目标与操作记录 |
 
-### 权限矩阵
+不存在独立的“全局商品”。管理员访问用管理员权限直接授权目标对象，商品保留所属商家，不伪造 Membership，不建立支持会话作为前置。付费生成等副作用的授权和费用归属须明确，不能由读取/编辑权限自动推出。管理员配置旧二次解锁已移除；新的再认证需求必须对应具体风险并由用户裁定。
 
-本表约束新增页面与 API；既有余额/单价对成员可读的合同保留。普通 Operator 身份不自动拥有商家生产权，拥有 Membership 时仍按该商家角色判断。
+### 账号与进入产品
 
-| 操作 | Owner | Editor | Viewer | Operator（无 Membership） |
-|---|---|---|---|---|
-| 本人资料/偏好/密码/会话 | 本人 | 本人 | 本人 | 本人 |
-| 本商商品、素材与生产 | 读写 | 读写 | 只读和允许下载 | 拒绝 |
-| 商家名称/时区 | 读写 | 只读 | 只读 | 运营元数据只读 |
-| 团队成员、角色、移除/恢复 | 读写 | 拒绝 | 拒绝 | 不隐式代管；账号恢复另走运营入口 |
-| 余额、预估单价 | 只读 | 只读 | 只读 | 运营只读 |
-| 商家完整消费流水 | 只读 | 拒绝 | 拒绝 | 运营只读 |
-| 调账、unknown 裁定、商家启停 | 拒绝 | 拒绝 | 拒绝 | 再认证、原因与审计 |
-| provider/密钥/实例配置 | 拒绝 | 拒绝 | 拒绝 | 既有受控权限 |
-| 非 Operator 账号恢复签发 | 拒绝 | 拒绝 | 拒绝 | 再认证、原因与审计 |
-| 商家内容支持读取 | 本商原权限 | 本商原权限 | 本商原权限 | 仅未来有效支持会话允许的只读范围 |
+注册前部署者 bootstrap；用户经 SMTP 邮箱验证码设置密码，原子创建普通 User、自有 Merchant、现有 Owner 关系与试用额度。10 分钟验证码、60 秒重发间隔、最多 5 次错误、重发失效旧 challenge 和并发唯一性保持。注册已取得真实浏览器及 SMTP/IMAP 证据。
 
-商家停用后，Owner 可读取商家资料/团队/额度以处理问题；普通生产面只读及已有下载按现有停用策略逐项冻结，不新增消费或成员变更。账号与运营入口始终能明确处理停用状态。授权拒绝遵循已有边界：未登录 401、已知范围操作无权 403、跨商资源 404、冲突 409；不为每页新建一套错误格式。
+普通账号登录后直接使用自己的商品；服务端明确唯一归属。多 Membership 夹具不是产品切换需求，遗留身份收敛须另有数据与调用链验证。个人账户不依赖商家选择或团队管理；密码恢复尚未实现，不能展示假成功或以管理员转发邀请代替。
 
-### 工作商家与会话
+### 设置与管理入口
 
-- 个人身份保持现有 HttpOnly cookie + PostgreSQL AuthSessions。工作商家选择存当前标签页 sessionStorage，key 绑定 user；它是选择值，永不授权。多商家且未选时显示选择页，不能默认展示任意第一商家数据。
-- 普通 fetch 沿 `X-ProductFlow-Merchant-Id`；SSE、img、下载和跨页深链接沿 `merchant_id` query，后端统一校验。重复 query、多值或 header/query 冲突拒绝；个人/认证/运营路由不要求工作商家。选择值不是 secret，密码和短期 token 不得进入 query。
-- 切换保留已受理作业归属；未保存草稿有明确保留/放弃决定。先取消旧读取、关闭旧订阅并使旧回调失效，再加载新商数据，防止 query、mutation、toast、导航和原生图片 URL 串商。两标签页独立，退出和账号变更清旧身份缓存。
-- 撤权提交后的新授权检查使用当前权利；事件数据 flush 前重验，静默长连接最长 15 秒终止。已经发送的文件 bytes 不承诺收回，后续请求不得继续访问。活跃流与空闲流分别验收，不用短 GET 测试代替。
+个人语言/主题属于本人；商品输出语种独立。商家名称属于自有商家；provider/密钥与运行配置属于站点管理员。复用现有字段和页面，不为低影响偏好默认加团队并发协作协议。
 
-### 账号、团队与恢复
+`/account`、`/merchant/usage` 与 `/ops/merchants`、`/ops/products` 是待实现目标；`/settings` 已有管理员保护。运营界面能够展示目标商品与所属商家，不以仅可读元数据或未实现支持授权阻塞。列表分页有界，操作日志记录实际管理员、目标、时间与结果，不能代替业务账本。
 
-首版以 bootstrap 后的公开邮箱验证码注册为用户创建入口。注册前必须完成部署者初始化；用户请求验证码、在有效 challenge 内设置密码，成功后原子创建普通 User、该用户自己的 Merchant、Owner Membership 和试用额度。六位验证码有效 10 分钟，重发间隔 60 秒，每个 challenge 最多 5 次错误验证，重发使旧 challenge 失效；验证前使用统一凭据预算。已有邮箱和密码登录保留，不同用户会话不被静默替换。SMTP 或注册事务失败不能假报成功，同邮箱并发注册依唯一约束和事务结果收敛。
+### 额度政策与实现边界
 
-团队初始管理范围为分页成员列表、成员角色修改、移除/恢复。Owner 可增加 Owner；最后一位不能被移除或降级。统一 Merchant 根锁负责商家成员不变量；同时涉及 User 的操作使用 User→Merchant→Membership 顺序，补查现有所有相关 reader/writer。新增成员的直接已有用户关联另行设计，不以邀请、短期 token 或人工转发作为替代入口。恢复已撤销 Membership 不等于撤销账号停用。
+现有 account/hold/event、price、试用种子、主调用入口与人工裁定服务保留。当前代码默认 unknown 72h 后全额结算的政策已列入本轮纠偏；新的到期行为等待用户明确裁定，不作为后续任务冻结输入。供应商调用事实保持 unknown，用户额度处理不能伪造供应商成功或零成本。
 
-本人可改显示名、密码并撤销会话，邮箱首版只读。改密码与 Login 统一 User 行串行化凭据版本观察，不能在撤销事务后用旧密码创建有效 session；成功后撤销全部旧会话、清 cookie、回登录，不自动签入。账号密码恢复、修改邮箱和相关邮件流程尚未实现；未来恢复使用与注册用途分离的 SMTP 短期凭据，成功后撤销全部旧会话，不授予 Membership 或 Operator。不能把该未来合同写成已交付能力。旧邀请接口、token、schema 和 reader/writer 退役，不保留兼容入口。
-
-Operator 再认证有效期 10 分钟，绑定本人 session，由服务端记录；不是前端布尔值。未来恢复非 Operator 账号必须记录原因，不能签发另一个 Operator 的恢复凭据；该能力当前未实现，也不以 Operator 手工链接作为默认产品流程。唯一 Operator 无法登录属于部署者恢复流程，首版产品 API 不增设后门；需要对应部署任务时单独设计离线受控命令。
-
-验证码只通过请求 body 交换，原始密码、验证码和 SMTP secret 不进入日志、URL、持久浏览器存储或普通导出。SMTP 未就绪时邮件交换与注册提交不可用，登录页注册模式仍可显示；真实 SMTP/IMAP 收取与注册流程已经验证，外部发布仍按部署授权处理。技术依据复核于 2026-09-07：[OWASP 账号恢复](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html)、[会话管理](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
-
-### 配置字段与生效时机
-
-| 所有者 | 首批字段/现有对象 | 读写与覆盖 | 生效边界 |
-|---|---|---|---|
-| User | display_name；新增 locale/theme 偏好 | 本人修改；locale/theme 复用现有枚举；服务端默认 zh-CN/system | 个人界面；登录后取本人偏好，不自动上传共享浏览器旧值 |
-| Merchant | name、time_zone | Owner 修改；时区默认 UTC，用 IANA 名称；成员只读资料 | 日期显示/筛选；不改持久 UTC 或已确认的生成输入 |
-| Brand/视觉方案 | 现有 Brand 与 visual_system | 沿已交付选择/继承合同 | 品牌风格不能携带旧商品身份，不重造配置层 |
-| Product/图节点 | facts、语言、规格和已有覆盖 | 沿现有 Graph/DeliverySpec 合同 | 影响被用户确认的后续操作；实例/个人偏好不能静默改运行 snapshot |
-| Instance | app_settings、provider、容量、注册 SMTP 字段 | 已登录 Operator；普通 User 与匿名请求拒绝；SMTP password 按 secret 处理，不回显/导出 | 按原配置读者生效；登录页注册模式在初始化后可见，SMTP 未就绪时只禁用邮件交换和注册提交，不复制为每商家一份 provider |
-
-个人偏好与商家资料用强类型 PATCH、expected_revision 和有界字段；过期返回 409，前端保留草稿供比较。缺偏好行返回默认，不在 GET 落库；首次并发创建按 revision=0 和唯一约束收敛。新增“默认图种/尺寸/输出语言”等生产设置必须追到实际创建/运行读者后另行设计，不仅增加表单和 JSON。
-
-注册 SMTP 字段闭集为 `smtp_host`、`smtp_port`、`smtp_security`（`starttls`/`tls`）、`smtp_username`、`smtp_password`、`smtp_from_address`、`smtp_from_name`。开发栈从 `.env.dev` 的 `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_ADDRESS`、`SMTP_FROM_NAME` 读取启动默认；设置页保存的数据库值覆盖同名环境默认，恢复默认删除数据库覆盖并回到当前环境值。公开注册的邮件交换与提交由 `registration_available` 控制，只在 bootstrap 完成且 SMTP 可用时为 true；登录页注册模式在初始化完成后仍可显示，SMTP 未就绪时只禁用上述交换与提交。Operator 设置与注册读取共享同一数据库权威。
-
-### 运营、消费与审计
-
-运营控制台以商家列表→元数据详情→额度/异常操作为主线。首批只读 metadata、balance、hold/event；不得给 Operator 列表拼接原图、prompt、对话或材料下载。按商家/status/日期分页，默认 20、最大 50，cursor 用稳定 created_at/id；重要过滤必须有查询计划证据。
-
-消费页面区分可用、预留、已结算与待核对；内部单位不显示为法币。来源应来自持久关联，没有友好来源时显示操作号和“来源未记录”，不能解析任意 key 猜商品名。详情保留价格版本、发生时间、状态、预留与结算单位；不向普通用户展示 provider 密钥或内部 prompt。
-
-调账与 unknown 裁定复用现有 service、幂等键和 ledger。Operator 填原因并再认证，确认面显示目标与金额；丢响应沿同 key 重试/查询。政策继续沿现有 TTL 全额 Settle 和明示 actual_units，界面不偷偷把 unknown 变成免费 Release。人工裁定和扫描竞争必须唯一收敛；任何政策改动另行审查，不在 UI 任务顺手变化。
-
-身份/运营审计使用一张追加事实表，记录 actor、目标 user/merchant、action、时间、结果、必要前后值和原因；成功 mutation 与审计同事务。额度事件本身是金额权威，审计可引用事件 id，不能复制可变余额。失败请求写脱敏安全日志，禁止密码/token/整份敏感请求进入记录；支持读取的审计写入失败必须拒绝数据返回。
-
-### 后续完整结果的固定边界
-
-以下未发布为首批可执行任务。开发协调者在前置已交付后补充精确 schema/API/资源范围并发布，未完成前 S2 仍有缺口。
-
-| 结果 | 已定设计 | 必须先有的输入 |
-|---|---|---|
-| 受审计支持读取 | Operator 10 分钟再认证；指定 merchant、reason、只读资源范围；支持会话最长 30 分钟、可提前结束。所有读取先校验授权并记录审计；不伪造 Membership，不允许生成/修改/导出整商数据。未明确允许的媒体/对话拒绝 | 统一审计、运营页和逐资源读取矩阵；不是给所有业务路由统一跳过鉴权 |
-| 后续商家开通 | 公开注册在 bootstrap 后验证邮箱，原子创建普通 User、自有 Merchant、Owner Membership 与试用额度；未验证或 SMTP 未就绪时不创建任何业务对象。名称不唯一，不能按名称去重；不得自动给 Operator 生产 Owner | 注册 challenge、SMTP 可用性、完整事务和额度原子建账；公开外部发布仍需单独授权，不通过手工邀请替代 |
-| 商家停用完整执行语义 | 禁止新消费；尚未发出的 provider 尝试停止；已发出调用据事实落成功/unknown 并结算；保留交付与支持处理入口 | 所有消费执行器与授权快照枚举；测试停用与 admission 并发，不用只关前端按钮验收 |
-| 商家首页/运营概览 | 有界投影与统一 metric 口径；只读数据，点击待办返回原业务对象；运营聚合不暴露商家内容 | 工作区选择、消费/任务明细、时区、已可用 API；原型与指标表由体验组拥有 |
-
-首批实施包：[身份入口](tasks/archive/saas-auth-entry-security.md)、[工作商家](tasks/saas-workspace-context.md)、[账户团队](tasks/saas-account-team.md)、[偏好设置](tasks/saas-preferences-settings.md)、[运营额度](tasks/saas-ops-console.md)。独立 [容量基线](tasks/saas-multimerchant-capacity-baseline.md) 属平台可靠性。共享 auth/schema/Web 壳层默认串行；只有文件、输入和资源均独立才并行。详细步骤由开发者按真实调用链安排，不为每个 endpoint 单独建任务。
-
-2026-09-07 身份入口合同历史快照（旧邀请流，保留原证据，不代表当前入口）：已有账号邀请要求身份证明，凭据入口共享 Redis 原子预算，浏览器写入校验来源，登录显示冷却。Web 728 测试及 17 浏览器用例通过；全部后端包已有通过结果，其中 Agent/额度在独立新测试库补跑通过，原复用库全量运行的失败保留于任务证据。SP-01 对应缺陷已修复；工作商家选择、账户团队及真实第二商家开放尚未交付，不重签 R1 或 S2。
+管理员调整额度沿幂等键和真实账本；查询页面不创建第二本账。收费入口单价与费用展示仍有缺口；真实支付和商业毛利未验证。
 
 ## 组内序列
 
-1. [merchant-isolation-contract](tasks/archive/merchant-isolation-contract.md)：逐入口、表/根资源、worker、媒体和 Agent 工具建立覆盖清单，固定所有权、角色矩阵和可分别验证的实施批次。**本任务已交付覆盖矩阵与批次（见下文）；不宣称隔离已实现。**
-2. [身份骨架 B0](tasks/archive/merchant-identity-skeleton.md) 已交付。[根归属 B1](tasks/archive/merchant-root-ownership.md) **已交付**（根表 `merchant_id`、回填、查询过滤、跨商 404）。[商品链 B2](tasks/archive/merchant-product-chain.md) **已交付**（子链读写/下载隔离）。[Graph+配方 B3](tasks/archive/merchant-graph-recipe.md) **已交付**（changeset/run/SSE/recipe apply）。[会话生图 B5](tasks/archive/merchant-image-session.md) **已交付**。[图库绑定 B4](tasks/archive/merchant-library-binding.md) **已交付**（from-product/session、workflow sync）。[交付与局部编辑 B6](tasks/archive/merchant-delivery-localedit.md) **已交付**。[Agent 工具链 B7](tasks/archive/merchant-agent-tools.md) **已交付**。[队列与前端 B8](tasks/archive/merchant-queue-frontend.md) **已交付**。[运营面 B9](tasks/archive/merchant-ops-surface.md) **已交付**。[双商隔离门 B10](tasks/archive/merchant-isolation-gate.md) **自动化证据通过**；总纲 **R1 已通过**（见 [merchant-r1-close-ruling](tasks/archive/merchant-r1-close-ruling.md)）。**运营邀请第二商另决（历史基线，邀请流已退役）**；公开注册切片另行验收，未放开产品 `CreateMerchant`。
-3. 在相同身份合同上交付商家额度与 Operator 运营控制，复用平台提供的固定消费事实；缺字段或原子预留入口时将其纳入完整因果切片。
-4. 双商家正反用例、成员撤销和混合负载验收；把受影响身份/授权合同交给 Agent 质量独立固定题目，自进化消费已固定输入。
-
-现阶段：B10/MP-B 与总纲 **R1 已裁定通过**（夹具双商口径）；冻结基线历史口径为 **在运营明确邀请前仍不得对互不信任的第二商家开放产品注册**（`CreateMerchant` 保持 409，旧邀请流已退役）。当前公开注册切片已由 SMTP、注册事务及浏览器/SMTP/IMAP 证据验证，外部发布仍需单独授权，不把历史 409 改写成已开放。[总纲 R2/R5 对照刷新](tasks/archive/roadmap-r2-r5-refresh.md) 已归档（两门仍未通过）。[新商家额度引导](tasks/archive/merchant-mp-c-bootstrap-quota.md) 已交付（`QUOTA_TRIAL_UNITS`；≠R5）。[入口单价展示 B0](tasks/archive/merchant-mp-c-price-display-b0.md) 已交付图会话 Generate 前读 `GET …/quota/price` 展示预估扣减（缺失/无效禁用；≠R5）。[工作台 Graph 确认单价](tasks/archive/merchant-mp-c-price-display-workbench.md) 已接 Agent 工作流执行确认面（`graph.image_generation`；≠R5）。[unknown 到期](tasks/archive/merchant-mp-c-unknown-expiry-b0.md) 已交付（Op `holds/resolve` + TTL 全额 Settle；≠R5）。
+先完成本轮设计与明显错误机制清理，再按真实依赖推进账号自有范围与管理员权限、本人账户、消费和商品管理界面。账户任务不等待团队或工作区选择。每次完整结果包含必要前后端与行为证据，不按文件层级机械拆单。
 
 ## 验收与现状
 
-| 门 | 完成条件 | 当前 |
-|---|---|---|
-| MP-A 身份 | 多角色、邀请/撤销/恢复、最后 Owner 与并发变更、会话失效可验证 | **通过**（B0，见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)；邀请/角色/撤销/最后 Owner 自动化） |
-| MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **通过**（B10，2026-09-07，见 [merchant-isolation-gate](tasks/archive/merchant-isolation-gate.md)）；**未开放**第二互不信任商家产品上线；≠ MP-C/MP-D |
-| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0–B4 + localedit + source-note + 价格目录骨架**已交付（+[localedit](tasks/archive/merchant-mp-c-wire-localedit.md)+[source-note](tasks/archive/merchant-mp-c-wire-source-note.md)+[price-catalog-b0](tasks/archive/merchant-mp-c-price-catalog-b0.md)）。**新商家首次建账试用种子**（`QUOTA_TRIAL_UNITS`，默认 100；[bootstrap-quota](tasks/archive/merchant-mp-c-bootstrap-quota.md)）。**图会话 Generate 入口展示单价**（读价格目录；[price-display-b0](tasks/archive/merchant-mp-c-price-display-b0.md)）。**工作台 Agent 工作流确认展示 `graph.image_generation`**（[price-display-workbench](tasks/archive/merchant-mp-c-price-display-workbench.md)）。**unknown 到期运营策略**（`QUOTA_UNKNOWN_HOLD_TTL` 默认 72h 全额 Settle；Op `POST .../quota/holds/resolve`；禁止超时 Release；[unknown-expiry-b0](tasks/archive/merchant-mp-c-unknown-expiry-b0.md)）。**总纲 R5 未通过**（见 [merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）：其它收费入口未全覆盖展示；≠真实支付 |
-| MP-D 运营 | 运营密钥不进入商家上下文；停用、支持访问、数据导出有明确权限与审计 | 未实现（A8 合同草案仅） |
-
-**总纲 R1：** **通过**（2026-09-07，见 [merchant-r1-close-ruling](tasks/archive/merchant-r1-close-ruling.md)）。证据口径：测试夹具双商 + 多角色 + 成员撤销 + HTTP/资源/队列/事件/Agent/后台交叉拒绝；**≠** 产品上线第二互不信任商；**≠** MP-C/MP-D。
-
-冻结基线：`d6709c4aacb2e26bb30ab70a99d08b1dca05f487`（2026-09-07）。B0–B10 落地后：User 密码会话 + 根表 `merchant_id` 与查询过滤、跨商统一 404、双商自动化门与 R1 裁定已过；`app_settings` 仍为实例级；产品 `CreateMerchant` 仍拒第二开发商直至运营邀请。
+- 已实现：公开注册/SMTP、密码会话、商品根归属及跨账号隔离基础、部分额度和管理员站点配置。
+- 待实现：身份遗留收敛、管理员跨商商品管理、本人账户和恢复、消费与运营完整界面、当前候选的授权与事件失效复验。
+- 历史 R1/MP-A/MP-B 与 R6 有固定基线证据；不外推为本次新权限合同通过。R2/R3/R4/R5 的真实缺口沿各组所有者记录，不用任务数量替代结果。
+- 旧邀请/团队/支持会话验收留在历史附录与归档，不作为新增产品需求。
 
 ---
 
-## 源码枚举证据（矩阵输入）
+## 历史隔离实施与证据索引
+
+以下为 2026-09-07 B0–B10 和后续局部交付的冻结范围，保留编号、测试结果与代码线索用于追溯；其中邀请、团队角色、商家切换、支持会话与旧额度政策不再定义当前产品需求。当前权限与经营政策只由本文前半部及 ROADMAP 维护。部分历史代码已删除，原代码路径不再代表现行所有者。
+
+### 源码枚举证据（历史矩阵输入）
 
 以下命令在冻结 HEAD 上执行；矩阵入口必须能反查到这些清单，禁止用总纲条目冒充枚举。
 
@@ -249,7 +180,7 @@ Operator 再认证有效期 10 分钟，绑定本人 session，由服务端记�
 | A5 | `GET /api/v3/node-catalog`、`image-generation-options`、`delivery-presets` | 已认证成员只读 | 实例目录 | — | — | graph/delivery | `["graph-node-catalog"]` `["image-generation-options"]` `["delivery-presets"]` | 无商家数据；未登录 401 |
 | A6 | `GET /healthz`、`/healthz/ready` | Sys | 实例 | — | — | `platform/httpx/health.go` | — | 无业务体 |
 | A7 | `GET /metrics`（token） | Sys/Op | 实例 | — | — | `platform/metrics/http.go` | — | 无未脱敏商家内容 |
-| A8 | 支持会话/审计（合同草案；完整 MP-D 另发） | Op 显式支持会话 | 目标商家 | 审计记录 | — | `auth/support.go`；`GET /api/ops/support-contract`；会话入口 501 占位 | — | **B9**：合同可测；无隐式全局商家 UI；≠完整 MP-D |
+| A8 | 支持会话/审计（合同草案；完整 MP-D 另发） | Op 显式支持会话 | 目标商家 | 审计记录 | — | 已删除的支持草案与 501 占位；原证据见 B9 归档 | — | **B9**：合同可测；无隐式全局商家 UI；≠完整 MP-D |
 
 ### B. 商品与事实 / 图库（9）
 
