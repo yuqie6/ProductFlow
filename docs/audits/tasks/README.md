@@ -20,7 +20,6 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [delivery-merchant-image-loop-gate.md](delivery-merchant-image-loop-gate.md) | 工作流体验 | 证据 | 认领 | sub-ux/delivery-merchant-image-loop-gate | 2026-09-07T19:25:00+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |

@@ -255,6 +255,10 @@ web-e2e-canvas-local-edit *args:
 web-e2e-delivery-r2-core-path *args:
     bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_CANVAS_WORKFLOW=1 PRODUCTFLOW_R2_EVIDENCE_DIR="${PRODUCTFLOW_R2_EVIDENCE_DIR:-$PWD/storage-dev/audits/delivery-r2-core-path-gate}" pnpm --dir web exec playwright test e2e/delivery-r2-core-path.spec.ts --config playwright.config.ts {{args}}'
 
+# Merchant image loop: create → facts/text edit → generate → adopt → export → Brand reuse; temporary mock bind+restore.
+web-e2e-delivery-merchant-image-loop *args:
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_CANVAS_WORKFLOW=1 PRODUCTFLOW_MERCHANT_LOOP_EVIDENCE_DIR="${PRODUCTFLOW_MERCHANT_LOOP_EVIDENCE_DIR:-$PWD/storage-dev/audits/delivery-merchant-image-loop-gate}" pnpm --dir web exec playwright test e2e/delivery-merchant-image-loop.spec.ts --config playwright.config.ts {{args}}'
+
 # Chromium Agent SSE: duplicate seq1 then seq2 on one generation; connection stays open.
 web-e2e-agent-sse:
     bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test e2e/agent-conversation-runtime.spec.ts e2e/agent-sse-reconnect.spec.ts --config playwright.config.ts'

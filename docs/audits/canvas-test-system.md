@@ -8,7 +8,7 @@
 
 ## 组职责与交接
 
-2026-09-07 正式版职责校准：本组负责 [总纲第 5 节](../ROADMAP.md#5-正常体验的最低要求) 的创建、成果浏览、修图、采用、交付和复用体验。[完整成果投影](tasks/archive/delivery-workbench-projection.md)、[采用/交付快照](tasks/archive/delivery-adoption-snapshot.md) 与 [品牌视觉复用](tasks/archive/brand-visual-reuse.md) 已交付。[默认入口走查](tasks/archive/workbench-default-entry-walkthrough.md) 建议暂不全局切到成果；[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) **已交付**（条件默认，完成 ≠ 全局一律成果）。基础配方 preview/原子确认、局部编辑和 ZIP 已有实现，不重复发布。
+2026-09-07 正式版职责校准：本组负责 [总纲第 5 节](../ROADMAP.md#5-正常体验的最低要求) 的创建、成果浏览、修图、采用、交付和复用体验。[完整成果投影](tasks/archive/delivery-workbench-projection.md)、[采用/交付快照](tasks/archive/delivery-adoption-snapshot.md) 与 [品牌视觉复用](tasks/archive/brand-visual-reuse.md) 已交付。[默认入口走查](tasks/archive/workbench-default-entry-walkthrough.md) 建议暂不全局切到成果；[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) **已交付**（条件默认，完成 ≠ 全局一律成果）。基础配方 preview/原子确认、局部编辑和 ZIP 已有实现，不重复发布。[商家成图任务闭环采证](tasks/archive/delivery-merchant-image-loop-gate.md) **本门 PASS**（mock；≠R2 全过）。
 
 当前没有真实商户用户，内部走查只说明工程可用性。商家平台负责权限语义；本组按其固定合同提供清楚的商家上下文和角色操作入口。二维组合或品牌版本等跨层实现由协调者指定唯一主任务及排他范围，图片质量提供固定质量合同。
 
@@ -103,6 +103,7 @@ O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；�
 | 导出叠层可达 | [delivery-export-overlay-fix](tasks/archive/delivery-export-overlay-fix.md)：成果态无浮动工具条；1440/390 UI 点击导出；Vitest 14；隔离 e2e 2 passed | **≠R2 全过**；仅闭合导出可达缺口 |
 | §5.4 局部修图复验 | [delivery-r2-local-edit-retest](tasks/archive/delivery-r2-local-edit-retest.md)：**本门 PASS**（2026-09-07）；隔离 mock Chromium 2 passed / 25.3s；检查器→结果/采用/撤销；1440/390 截图 | **≠R2 全过**；确定性文字层与真实 provider 质量仍缺 |
 | 品牌视觉复用 | [brand-visual-reuse](tasks/archive/brand-visual-reuse.md)：商家内视觉方案版本 CRUD；商品显式选择；IQ-CF-07 继承预览；追加版本不静默改选择；配方创建预览列继承/待填；Vitest + Go 包测 | Brand 实体 B0 已建（占位改为未选定/已存在未合并）；未宣称跨商家分享 / 品牌色全量合并 / R2 |
+| 商家成图任务闭环 | [delivery-merchant-image-loop-gate](tasks/archive/delivery-merchant-image-loop-gate.md)：**本门 PASS**（2026-09-07）；隔离 mock Chromium 1 passed / 22.4s；创建→事实/文案改稿→出图→条件默认成果→采用→导出 sha256→第二商品 Brand `brand_style_merged` 且无旧身份串入 | **≠R2 全过**；mock only；检查器「确认事实」UI 告警未修；批跑/真实 provider/确定性文字层仍缺 |
 
 两项新浏览器交付未修改生产业务代码，分别提交于 `daa4672c` 与 `f7e70e1e`。当时完整 Web 回归为 91 files / 647 tests passed，lint、build 通过，build 保留既有大 chunk 警告。Go delivery 为带 PostgreSQL 的 24 项实际通过，无跳过；不扩展为全部 Go 包通过。
 
@@ -149,6 +150,7 @@ just web-e2e-canvas-delivery
 just web-e2e-canvas-asset-recipe
 just web-e2e-canvas-local-edit
 just web-e2e-delivery-r2-core-path
+just web-e2e-delivery-merchant-image-loop
 just web-e2e-live-graph
 just docs-check
 ```
@@ -161,4 +163,4 @@ just docs-check
 
 [完整配方创建入口](tasks/archive/canvas-full-recipe-entry.md) 已修复：新建页直接预览并事务确认，不经过默认 birth graph 或无图工作台。已有图不可覆盖、取消不创建商品/图、目标身份及重试去重保持。前单入口 FAIL 保留为历史；临时 probe 已移除，正向路径纳入常规资产与配方门禁。[局部编辑](tasks/archive/canvas-local-edit-flow.md) 已修复：mock 绑定下检查器可完成消除/换字/重绘、采用或只留图库，失败不改节点当前图。商家任务耗时与镜头列表主界面仍未知，本组当前没有已发布的后续实现单。
 
-其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) 已按条件默认实现；[记忆上次视图](tasks/archive/workbench-remember-last-view.md) 已交付商品级显式偏好。采用/视觉核心路径浏览器证据见 [delivery-r2-core-path-gate](tasks/archive/delivery-r2-core-path-gate.md)（本门 PASS，≠R2 全过）。导出按钮叠层可达见 [delivery-export-overlay-fix](tasks/archive/delivery-export-overlay-fix.md)（已修，≠R2 全过）。§5.4 局部编辑复验见 [delivery-r2-local-edit-retest](tasks/archive/delivery-r2-local-edit-retest.md)（本门 PASS，≠R2 全过）。前端 Brand 占位已对齐 B0（`brand_not_selected` / `brand_exists_no_style_merge`）；商品选定 Brand、品牌色合并与批量无限制批跑仍为缺口（≠R2 全过）。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。
+其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) 已按条件默认实现；[记忆上次视图](tasks/archive/workbench-remember-last-view.md) 已交付商品级显式偏好。采用/视觉核心路径浏览器证据见 [delivery-r2-core-path-gate](tasks/archive/delivery-r2-core-path-gate.md)（本门 PASS，≠R2 全过）。导出按钮叠层可达见 [delivery-export-overlay-fix](tasks/archive/delivery-export-overlay-fix.md)（已修，≠R2 全过）。§5.4 局部编辑复验见 [delivery-r2-local-edit-retest](tasks/archive/delivery-r2-local-edit-retest.md)（本门 PASS，≠R2 全过）。商家成图闭环（含 Brand 复用）见 [delivery-merchant-image-loop-gate](tasks/archive/delivery-merchant-image-loop-gate.md)（本门 PASS / mock，≠R2 全过）。前端 Brand 占位已对齐 B0（`brand_not_selected` / `brand_exists_no_style_merge`）；商品选定 Brand 与品牌色合并已有 B1/本门证据；批量无限制批跑仍为缺口（≠R2 全过）。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。
