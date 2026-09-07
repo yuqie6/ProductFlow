@@ -450,7 +450,7 @@ func (e Executor) raiseIfCancelled(ctx context.Context, taskID, attemptID string
 	return nil
 }
 
-// ensureEffect 按 candidate_start_index 写入或复用 provider 账本。已 applied 的区间不再打网，避免重复扣费。
+// ensureEffect 按批次写入调用意图：applied 复用结果，failed 可重新准备，pending/unknown 禁止再调用。
 func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, start, count int, opKey, hash, provider string, req map[string]any) (string, int, error) {
 	raw, _ := json.Marshal(req)
 	var result string
@@ -458,7 +458,10 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		var task schema.ImageSessionGenerationTasks
 		if err := pgxTx.Clauses(pfdb.ForUpdate()).Where("id = ?", taskID).Take(&task).Error; err != nil {
-			return errStale
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errStale
+			}
+			return err
 		}
 		if task.Status != "running" || task.ActiveAttemptID == nil || *task.ActiveAttemptID != attemptID {
 			return errStale
@@ -474,20 +477,29 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 			AttemptID: attemptID, EffectResult: "pending", ReconciliationState: "not_requested",
 			RequestJSON: &reqStr, CreatedAt: now, UpdatedAt: now,
 		}
-		if err := pgxTx.Clauses(clause.OnConflict{
+		write := pgxTx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "generation_task_id"}, {Name: "candidate_start_index"}},
 			DoUpdates: clause.Assignments(map[string]any{
-				"attempt_id":      attemptID,
-				"candidate_count": count,
-				"operation_key":   opKey,
-				"request_json":    reqStr,
-				"updated_at":      now,
+				"attempt_id":           attemptID,
+				"candidate_count":      count,
+				"operation_key":        opKey,
+				"request_json":         reqStr,
+				"request_hash":         hash,
+				"provider_name":        provider,
+				"effect_result":        "pending",
+				"reconciliation_state": "not_requested",
+				"detail":               nil,
+				"provider_response_id": nil,
+				"provider_status":      nil,
+				"result_json":          nil,
+				"updated_at":           now,
 			}),
 			Where: clause.Where{Exprs: []clause.Expression{
-				clause.Expr{SQL: "image_session_provider_effects.effect_result IN (?, ?)", Vars: []any{"pending", "failed"}},
+				clause.Expr{SQL: "image_session_provider_effects.effect_result = ?", Vars: []any{"failed"}},
 			}},
-		}).Create(&row).Error; err != nil {
-			return err
+		}).Create(&row)
+		if write.Error != nil {
+			return write.Error
 		}
 		var stored schema.ImageSessionProviderEffects
 		if err := pgxTx.Where("generation_task_id = ? AND candidate_start_index = ?", taskID, start).Take(&stored).Error; err != nil {
@@ -495,9 +507,26 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 		}
 		result = stored.EffectResult
 		storedCount = stored.CandidateCount
+		if result == "pending" && write.RowsAffected == 0 {
+			// An existing intent may already have reached the provider. Preserve its owner/request.
+			if err := pgxTx.Model(&schema.ImageSessionProviderEffects{}).Where("id = ?", stored.ID).
+				Updates(map[string]any{"effect_result": "unknown", "reconciliation_state": "unknown", "detail": unknownDetail, "updated_at": now}).Error; err != nil {
+				return err
+			}
+			result = "unknown"
+		}
 		return nil
 	})
-	return result, storedCount, err
+	if err != nil {
+		if !errors.Is(err, errStale) {
+			err = effectPersistenceError{err}
+		}
+		return result, storedCount, err
+	}
+	if result == "unknown" {
+		return result, storedCount, unknownErr{}
+	}
+	return result, storedCount, nil
 }
 
 // markEffect 更新该起始序号的账本。result=applied 同时写 reconciliation_state，给对账查询用。
