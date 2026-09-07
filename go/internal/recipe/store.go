@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -96,14 +97,14 @@ func versionFromSchema(rec schema.WorkflowRecipeVersions) versionRecord {
 }
 
 func getProductTarget(ctx context.Context, tx *gorm.DB, productID string, forUpdate bool) (productTarget, error) {
-	q := tx.WithContext(ctx).Select("id, current_fact_set_version_id").Where("id = ?", productID)
+	q := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Select("id, current_fact_set_version_id").Where("id = ?", productID), "merchant_id")
 	if forUpdate {
 		q = q.Clauses(pfdb.ForUpdate())
 	}
 	var rec schema.Products
 	err := q.Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return productTarget{}, apperr.NotFound("商品不存在")
+		return productTarget{}, auth.NotFoundCrossMerchant()
 	}
 	return productTarget{ID: rec.ID, FactSetVersionID: rec.CurrentFactSetVersionID}, err
 }
@@ -119,7 +120,7 @@ func visualSystemVersionExists(ctx context.Context, tx *gorm.DB, id string) erro
 
 // listRecipes 只列 origin=user 的配方（系统种子不出现在设置页）。默认去掉已归档，再批量补 current 版本。
 func listRecipes(ctx context.Context, tx *gorm.DB, includeArchived bool) ([]recipeRecord, error) {
-	q := tx.WithContext(ctx).Where("origin = ?", "user")
+	q := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Where("origin = ?", "user"), "merchant_id")
 	if !includeArchived {
 		q = q.Where("archived_at IS NULL")
 	}
@@ -155,21 +156,21 @@ func listRecipes(ctx context.Context, tx *gorm.DB, includeArchived bool) ([]reci
 // loadRecipe 读一条用户配方及全部版本。official 种子对外伪装成 404，避免设置页改系统配方。
 // forUpdate 锁 recipes 行，给 Append/Archive 用。
 func loadRecipe(ctx context.Context, tx *gorm.DB, recipeID string, forUpdate bool) (recipeRecord, error) {
-	q := tx.WithContext(ctx).Where("id = ?", recipeID)
+	q := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Where("id = ?", recipeID), "merchant_id")
 	if forUpdate {
 		q = q.Clauses(pfdb.ForUpdate())
 	}
 	var rec schema.WorkflowRecipes
 	err := q.Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return recipeRecord{}, apperr.NotFound("工作流配方不存在")
+		return recipeRecord{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return recipeRecord{}, err
 	}
 	out := recipeFromSchema(rec)
 	if out.Origin == originOfficial {
-		return recipeRecord{}, apperr.NotFound("工作流配方不存在")
+		return recipeRecord{}, auth.NotFoundCrossMerchant()
 	}
 	versions, err := loadRecipeVersions(ctx, tx, out.ID)
 	if err != nil {
@@ -217,9 +218,11 @@ func loadVersionsByIDs(ctx context.Context, tx *gorm.DB, ids []string) (map[stri
 }
 
 func insertRecipe(ctx context.Context, tx *gorm.DB, rec recipeRecord) error {
+	merchantID := auth.ResolveMerchantID(ctx)
 	now := time.Now().UTC()
 	return tx.WithContext(ctx).Create(&schema.WorkflowRecipes{
 		ID:          rec.ID,
+		MerchantID:  merchantID,
 		Kind:        rec.Kind,
 		Origin:      rec.Origin,
 		OfficialKey: rec.OfficialKey,

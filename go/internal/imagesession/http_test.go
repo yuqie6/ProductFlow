@@ -397,7 +397,7 @@ func TestImageSessionMissingIs404(t *testing.T) {
 		Detail string `json:"detail"`
 	}
 	ss.decode(t, resp, &body)
-	if body.Detail != "连续生图会话不存在" {
+	if body.Detail != auth.CrossMerchantDetail {
 		t.Fatalf("%s", body.Detail)
 	}
 }
@@ -617,7 +617,7 @@ func TestImageSessionHistoryMissingSessionIs404(t *testing.T) {
 		Detail string `json:"detail"`
 	}
 	ss.decode(t, resp, &body)
-	if body.Detail != "连续生图会话不存在" {
+	if body.Detail != auth.CrossMerchantDetail {
 		t.Fatalf("%s", body.Detail)
 	}
 }

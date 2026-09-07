@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -347,11 +348,13 @@ func (s Service) applyDraftOperations(ctx context.Context, pgxTx *gorm.DB, paylo
 					continue
 				}
 				var tag schema.MediaLibraryTags
-				err := pgxTx.WithContext(ctx).Select("id").Where("name = ?", name).Take(&tag).Error
+				err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Select("id").Where("name = ?", name), "merchant_id").Take(&tag).Error
 				if errors.Is(err, gorm.ErrRecordNotFound) {
+					merchantID := auth.ResolveMerchantID(ctx)
 					tag.ID = clockid.New()
 					if err := pgxTx.WithContext(ctx).Create(&schema.MediaLibraryTags{
 						ID:             tag.ID,
+						MerchantID:     merchantID,
 						Name:           name,
 						NormalizedName: name,
 						CreatedAt:      now,

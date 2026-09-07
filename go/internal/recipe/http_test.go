@@ -570,7 +570,7 @@ func TestOfficialRecipesHidden(t *testing.T) {
 	}
 	got := rs.do(t, http.MethodGet, "/api/v3/workflow-recipes/"+officialID, nil, "")
 	rs.mustStatus(t, got, http.StatusNotFound)
-	if !strings.Contains(rs.detail(t, got), "工作流配方不存在") {
+	if !strings.Contains(rs.detail(t, got), "资源不存在") {
 		t.Fatal("official get")
 	}
 	productID := rs.createV2(t, "官方配方不可应用")
@@ -578,7 +578,7 @@ func TestOfficialRecipesHidden(t *testing.T) {
 		"expected_recipe_version": 1,
 	})
 	rs.mustStatus(t, preview, http.StatusNotFound)
-	if !strings.Contains(rs.detail(t, preview), "工作流配方不存在") {
+	if !strings.Contains(rs.detail(t, preview), "资源不存在") {
 		t.Fatal("official preview")
 	}
 	archived := rs.do(t, http.MethodDelete, "/api/v3/workflow-recipes/"+officialID+"?expected_recipe_version=1", nil, "")
@@ -600,7 +600,7 @@ func TestMissingProductPreview(t *testing.T) {
 		"expected_recipe_version": 1,
 	})
 	rs.mustStatus(t, missing, http.StatusNotFound)
-	if !strings.Contains(rs.detail(t, missing), "商品不存在") {
+	if !strings.Contains(rs.detail(t, missing), "资源不存在") {
 		t.Fatal("missing product")
 	}
 }

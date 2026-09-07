@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/generation"
 	"github.com/yuqie6/productflow/internal/platform/metrics"
@@ -19,6 +20,7 @@ import (
 func TestReplicaFieldTwoWorkersRespectGenerationCapacity(t *testing.T) {
 	name := fmt.Sprintf("pf_replc_%d", time.Now().UnixNano()%1_000_000_000)
 	_, gdb := testdb.IsolatedMigrated(t, name)
+	_ = auth.MustDevMerchantID(t, gdb)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	now := time.Now().UTC()
@@ -102,6 +104,7 @@ func TestReplicaFieldTwoWorkersRespectGenerationCapacity(t *testing.T) {
 func TestGenerateWhenCapacityFullStillQueuesWithoutDenied(t *testing.T) {
 	name := fmt.Sprintf("pf_enqcap_%d", time.Now().UnixNano()%1_000_000_000)
 	_, gdb := testdb.IsolatedMigrated(t, name)
+	_ = auth.MustDevMerchantID(t, gdb)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	now := time.Now().UTC()

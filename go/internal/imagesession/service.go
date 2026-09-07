@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -89,7 +90,7 @@ func (s Service) List(ctx context.Context, after string, limit int) (ListRespons
 
 	var out ListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		query := pgxTx.Select("id", "title", "created_at", "updated_at")
+		query := auth.ScopeMerchant(ctx, pgxTx.Select("id", "title", "created_at", "updated_at"), "merchant_id")
 		if hasCursor {
 			query = query.Where("updated_at < ? OR (updated_at = ? AND id < ?)", cursorAt, cursorAt, cursor.ID)
 		}
@@ -135,8 +136,9 @@ func (s Service) Create(ctx context.Context, title *string) (DetailResponse, err
 	}
 	id := clockid.New()
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+	merchantID := auth.ResolveMerchantID(ctx)
 		now := time.Now().UTC()
-		row := schema.ImageSessions{ID: id, Title: normalized, CreatedAt: now, UpdatedAt: now}
+		row := schema.ImageSessions{ID: id, MerchantID: merchantID, Title: normalized, CreatedAt: now, UpdatedAt: now}
 		return pgxTx.Create(&row).Error
 	})
 	if err != nil {

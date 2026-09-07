@@ -525,7 +525,7 @@ func TestMissingProductAndWorkflow(t *testing.T) {
 		Detail string `json:"detail"`
 	}
 	gs.decode(t, missing, &detail)
-	if !strings.Contains(detail.Detail, "商品不存在") {
+	if !strings.Contains(detail.Detail, "资源不存在") {
 		t.Fatalf("%s", detail.Detail)
 	}
 

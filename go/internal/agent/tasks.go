@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/agentsession"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -48,7 +49,7 @@ func (s Service) ListTasks(ctx context.Context, sessionID *string, includeTermin
 	}
 	var out TaskListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		q := pgxTx.Model(&schema.AgentTasks{})
+		q := auth.ScopeMerchant(ctx, pgxTx.Model(&schema.AgentTasks{}), "merchant_id")
 		if sessionID != nil {
 			q = q.Where("session_id = ?", *sessionID)
 		}
@@ -116,9 +117,9 @@ func (s Service) CreateTask(ctx context.Context, sessionID, title, goal string, 
 		var productID *string
 		if conversationID != nil {
 			var conv schema.AgentConversations
-			err := pgxTx.Where("id = ?", *conversationID).Take(&conv).Error
+			err := auth.ScopeMerchant(ctx, pgxTx.Where("id = ?", *conversationID), "merchant_id").Take(&conv).Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return apperr.NotFound("Agent conversation 不存在")
+				return auth.NotFoundCrossMerchant()
 			}
 			if err != nil {
 				return err
@@ -131,8 +132,10 @@ func (s Service) CreateTask(ctx context.Context, sessionID, title, goal string, 
 		id := newID()
 		summary := boundedSummary(normalizedGoal)
 		now := time.Now().UTC()
+	merchantID := auth.ResolveMerchantID(ctx)
 		row := schema.AgentTasks{
 			ID:             id,
+			MerchantID:     merchantID,
 			SessionID:      sessionID,
 			ConversationID: conversationID,
 			ProductID:      productID,
@@ -505,9 +508,9 @@ func loadTaskAfterGraphRunSync(ctx context.Context, pgxTx *gorm.DB, taskID strin
 // loadTask 读取 AgentTask 投影及最近一条 workflow request 的 graph id。不调用 SyncGraphRunToTasks，避免读路径覆盖 waiting_reason=goal_loop。
 func loadTask(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskResponse, error) {
 	var t schema.AgentTasks
-	err := pgxTx.WithContext(ctx).Where("id = ?", taskID).Take(&t).Error
+	err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Where("id = ?", taskID), "merchant_id").Take(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return TaskResponse{}, apperr.NotFound("Agent Task 不存在")
+		return TaskResponse{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return TaskResponse{}, err
@@ -531,9 +534,9 @@ func loadTask(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskResponse,
 
 func lockTask(ctx context.Context, pgxTx *gorm.DB, taskID string) (taskRow, error) {
 	var t schema.AgentTasks
-	err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", taskID).Take(&t).Error
+	err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", taskID), "merchant_id").Take(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return taskRow{}, apperr.NotFound("Agent Task 不存在")
+		return taskRow{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return taskRow{}, err

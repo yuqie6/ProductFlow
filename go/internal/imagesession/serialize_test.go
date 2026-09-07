@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/generation"
@@ -26,6 +27,7 @@ func TestQueueOverviewMatchesSharedSnapshot(t *testing.T) {
 
 func TestQueuedPositionsReturnsOnlyRequestedGlobalRanks(t *testing.T) {
 	_, gdb := testdb.Open(t)
+	_ = auth.MustDevMerchantID(t, gdb)
 	tx := gdb.Begin()
 	if tx.Error != nil {
 		t.Fatal(tx.Error)

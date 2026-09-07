@@ -20,7 +20,7 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [merchant-root-ownership.md](merchant-root-ownership.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-root-ownership | 2026-09-07T12:31:30+08:00 |
+| [merchant-product-chain.md](merchant-product-chain.md) | 商家平台 | 实现 | 开放 | — | — |
 | [compete-facts-text-trace.md](compete-facts-text-trace.md) | 图片质量 | 实现 | 开放 | — | — |
 | [brand-visual-reuse.md](brand-visual-reuse.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [release-d3-restore-drill.md](release-d3-restore-drill.md) | 平台可靠性 | 证据 | 开放 | — | — |

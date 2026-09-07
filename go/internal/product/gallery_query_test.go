@@ -1,11 +1,11 @@
 package product
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -24,15 +24,16 @@ type seededGallery struct {
 func seedGallery(t *testing.T, ps *productServer) seededGallery {
 	t.Helper()
 	now := time.Date(2026, 8, 12, 12, 0, 0, 0, time.UTC)
-	ctx := context.Background()
+	ctx := ps.merchantCtx(t)
+	merchantID := auth.MustDevMerchantID(t, ps.db)
 	productID := clockid.New()
 	otherID := clockid.New()
 	folderID := clockid.New()
 	otherFolderID := clockid.New()
 	err := tx.WithGorm(ctx, ps.db, func(pgxTx *gorm.DB) error {
 		if _, err := pfdb.Exec(ctx, pgxTx, `
-			INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '图库测试商品', $2, $2), ($3, '其他商品', $2, $2)
-		`, productID, now, otherID); err != nil {
+			INSERT INTO products (id, name, merchant_id, created_at, updated_at) VALUES ($1, '图库测试商品', $2, $3, $3), ($4, '其他商品', $2, $3, $3)
+		`, productID, merchantID, now, otherID); err != nil {
 			return err
 		}
 		if _, err := pfdb.Exec(ctx, pgxTx, `
@@ -108,7 +109,7 @@ func seedGallery(t *testing.T, ps *productServer) seededGallery {
 func TestGalleryDirectoriesBootstrapSearchAndDetail(t *testing.T) {
 	ps := newProductServer(t)
 	seed := seedGallery(t, ps)
-	boot, err := ps.svc.GalleryBootstrap(context.Background(), seed.productID)
+	boot, err := ps.svc.GalleryBootstrap(ps.merchantCtx(t), seed.productID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestGalleryDirectoriesBootstrapSearchAndDetail(t *testing.T) {
 		"uploads": 2, "generated": 3, "recent_generated": 3, "unorganized": 3,
 	}
 	for kind, want := range expect {
-		page, err := ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{DirectoryKind: kind, Limit: 50})
+		page, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{DirectoryKind: kind, Limit: 50})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -138,32 +139,32 @@ func TestGalleryDirectoriesBootstrapSearchAndDetail(t *testing.T) {
 			t.Fatalf("%s got %d want %d", kind, len(page.Items), want)
 		}
 	}
-	hero, err := ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{DirectoryKind: "image_type", DirectoryKey: "hero", Limit: 50})
+	hero, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{DirectoryKind: "image_type", DirectoryKey: "hero", Limit: 50})
 	if err != nil || len(hero.Items) != 2 {
 		t.Fatalf("hero %+v %v", hero, err)
 	}
-	unclassified, err := ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{DirectoryKind: "image_type", DirectoryKey: galleryUnclassifiedTypeKey, Limit: 50})
+	unclassified, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{DirectoryKind: "image_type", DirectoryKey: galleryUnclassifiedTypeKey, Limit: 50})
 	if err != nil || len(unclassified.Items) != 3 {
 		t.Fatalf("unclassified %+v %v", unclassified, err)
 	}
-	folder, err := ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{DirectoryKind: "user_folder", DirectoryKey: seed.folderID, Limit: 50})
+	folder, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{DirectoryKind: "user_folder", DirectoryKey: seed.folderID, Limit: 50})
 	if err != nil || len(folder.Items) != 2 {
 		t.Fatalf("folder %+v %v", folder, err)
 	}
-	literal, err := ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{Query: "%_", Limit: 50})
+	literal, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{Query: "%_", Limit: 50})
 	if err != nil || len(literal.Items) != 1 || literal.Items[0].DisplayName != "上传 %_ 参考" {
 		t.Fatalf("literal %+v %v", literal, err)
 	}
-	filename, err := ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{Query: "ALPHA.PNG", Limit: 50})
+	filename, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{Query: "ALPHA.PNG", Limit: 50})
 	if err != nil || len(filename.Items) != 1 || filename.Items[0].DisplayName != "主图 Alpha" {
 		t.Fatalf("filename %+v %v", filename, err)
 	}
 
-	_, err = ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{DirectoryKind: "user_folder", DirectoryKey: seed.otherID, Limit: 50})
+	_, err = ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{DirectoryKind: "user_folder", DirectoryKey: seed.otherID, Limit: 50})
 	if !isAppErr(err, 404, "商品图片文件夹不存在") {
 		t.Fatalf("%v", err)
 	}
-	_, err = ps.svc.GetGalleryAsset(context.Background(), seed.productID, "missing")
+	_, err = ps.svc.GetGalleryAsset(ps.merchantCtx(t), seed.productID, "missing")
 	if !isAppErr(err, 404, "商品图片不存在") {
 		t.Fatalf("%v", err)
 	}
@@ -178,19 +179,19 @@ func TestGalleryCursorBoundToFiltersAndSorts(t *testing.T) {
 			t.Fatalf("%s %v", sort, ids)
 		}
 	}
-	first, err := ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{Limit: 1})
+	first, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{Limit: 1})
 	if err != nil || first.NextCursor == nil {
 		t.Fatal(err)
 	}
-	_, err = ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{Query: "主图", After: *first.NextCursor, Limit: 1})
+	_, err = ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{Query: "主图", After: *first.NextCursor, Limit: 1})
 	if !isAppErr(err, 400, "图库分页 cursor 与当前查询条件不匹配") {
 		t.Fatalf("%v", err)
 	}
-	_, err = ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{Sort: "created_asc", After: *first.NextCursor, Limit: 1})
+	_, err = ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{Sort: "created_asc", After: *first.NextCursor, Limit: 1})
 	if !isAppErr(err, 400, "图库分页 cursor 与当前查询条件不匹配") {
 		t.Fatalf("%v", err)
 	}
-	_, err = ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{After: "not-a-cursor", Limit: 1})
+	_, err = ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{After: "not-a-cursor", Limit: 1})
 	if !isAppErr(err, 400, "图库分页 cursor 无效") {
 		t.Fatalf("%v", err)
 	}
@@ -199,14 +200,14 @@ func TestGalleryCursorBoundToFiltersAndSorts(t *testing.T) {
 func TestRecentGeneratedCursorKeepsTimeAnchor(t *testing.T) {
 	ps := newProductServer(t)
 	seed := seedGallery(t, ps)
-	first, err := ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{
+	first, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{
 		DirectoryKind: "recent_generated", Sort: "created_asc", Limit: 1,
 	})
 	if err != nil || len(first.Items) != 1 || first.NextCursor == nil {
 		t.Fatalf("%+v %v", first, err)
 	}
 	ps.svc.Now = freeze(seed.now.Add(60 * 24 * time.Hour))
-	second, err := ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{
+	second, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{
 		DirectoryKind: "recent_generated", Sort: "created_asc", Limit: 10, After: *first.NextCursor,
 	})
 	if err != nil {
@@ -220,15 +221,15 @@ func TestRecentGeneratedCursorKeepsTimeAnchor(t *testing.T) {
 func TestGalleryRejectsInvalidDirectoryKeys(t *testing.T) {
 	ps := newProductServer(t)
 	seed := seedGallery(t, ps)
-	_, err := ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{DirectoryKind: "image_type"})
+	_, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{DirectoryKind: "image_type"})
 	if !isAppErr(err, 400, "当前图库目录必须提供 directory_key") {
 		t.Fatalf("%v", err)
 	}
-	_, err = ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{DirectoryKind: "all", DirectoryKey: "hero"})
+	_, err = ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{DirectoryKind: "all", DirectoryKey: "hero"})
 	if !isAppErr(err, 400, "当前图库目录不接受 directory_key") {
 		t.Fatalf("%v", err)
 	}
-	_, err = ps.svc.ListGalleryAssets(context.Background(), seed.productID, GalleryListInput{DirectoryKind: "source", DirectoryKey: "unknown"})
+	_, err = ps.svc.ListGalleryAssets(ps.merchantCtx(t), seed.productID, GalleryListInput{DirectoryKind: "source", DirectoryKey: "unknown"})
 	if !isAppErr(err, 400, "图片来源 directory_key 无效") {
 		t.Fatalf("%v", err)
 	}
@@ -237,41 +238,41 @@ func TestGalleryRejectsInvalidDirectoryKeys(t *testing.T) {
 func TestGalleryFolderOptimisticLockAndMoveAtomic(t *testing.T) {
 	ps := newProductServer(t)
 	seed := seedGallery(t, ps)
-	first, err := ps.svc.CreateGalleryFolder(context.Background(), seed.productID, "  新目录  ")
+	first, err := ps.svc.CreateGalleryFolder(ps.merchantCtx(t), seed.productID, "  新目录  ")
 	if err != nil || first.Name != "新目录" {
 		t.Fatalf("%+v %v", first, err)
 	}
-	second, err := ps.svc.CreateGalleryFolder(context.Background(), seed.productID, "第二目录")
+	second, err := ps.svc.CreateGalleryFolder(ps.merchantCtx(t), seed.productID, "第二目录")
 	if err != nil || first.SortOrder >= second.SortOrder {
 		t.Fatalf("%+v %+v %v", first, second, err)
 	}
-	_, err = ps.svc.RenameGalleryFolder(context.Background(), seed.productID, first.ID, "新目录", "精选二组")
+	_, err = ps.svc.RenameGalleryFolder(ps.merchantCtx(t), seed.productID, first.ID, "新目录", "精选二组")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = ps.svc.RenameGalleryFolder(context.Background(), seed.productID, first.ID, "新目录", "不会生效")
+	_, err = ps.svc.RenameGalleryFolder(ps.merchantCtx(t), seed.productID, first.ID, "新目录", "不会生效")
 	if !isAppErr(err, 409, "文件夹名称已被其他操作修改") {
 		t.Fatalf("%v", err)
 	}
-	target, err := ps.svc.CreateGalleryFolder(context.Background(), seed.productID, "目标目录")
+	target, err := ps.svc.CreateGalleryFolder(ps.merchantCtx(t), seed.productID, "目标目录")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = ps.svc.MoveGalleryAssets(context.Background(), seed.productID, []GalleryAssetMove{
+	_, err = ps.svc.MoveGalleryAssets(ps.merchantCtx(t), seed.productID, []GalleryAssetMove{
 		{AssetID: seed.assets[0], ExpectedFolderID: &seed.folderID},
 		{AssetID: seed.assets[1], ExpectedFolderID: nil},
 	}, &target.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = ps.svc.MoveGalleryAssets(context.Background(), seed.productID, []GalleryAssetMove{
+	_, err = ps.svc.MoveGalleryAssets(ps.merchantCtx(t), seed.productID, []GalleryAssetMove{
 		{AssetID: seed.assets[0], ExpectedFolderID: &seed.folderID},
 		{AssetID: seed.assets[2], ExpectedFolderID: &seed.folderID},
 	}, nil)
 	if !isAppErr(err, 409, "图片所在文件夹已被其他操作修改") {
 		t.Fatalf("%v", err)
 	}
-	deleted, err := ps.svc.DeleteGalleryFolder(context.Background(), seed.productID, target.ID, "目标目录")
+	deleted, err := ps.svc.DeleteGalleryFolder(ps.merchantCtx(t), seed.productID, target.ID, "目标目录")
 	if err != nil || deleted.MovedToUnorganizedCount != 2 {
 		t.Fatalf("%+v %v", deleted, err)
 	}
@@ -282,7 +283,7 @@ func collectGalleryIDs(t *testing.T, ps *productServer, productID, sort string) 
 	var ids []string
 	after := ""
 	for {
-		page, err := ps.svc.ListGalleryAssets(context.Background(), productID, GalleryListInput{Sort: sort, After: after, Limit: 2})
+		page, err := ps.svc.ListGalleryAssets(ps.merchantCtx(t), productID, GalleryListInput{Sort: sort, After: after, Limit: 2})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -312,7 +313,7 @@ func isAppErr(err error, status int, detail string) bool {
 func TestGalleryGeneratedDirectoryOmitsDeliveryChildren(t *testing.T) {
 	ps := newProductServer(t)
 	seed := seedGallery(t, ps)
-	ctx := context.Background()
+	ctx := ps.merchantCtx(t)
 	parentID := seed.assets[1]
 	childID := clockid.New()
 	mediaID := clockid.New()

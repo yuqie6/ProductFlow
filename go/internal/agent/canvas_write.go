@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/product"
@@ -46,14 +47,15 @@ func WriteProductCanvas(ctx context.Context, tx *gorm.DB, productID, title, key,
 
 func loadSessionProduct(ctx context.Context, tx *gorm.DB, sessionID string) (productID *string, status string, err error) {
 	var rec schema.AgentSessions
-	err = tx.WithContext(ctx).Select("product_id, status").Where("id = ?", sessionID).Take(&rec).Error
+	err = auth.ScopeMerchant(ctx, tx.WithContext(ctx).Select("product_id, status").Where("id = ?", sessionID), "merchant_id").Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, "", apperr.NotFound("Agent Session 不存在")
+		return nil, "", auth.NotFoundCrossMerchant()
 	}
 	return rec.ProductID, rec.Status, err
 }
 
 func insertProductSession(ctx context.Context, tx *gorm.DB, title, productID string) (string, error) {
+	merchantID := auth.ResolveMerchantID(ctx)
 	id := newID()
 	if len([]rune(title)) > 160 {
 		title = string([]rune(title)[:160])
@@ -62,6 +64,7 @@ func insertProductSession(ctx context.Context, tx *gorm.DB, title, productID str
 	pid := productID
 	rec := schema.AgentSessions{
 		ID:         id,
+		MerchantID: merchantID,
 		ProductID:  &pid,
 		Title:      title,
 		Summary:    ptr("暂无 Agent Task"),
@@ -76,6 +79,7 @@ func insertProductSession(ctx context.Context, tx *gorm.DB, title, productID str
 // insertProductConversation 在商品出生事务写入 product_workflow conversation，并带上创建幂等键与 request hash。
 // 不创建 AgentTask 或 Turn；产品 Goal 必须由用户稍后显式发起。
 func insertProductConversation(ctx context.Context, tx *gorm.DB, sessionID, productID, key, requestHash string) (product.Conversation, error) {
+	merchantID := auth.ResolveMerchantID(ctx)
 	id := newID()
 	now := time.Now().UTC()
 	sid := sessionID
@@ -84,6 +88,7 @@ func insertProductConversation(ctx context.Context, tx *gorm.DB, sessionID, prod
 	hash := requestHash
 	rec := schema.AgentConversations{
 		ID:                     id,
+		MerchantID:             merchantID,
 		ScopeType:              "product_workflow",
 		SessionID:              &sid,
 		ProductID:              &pid,

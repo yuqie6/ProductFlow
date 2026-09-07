@@ -71,6 +71,11 @@ func newProductServerWith(t *testing.T, overlay Service) *productServer {
 	return ps
 }
 
+func (ps *productServer) merchantCtx(t *testing.T) context.Context {
+	t.Helper()
+	return auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, ps.db))
+}
+
 func (ps *productServer) setSetting(t *testing.T, key, value string) {
 	t.Helper()
 	_, err := ps.pool.Exec(context.Background(), `

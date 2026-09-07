@@ -41,8 +41,9 @@
 | 现有任务 | 承接与次序 | 本次变化 |
 |---|---|---|
 | merchant-isolation-contract | 商家平台覆盖矩阵 | 2026-09-07 完成归档 |
-| merchant-identity-skeleton | 商家平台 B0 | 2026-09-07 完成归档；下一项 `merchant-root-ownership` |
-| merchant-root-ownership | 商家平台 B1；根表 merchant_id | 开放；与 CF-B0/采用写集串行 |
+| merchant-identity-skeleton | 商家平台 B0 | 2026-09-07 完成归档 |
+| merchant-root-ownership | 商家平台 B1；根表 merchant_id | 2026-09-07 完成归档 |
+| merchant-product-chain | 商家平台 B2；商品链隔离 | 开放 |
 | release-readiness-baseline | 发行差距 | 完成归档 |
 | release-compose-proxy-overlay | 发行 B1 | 完成归档 |
 | release-versioned-artifact | 发行 B2 | 2026-09-07 完成归档 |

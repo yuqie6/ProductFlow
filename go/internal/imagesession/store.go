@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/storage"
@@ -15,9 +16,9 @@ import (
 
 func loadSession(ctx context.Context, q *gorm.DB, id string) (sessionRow, error) {
 	var row schema.ImageSessions
-	err := q.WithContext(ctx).Where("id = ?", id).Take(&row).Error
+	err := auth.ScopeMerchant(ctx, q.WithContext(ctx).Where("id = ?", id), "merchant_id").Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return sessionRow{}, apperr.NotFound("连续生图会话不存在")
+		return sessionRow{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return sessionRow{}, err

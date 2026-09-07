@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -64,10 +65,12 @@ func (s Service) ListSessions(ctx context.Context, includeArchived bool, product
 func (s Service) CreateSession(ctx context.Context) (SessionResponse, error) {
 	var out SessionResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+	merchantID := auth.ResolveMerchantID(ctx)
 		id := newID()
 		now := time.Now().UTC()
 		session := schema.AgentSessions{
 			ID:         id,
+			MerchantID: merchantID,
 			Title:      sessionDefaultTitle,
 			Summary:    ptr("暂无 Agent Task"),
 			Status:     "active",
@@ -81,6 +84,7 @@ func (s Service) CreateSession(ctx context.Context) (SessionResponse, error) {
 		convID := newID()
 		conv := schema.AgentConversations{
 			ID:           convID,
+			MerchantID:   merchantID,
 			ScopeType:    "global",
 			SessionID:    &id,
 			HarnessRunID: convID,
@@ -115,7 +119,7 @@ func (s Service) RenameSession(ctx context.Context, sessionID, title string) (Se
 	}
 	var out SessionResponse
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		res := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).Where("id = ?", sessionID).Updates(map[string]any{
+		res := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).Where("id = ?", sessionID), "merchant_id").Updates(map[string]any{
 			"title":      normalized,
 			"updated_at": time.Now().UTC(),
 		})
@@ -123,7 +127,7 @@ func (s Service) RenameSession(ctx context.Context, sessionID, title string) (Se
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return apperr.NotFound("Agent Session 不存在")
+			return auth.NotFoundCrossMerchant()
 		}
 		item, err := loadSession(ctx, pgxTx, sessionID)
 		if err != nil {
@@ -173,10 +177,11 @@ func (s Service) ArchiveSession(ctx context.Context, sessionID string) (SessionR
 //
 // ListSessions / CreateSession 路径调用。不创建 Task 或 Turn。已有 global conversation 的 Session 跳过。
 func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
+	merchantID := auth.ResolveMerchantID(ctx)
 	var ids []string
-	err := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).
+	err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}).
 		Where("product_id IS NULL AND status <> ?", "archived").
-		Where("NOT EXISTS (SELECT 1 FROM agent_conversations c WHERE c.session_id = agent_sessions.id AND c.scope_type = ?)", "global").
+		Where("NOT EXISTS (SELECT 1 FROM agent_conversations c WHERE c.session_id = agent_sessions.id AND c.scope_type = ?)", "global"), "merchant_id").
 		Pluck("id", &ids).Error
 	if err != nil {
 		return err
@@ -187,6 +192,7 @@ func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
 		sid := sessionID
 		conv := schema.AgentConversations{
 			ID:           convID,
+			MerchantID:   merchantID,
 			ScopeType:    "global",
 			SessionID:    &sid,
 			HarnessRunID: convID,
@@ -205,7 +211,7 @@ func ensureGlobalConversations(ctx context.Context, pgxTx *gorm.DB) error {
 //
 // cursor 无效返回 Validation。不写表，不改 Goal。
 func listSessions(ctx context.Context, pgxTx *gorm.DB, includeArchived bool, productID *string, cursor *sessionCursor, limit int) ([]SessionResponse, *string, error) {
-	q := pgxTx.WithContext(ctx).Model(&schema.AgentSessions{})
+	q := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Model(&schema.AgentSessions{}), "merchant_id")
 	if productID == nil {
 		q = q.Where("product_id IS NULL")
 	} else {
@@ -273,7 +279,7 @@ func loadSessions(ctx context.Context, pgxTx *gorm.DB, ids []string) ([]SessionR
 		return []SessionResponse{}, nil
 	}
 	var rows []schema.AgentSessions
-	if err := pgxTx.WithContext(ctx).Where("id IN ?", ids).Find(&rows).Error; err != nil {
+	if err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Where("id IN ?", ids), "merchant_id").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	sessionByID := make(map[string]schema.AgentSessions, len(rows))
@@ -282,7 +288,7 @@ func loadSessions(ctx context.Context, pgxTx *gorm.DB, ids []string) ([]SessionR
 	}
 	for _, id := range ids {
 		if _, ok := sessionByID[id]; !ok {
-			return nil, apperr.NotFound("Agent Session 不存在")
+			return nil, auth.NotFoundCrossMerchant()
 		}
 	}
 

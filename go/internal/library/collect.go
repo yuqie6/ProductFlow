@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -76,8 +77,8 @@ func (s Service) collectTx(ctx context.Context, pgxTx *gorm.DB, productID string
 
 	if key != "" {
 		var rec schema.MediaLibraryCollectionKeys
-		scanErr := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
-			Where("product_id = ? AND idempotency_key = ?", productID, key).
+		scanErr := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+			Where("product_id = ? AND idempotency_key = ?", productID, key), "merchant_id").
 			Take(&rec).Error
 		if scanErr == nil {
 			if rec.RequestHash != requestHash {
@@ -159,8 +160,10 @@ func (s Service) collectTx(ctx context.Context, pgxTx *gorm.DB, productID string
 		}
 	}
 	if key != "" {
-		err := pgxTx.WithContext(ctx).Create(&schema.MediaLibraryCollectionKeys{
+	merchantID := auth.ResolveMerchantID(ctx)
+		err = pgxTx.WithContext(ctx).Create(&schema.MediaLibraryCollectionKeys{
 			ID:             clockid.New(),
+			MerchantID:     merchantID,
 			ProductID:      productID,
 			IdempotencyKey: key,
 			RequestHash:    requestHash,
@@ -168,8 +171,8 @@ func (s Service) collectTx(ctx context.Context, pgxTx *gorm.DB, productID string
 		}).Error
 		if product.UniqueViolation(err) || uniqueViolation(err) {
 			var rec schema.MediaLibraryCollectionKeys
-			if scanErr := pgxTx.WithContext(ctx).Select("request_hash").
-				Where("product_id = ? AND idempotency_key = ?", productID, key).
+			if scanErr := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Select("request_hash").
+				Where("product_id = ? AND idempotency_key = ?", productID, key), "merchant_id").
 				Take(&rec).Error; scanErr != nil {
 				return nil, err
 			}

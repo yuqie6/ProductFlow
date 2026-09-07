@@ -93,6 +93,7 @@ func main() {
 	}
 	httpx.AuthenticatedFunc = auth.Authenticated
 	engine.Use(authHTTP.LoadPrincipal())
+	engine.Use(authHTTP.AttachWorkingMerchant())
 	registerAPI(engine, apiHandlers{
 		Auth:     authHTTP,
 		Settings: settings.HTTP{Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken},

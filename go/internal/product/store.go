@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -127,10 +128,12 @@ func conversationFromSchema(rec schema.AgentConversations) Conversation {
 
 // insertProduct 写入商品行；封面与 fact 由调用方随后设置。
 func insertProduct(ctx context.Context, tx *gorm.DB, name string, category, price, sourceNote *string) (Product, error) {
+	merchantID := auth.ResolveMerchantID(ctx)
 	id := clockid.New()
 	now := time.Now().UTC()
 	rec := schema.Products{
 		ID:         id,
+		MerchantID: merchantID,
 		Name:       name,
 		Category:   category,
 		Price:      price,
@@ -261,14 +264,14 @@ func loadProductForUpdate(ctx context.Context, tx *gorm.DB, id string) (Product,
 }
 
 func scanProduct(ctx context.Context, tx *gorm.DB, id string, forUpdate bool) (Product, error) {
-	q := tx.WithContext(ctx).Where("id = ?", id)
+	q := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Where("id = ?", id), "merchant_id")
 	if forUpdate {
 		q = q.Clauses(pfdb.ForUpdate())
 	}
 	var rec schema.Products
 	err := q.Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return Product{}, apperr.NotFound("商品不存在")
+		return Product{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return Product{}, err
@@ -344,7 +347,7 @@ func listProducts(ctx context.Context, tx *gorm.DB, page, pageSize int, q, sort 
 		order = "LOWER(p.name) ASC, p.name ASC, p.id ASC"
 	}
 	base := func() *gorm.DB {
-		db := tx.WithContext(ctx).Table("products AS p")
+		db := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Table("products AS p"), "p.merchant_id")
 		if strings.TrimSpace(q) != "" {
 			db = db.Where("p.name ILIKE ?", "%"+escapeLike(strings.TrimSpace(q))+"%")
 		}

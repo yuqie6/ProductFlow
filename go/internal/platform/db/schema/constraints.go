@@ -144,7 +144,11 @@ END $enum$;`,
 // ExtraDDL 补上 CreateTable/AddColumn 不管的 CHECK/UNIQUE/FK 与索引。改约束只改这里，不要在模型 tag 里再写一份。
 var ExtraDDL = []string{
 	`DO $c$ BEGIN
-ALTER TABLE products ADD CONSTRAINT uq_products_creation_idempotency_key UNIQUE (creation_idempotency_key);
+ALTER TABLE products DROP CONSTRAINT IF EXISTS uq_products_creation_idempotency_key;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE products ADD CONSTRAINT uq_products_creation_idempotency_key UNIQUE (merchant_id, creation_idempotency_key);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -949,7 +953,11 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE media_library_assets ADD CONSTRAINT uq_media_library_assets_source UNIQUE (source_type, source_id);
+ALTER TABLE media_library_assets DROP CONSTRAINT IF EXISTS uq_media_library_assets_source;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_assets ADD CONSTRAINT uq_media_library_assets_source UNIQUE (merchant_id, source_type, source_id);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -964,17 +972,29 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE media_library_collection_keys ADD CONSTRAINT uq_media_library_collection_keys_product_key UNIQUE (product_id, idempotency_key);
+ALTER TABLE media_library_collection_keys DROP CONSTRAINT IF EXISTS uq_media_library_collection_keys_product_key;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_collection_keys ADD CONSTRAINT uq_media_library_collection_keys_product_key UNIQUE (merchant_id, product_id, idempotency_key);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE media_library_folders ADD CONSTRAINT uq_media_library_folders_normalized_name UNIQUE (normalized_name);
+ALTER TABLE media_library_folders DROP CONSTRAINT IF EXISTS uq_media_library_folders_normalized_name;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_folders ADD CONSTRAINT uq_media_library_folders_normalized_name UNIQUE (merchant_id, normalized_name);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE media_library_tags ADD CONSTRAINT uq_media_library_tags_normalized_name UNIQUE (normalized_name);
+ALTER TABLE media_library_tags DROP CONSTRAINT IF EXISTS uq_media_library_tags_normalized_name;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_tags ADD CONSTRAINT uq_media_library_tags_normalized_name UNIQUE (merchant_id, normalized_name);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -984,7 +1004,11 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE media_library_upload_keys ADD CONSTRAINT uq_media_library_upload_keys_key UNIQUE (idempotency_key);
+ALTER TABLE media_library_upload_keys DROP CONSTRAINT IF EXISTS uq_media_library_upload_keys_key;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_upload_keys ADD CONSTRAINT uq_media_library_upload_keys_key UNIQUE (merchant_id, idempotency_key);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -1582,7 +1606,11 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE workflow_recipes ADD CONSTRAINT uq_workflow_recipes_official_key UNIQUE (official_key);
+ALTER TABLE workflow_recipes DROP CONSTRAINT IF EXISTS uq_workflow_recipes_official_key;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipes ADD CONSTRAINT uq_workflow_recipes_official_key UNIQUE (merchant_id, official_key);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -1912,4 +1940,184 @@ END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_memberships_merchant_role_status ON public.memberships USING btree (merchant_id, role, status);`,
 	`CREATE INDEX IF NOT EXISTS ix_merchant_invites_merchant_email ON public.merchant_invites USING btree (merchant_id, lower(email));`,
 	`CREATE INDEX IF NOT EXISTS ix_auth_sessions_user_id ON public.auth_sessions USING btree (user_id);`,
+
+	// B1 root ownership: backfill sole merchant, NOT NULL, FK, indexes
+	`UPDATE products SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE image_sessions SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE media_library_folders SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE media_library_tags SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE media_library_assets SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE media_library_upload_keys SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE media_library_collection_keys SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE workflow_recipes SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE visual_systems SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE agent_sessions SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE agent_tasks SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`UPDATE agent_conversations SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM products WHERE merchant_id IS NULL) THEN
+  ALTER TABLE products ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM image_sessions WHERE merchant_id IS NULL) THEN
+  ALTER TABLE image_sessions ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM media_library_folders WHERE merchant_id IS NULL) THEN
+  ALTER TABLE media_library_folders ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM media_library_tags WHERE merchant_id IS NULL) THEN
+  ALTER TABLE media_library_tags ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM media_library_assets WHERE merchant_id IS NULL) THEN
+  ALTER TABLE media_library_assets ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM media_library_upload_keys WHERE merchant_id IS NULL) THEN
+  ALTER TABLE media_library_upload_keys ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM media_library_collection_keys WHERE merchant_id IS NULL) THEN
+  ALTER TABLE media_library_collection_keys ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM workflow_recipes WHERE merchant_id IS NULL) THEN
+  ALTER TABLE workflow_recipes ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM visual_systems WHERE merchant_id IS NULL) THEN
+  ALTER TABLE visual_systems ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM agent_sessions WHERE merchant_id IS NULL) THEN
+  ALTER TABLE agent_sessions ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM agent_tasks WHERE merchant_id IS NULL) THEN
+  ALTER TABLE agent_tasks ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+IF NOT EXISTS (SELECT 1 FROM agent_conversations WHERE merchant_id IS NULL) THEN
+  ALTER TABLE agent_conversations ALTER COLUMN merchant_id SET NOT NULL;
+END IF;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE products ADD CONSTRAINT fk_products_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE image_sessions ADD CONSTRAINT fk_image_sessions_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_folders ADD CONSTRAINT fk_media_library_folders_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_tags ADD CONSTRAINT fk_media_library_tags_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_assets ADD CONSTRAINT fk_media_library_assets_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_upload_keys ADD CONSTRAINT fk_media_library_upload_keys_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE media_library_collection_keys ADD CONSTRAINT fk_media_library_collection_keys_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE workflow_recipes ADD CONSTRAINT fk_workflow_recipes_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE visual_systems ADD CONSTRAINT fk_visual_systems_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_sessions ADD CONSTRAINT fk_agent_sessions_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_tasks ADD CONSTRAINT fk_agent_tasks_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE agent_conversations ADD CONSTRAINT fk_agent_conversations_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_products_merchant_updated ON public.products USING btree (merchant_id, updated_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_image_sessions_merchant_updated ON public.image_sessions USING btree (merchant_id, updated_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_media_library_assets_merchant_created ON public.media_library_assets USING btree (merchant_id, created_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_media_library_folders_merchant_name ON public.media_library_folders USING btree (merchant_id, name, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_media_library_tags_merchant_name ON public.media_library_tags USING btree (merchant_id, name, id);`,
+	`CREATE INDEX IF NOT EXISTS ix_workflow_recipes_merchant_updated ON public.workflow_recipes USING btree (merchant_id, updated_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_visual_systems_merchant_archived ON public.visual_systems USING btree (merchant_id, archived_at);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_sessions_merchant_activity ON public.agent_sessions USING btree (merchant_id, activity_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_tasks_merchant_updated ON public.agent_tasks USING btree (merchant_id, updated_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_agent_conversations_merchant_updated ON public.agent_conversations USING btree (merchant_id, updated_at DESC, id DESC);`,
+	`CREATE OR REPLACE FUNCTION productflow_fill_merchant_id() RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+  IF NEW.merchant_id IS NULL OR btrim(NEW.merchant_id) = '' THEN
+    SELECT id INTO NEW.merchant_id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1;
+    IF NEW.merchant_id IS NULL THEN
+      RAISE EXCEPTION 'merchant_id required: no merchant exists';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$fn$;`,
+	`DROP TRIGGER IF EXISTS trg_products_fill_merchant_id ON products;`,
+	`CREATE TRIGGER trg_products_fill_merchant_id BEFORE INSERT ON products FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_image_sessions_fill_merchant_id ON image_sessions;`,
+	`CREATE TRIGGER trg_image_sessions_fill_merchant_id BEFORE INSERT ON image_sessions FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_media_library_folders_fill_merchant_id ON media_library_folders;`,
+	`CREATE TRIGGER trg_media_library_folders_fill_merchant_id BEFORE INSERT ON media_library_folders FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_media_library_tags_fill_merchant_id ON media_library_tags;`,
+	`CREATE TRIGGER trg_media_library_tags_fill_merchant_id BEFORE INSERT ON media_library_tags FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_media_library_assets_fill_merchant_id ON media_library_assets;`,
+	`CREATE TRIGGER trg_media_library_assets_fill_merchant_id BEFORE INSERT ON media_library_assets FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_media_library_upload_keys_fill_merchant_id ON media_library_upload_keys;`,
+	`CREATE TRIGGER trg_media_library_upload_keys_fill_merchant_id BEFORE INSERT ON media_library_upload_keys FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_media_library_collection_keys_fill_merchant_id ON media_library_collection_keys;`,
+	`CREATE TRIGGER trg_media_library_collection_keys_fill_merchant_id BEFORE INSERT ON media_library_collection_keys FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_workflow_recipes_fill_merchant_id ON workflow_recipes;`,
+	`CREATE TRIGGER trg_workflow_recipes_fill_merchant_id BEFORE INSERT ON workflow_recipes FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_visual_systems_fill_merchant_id ON visual_systems;`,
+	`CREATE TRIGGER trg_visual_systems_fill_merchant_id BEFORE INSERT ON visual_systems FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_agent_sessions_fill_merchant_id ON agent_sessions;`,
+	`CREATE TRIGGER trg_agent_sessions_fill_merchant_id BEFORE INSERT ON agent_sessions FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_agent_tasks_fill_merchant_id ON agent_tasks;`,
+	`CREATE TRIGGER trg_agent_tasks_fill_merchant_id BEFORE INSERT ON agent_tasks FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP TRIGGER IF EXISTS trg_agent_conversations_fill_merchant_id ON agent_conversations;`,
+	`CREATE TRIGGER trg_agent_conversations_fill_merchant_id BEFORE INSERT ON agent_conversations FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 }
+

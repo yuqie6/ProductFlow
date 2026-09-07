@@ -13,6 +13,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -132,12 +133,12 @@ func assetFromScan(row libraryAssetScan) Asset {
 }
 
 func (s Service) loadAsset(ctx context.Context, q *gorm.DB, id string) (Asset, error) {
-	items, err := loadAssets(ctx, q, libraryAssetQuery(q.WithContext(ctx)).Where("a.id = ?", id))
+	items, err := loadAssets(ctx, q, auth.ScopeMerchant(ctx, libraryAssetQuery(q.WithContext(ctx)).Where("a.id = ?", id), "a.merchant_id"))
 	if err != nil {
 		return Asset{}, err
 	}
 	if len(items) == 0 {
-		return Asset{}, apperr.NotFound("素材库资产不存在")
+		return Asset{}, auth.NotFoundCrossMerchant()
 	}
 	return items[0], nil
 }
@@ -196,6 +197,7 @@ func loadTags(ctx context.Context, tx *gorm.DB, assetIDs []string) (map[string][
 
 // insertLibraryAsset 写入 media_library_assets，revision 从 1 起。不复制 MediaObject 字节。
 func insertLibraryAsset(ctx context.Context, tx *gorm.DB, in Asset, p Provenance) (string, error) {
+	merchantID := auth.ResolveMerchantID(ctx)
 	id := clockid.New()
 	hash, err := provenanceHash(p)
 	if err != nil {
@@ -208,6 +210,7 @@ func insertLibraryAsset(ctx context.Context, tx *gorm.DB, in Asset, p Provenance
 	now := time.Now().UTC()
 	rec := schema.MediaLibraryAssets{
 		ID:                        id,
+		MerchantID:                merchantID,
 		MediaObjectID:             in.MediaObjectID,
 		SourceType:                in.SourceType,
 		SourceID:                  in.SourceID,
@@ -231,7 +234,7 @@ func insertLibraryAsset(ctx context.Context, tx *gorm.DB, in Asset, p Provenance
 
 func findBySource(ctx context.Context, tx *gorm.DB, sourceType, sourceID string) (string, bool, error) {
 	var rec schema.MediaLibraryAssets
-	err := tx.WithContext(ctx).Select("id").Where("source_type = ? AND source_id = ?", sourceType, sourceID).Take(&rec).Error
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Select("id").Where("source_type = ? AND source_id = ?", sourceType, sourceID), "merchant_id").Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", false, nil
 	}
@@ -243,9 +246,9 @@ func findBySource(ctx context.Context, tx *gorm.DB, sourceType, sourceID string)
 
 func lockFolder(ctx context.Context, tx *gorm.DB, folderID string) (Folder, error) {
 	var rec schema.MediaLibraryFolders
-	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id, name").Where("id = ?", folderID).Take(&rec).Error
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id, name").Where("id = ?", folderID), "merchant_id").Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return Folder{}, apperr.NotFound("素材库文件夹不存在")
+		return Folder{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return Folder{}, err
@@ -255,9 +258,9 @@ func lockFolder(ctx context.Context, tx *gorm.DB, folderID string) (Folder, erro
 
 func lockTag(ctx context.Context, tx *gorm.DB, tagID string) (Tag, error) {
 	var rec schema.MediaLibraryTags
-	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id, name").Where("id = ?", tagID).Take(&rec).Error
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id, name").Where("id = ?", tagID), "merchant_id").Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return Tag{}, apperr.NotFound("素材库标签不存在")
+		return Tag{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return Tag{}, err
@@ -267,9 +270,9 @@ func lockTag(ctx context.Context, tx *gorm.DB, tagID string) (Tag, error) {
 
 func getFolder(ctx context.Context, tx *gorm.DB, folderID string) (Folder, error) {
 	var rec schema.MediaLibraryFolders
-	err := tx.WithContext(ctx).Select("id, name").Where("id = ?", folderID).Take(&rec).Error
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Select("id, name").Where("id = ?", folderID), "merchant_id").Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return Folder{}, apperr.NotFound("文件夹不存在")
+		return Folder{}, auth.NotFoundCrossMerchant()
 	}
 	if err != nil {
 		return Folder{}, err
@@ -282,18 +285,18 @@ func lockLibraryAssets(ctx context.Context, tx *gorm.DB, ids []string) ([]Asset,
 		return []Asset{}, nil
 	}
 	var locked []schema.MediaLibraryAssets
-	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).
 		Select("id").
-		Where("id IN ?", ids).
+		Where("id IN ?", ids), "merchant_id").
 		Order("id").
 		Find(&locked).Error
 	if err != nil {
 		return nil, err
 	}
 	if len(locked) != len(ids) {
-		return nil, apperr.NotFound("素材库资产不存在")
+		return nil, auth.NotFoundCrossMerchant()
 	}
-	return loadAssets(ctx, tx, libraryAssetQuery(tx).Where("a.id IN ?", ids))
+	return loadAssets(ctx, tx, auth.ScopeMerchant(ctx, libraryAssetQuery(tx).Where("a.id IN ?", ids), "a.merchant_id"))
 }
 
 // reloadInOrder 按传入 ids 顺序重载。任一 id 不在结果集返回 404。

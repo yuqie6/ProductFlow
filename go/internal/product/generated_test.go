@@ -9,9 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
+	"github.com/yuqie6/productflow/internal/platform/clockid"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -22,7 +26,12 @@ func TestWriteKeepsFilesOnlyAfterCommit(t *testing.T) {
 	_, gdb := testdb.Open(t)
 	root := t.TempDir()
 	svc := Service{DB: gdb, Media: media.Store{Files: storage.Local{Root: root}}}
-	ctx := context.Background()
+	merchantID := clockid.New()
+	now := time.Now().UTC()
+	if err := gdb.Create(&schema.Merchants{ID: merchantID, Name: "生成图商家", Status: "active", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatal(err)
+	}
+	ctx := auth.WithMerchantID(context.Background(), merchantID)
 	pngBytes := tinyPNG(t)
 
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {

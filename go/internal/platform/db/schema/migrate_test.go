@@ -78,7 +78,11 @@ func TestApplyTwiceDoesNotDeleteRows(t *testing.T) {
 	if _, err := empty.Exec(ctx, `
 		ALTER TABLE products DROP COLUMN creation_idempotency_key CASCADE;
 		ALTER TABLE products DROP COLUMN creation_request_hash CASCADE;
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ('recipe-migration-probe', 'existing product', NOW(), NOW());
+		INSERT INTO merchants (id, name, status, created_at, updated_at)
+		VALUES ('migrate-merchant', 'probe', 'active', NOW(), NOW())
+		ON CONFLICT (id) DO NOTHING;
+		INSERT INTO products (id, name, merchant_id, created_at, updated_at)
+		VALUES ('recipe-migration-probe', 'existing product', 'migrate-merchant', NOW(), NOW());
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +96,7 @@ func TestApplyTwiceDoesNotDeleteRows(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("probe row count %d", n)
 	}
-	if err := empty.QueryRow(ctx, `SELECT count(*) FROM products WHERE id='recipe-migration-probe' AND creation_idempotency_key IS NULL AND creation_request_hash IS NULL`).Scan(&n); err != nil || n != 1 {
+	if err := empty.QueryRow(ctx, `SELECT count(*) FROM products WHERE id='recipe-migration-probe' AND creation_idempotency_key IS NULL AND creation_request_hash IS NULL AND merchant_id='migrate-merchant'`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("existing product: %d %v", n, err)
 	}
 	if _, err := empty.Exec(ctx, `UPDATE products SET creation_idempotency_key='key' WHERE id='recipe-migration-probe'`); err == nil {
@@ -101,7 +105,7 @@ func TestApplyTwiceDoesNotDeleteRows(t *testing.T) {
 	if _, err := empty.Exec(ctx, `UPDATE products SET creation_idempotency_key='key', creation_request_hash=repeat('a',64) WHERE id='recipe-migration-probe'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := empty.Exec(ctx, `INSERT INTO products (id,name,created_at,updated_at,creation_idempotency_key,creation_request_hash) VALUES ('duplicate-recipe-key','duplicate',NOW(),NOW(),'key',repeat('a',64))`); err == nil {
+	if _, err := empty.Exec(ctx, `INSERT INTO products (id,name,merchant_id,created_at,updated_at,creation_idempotency_key,creation_request_hash) VALUES ('duplicate-recipe-key','duplicate','migrate-merchant',NOW(),NOW(),'key',repeat('a',64))`); err == nil {
 		t.Fatal("duplicate creation key accepted")
 	}
 }

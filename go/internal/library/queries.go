@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -33,17 +34,18 @@ func (s Service) Bootstrap(ctx context.Context) (Bootstrap, error) {
 	var out Bootstrap
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var total, active, unorganized int64
-		if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).Count(&total).Error; err != nil {
+		assets := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}), "merchant_id")
+		if err := assets.Count(&total).Error; err != nil {
 			return err
 		}
-		if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).Where("is_archived = ?", false).Count(&active).Error; err != nil {
+		if err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).Where("is_archived = ?", false), "merchant_id").Count(&active).Error; err != nil {
 			return err
 		}
 		out.TotalCount = int(total)
 		out.ActiveCount = int(active)
 		out.ArchivedCount = out.TotalCount - out.ActiveCount
-		if err := pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).
-			Where("is_archived = ? AND folder_id IS NULL", false).Count(&unorganized).Error; err != nil {
+		if err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Model(&schema.MediaLibraryAssets{}).
+			Where("is_archived = ? AND folder_id IS NULL", false), "merchant_id").Count(&unorganized).Error; err != nil {
 			return err
 		}
 		out.UnorganizedCount = int(unorganized)
@@ -52,10 +54,10 @@ func (s Service) Bootstrap(ctx context.Context) (Bootstrap, error) {
 			Name  string `gorm:"column:name"`
 			Count int64  `gorm:"column:count"`
 		}
-		if err := pgxTx.WithContext(ctx).Table("media_library_folders AS f").
+		if err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Table("media_library_folders AS f").
 			Select("f.id, f.name, COUNT(a.id) AS count").
-			Joins("LEFT JOIN media_library_assets a ON a.folder_id = f.id AND a.is_archived = FALSE").
-			Group("f.id").
+			Joins("LEFT JOIN media_library_assets a ON a.folder_id = f.id AND a.is_archived = FALSE AND a.merchant_id = f.merchant_id").
+			Group("f.id"), "f.merchant_id").
 			Order("f.name, f.id").
 			Scan(&folders).Error; err != nil {
 			return err
@@ -69,11 +71,11 @@ func (s Service) Bootstrap(ctx context.Context) (Bootstrap, error) {
 			Name  string `gorm:"column:name"`
 			Count int64  `gorm:"column:count"`
 		}
-		if err := pgxTx.WithContext(ctx).Table("media_library_tags AS t").
+		if err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Table("media_library_tags AS t").
 			Select("t.id, t.name, COUNT(a.id) AS count").
 			Joins("LEFT JOIN media_library_asset_tags at ON at.tag_id = t.id").
-			Joins("LEFT JOIN media_library_assets a ON a.id = at.asset_id AND a.is_archived = FALSE").
-			Group("t.id").
+			Joins("LEFT JOIN media_library_assets a ON a.id = at.asset_id AND a.is_archived = FALSE AND a.merchant_id = t.merchant_id").
+			Group("t.id"), "t.merchant_id").
 			Order("t.name, t.id").
 			Scan(&tags).Error; err != nil {
 			return err
@@ -119,7 +121,7 @@ func (s Service) List(ctx context.Context, in ListFilter) (ListResponse, error) 
 	}
 	var page ListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		q := libraryAssetQuery(pgxTx.WithContext(ctx))
+		q := auth.ScopeMerchant(ctx, libraryAssetQuery(pgxTx.WithContext(ctx)), "a.merchant_id")
 		if !in.IncludeArchived {
 			q = q.Where("a.is_archived = ?", false)
 		}

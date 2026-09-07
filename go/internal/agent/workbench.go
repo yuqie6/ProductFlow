@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -110,13 +111,15 @@ func (s Service) EnsureWorkbench(ctx context.Context, productID, idempotencyKey 
 }
 
 func createProductBoundSession(ctx context.Context, pgxTx *gorm.DB, productID string) (string, error) {
+	merchantID := auth.ResolveMerchantID(ctx)
 	var product schema.Products
-	_ = pgxTx.WithContext(ctx).Select("name").Where("id = ?", productID).Take(&product).Error
+	_ = auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Select("name").Where("id = ?", productID), "merchant_id").Take(&product).Error
 	id := newID()
 	now := time.Now().UTC()
 	pid := productID
 	rec := schema.AgentSessions{
 		ID:         id,
+		MerchantID: merchantID,
 		ProductID:  &pid,
 		Title:      product.Name,
 		Summary:    ptr("暂无 Agent Task"),

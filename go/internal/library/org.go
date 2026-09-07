@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -27,8 +28,9 @@ func (s Service) CreateFolder(ctx context.Context, name string) (FolderMutation,
 	}
 	var out FolderMutation
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		merchantID := auth.ResolveMerchantID(ctx)
 		var existing schema.MediaLibraryFolders
-		scanErr := pgxTx.WithContext(ctx).Select("id, name").Where("normalized_name = ?", key).Take(&existing).Error
+		scanErr := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Select("id, name").Where("normalized_name = ?", key), "merchant_id").Take(&existing).Error
 		if scanErr == nil {
 			out = FolderMutation{ID: existing.ID, Name: existing.Name, Created: false}
 			return nil
@@ -38,15 +40,16 @@ func (s Service) CreateFolder(ctx context.Context, name string) (FolderMutation,
 		}
 		id := clockid.New()
 		now := time.Now().UTC()
-		err := pgxTx.WithContext(ctx).Create(&schema.MediaLibraryFolders{
+		err = pgxTx.WithContext(ctx).Create(&schema.MediaLibraryFolders{
 			ID:             id,
+			MerchantID:     merchantID,
 			Name:           display,
 			NormalizedName: key,
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		}).Error
 		if uniqueViolation(err) {
-			scanErr = pgxTx.WithContext(ctx).Select("id, name").Where("normalized_name = ?", key).Take(&existing).Error
+			scanErr = auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Select("id, name").Where("normalized_name = ?", key), "merchant_id").Take(&existing).Error
 			if scanErr != nil {
 				return scanErr
 			}
@@ -142,8 +145,9 @@ func (s Service) CreateTag(ctx context.Context, name string) (TagMutation, error
 	}
 	var out TagMutation
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		merchantID := auth.ResolveMerchantID(ctx)
 		var existing schema.MediaLibraryTags
-		scanErr := pgxTx.WithContext(ctx).Select("id, name").Where("normalized_name = ?", key).Take(&existing).Error
+		scanErr := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Select("id, name").Where("normalized_name = ?", key), "merchant_id").Take(&existing).Error
 		if scanErr == nil {
 			out = TagMutation{ID: existing.ID, Name: existing.Name, Created: false}
 			return nil
@@ -153,15 +157,16 @@ func (s Service) CreateTag(ctx context.Context, name string) (TagMutation, error
 		}
 		id := clockid.New()
 		now := time.Now().UTC()
-		err := pgxTx.WithContext(ctx).Create(&schema.MediaLibraryTags{
+		err = pgxTx.WithContext(ctx).Create(&schema.MediaLibraryTags{
 			ID:             id,
+			MerchantID:     merchantID,
 			Name:           display,
 			NormalizedName: key,
 			CreatedAt:      now,
 			UpdatedAt:      now,
 		}).Error
 		if uniqueViolation(err) {
-			if err := pgxTx.WithContext(ctx).Select("id, name").Where("normalized_name = ?", key).Take(&existing).Error; err != nil {
+			if err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Select("id, name").Where("normalized_name = ?", key), "merchant_id").Take(&existing).Error; err != nil {
 				return err
 			}
 			out = TagMutation{ID: existing.ID, Name: existing.Name, Created: false}
@@ -356,10 +361,11 @@ func (s Service) SetTags(ctx context.Context, assetIDs, tagNames []string, expec
 	}
 	var out []Asset
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		merchantID := auth.ResolveMerchantID(ctx)
 		tagIDs := map[string]string{}
 		if len(keys) > 0 {
 			var tags []schema.MediaLibraryTags
-			if err := pgxTx.WithContext(ctx).Select("id, normalized_name").Where("normalized_name IN ?", keys).Find(&tags).Error; err != nil {
+			if err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Select("id, normalized_name").Where("normalized_name IN ?", keys), "merchant_id").Find(&tags).Error; err != nil {
 				return err
 			}
 			for _, tag := range tags {
@@ -373,6 +379,7 @@ func (s Service) SetTags(ctx context.Context, assetIDs, tagNames []string, expec
 				id := clockid.New()
 				err := pgxTx.WithContext(ctx).Create(&schema.MediaLibraryTags{
 					ID:             id,
+					MerchantID:     merchantID,
 					Name:           displays[key],
 					NormalizedName: key,
 					CreatedAt:      now,
@@ -380,7 +387,7 @@ func (s Service) SetTags(ctx context.Context, assetIDs, tagNames []string, expec
 				}).Error
 				if uniqueViolation(err) {
 					var existing schema.MediaLibraryTags
-					if err := pgxTx.WithContext(ctx).Select("id").Where("normalized_name = ?", key).Take(&existing).Error; err != nil {
+					if err := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Select("id").Where("normalized_name = ?", key), "merchant_id").Take(&existing).Error; err != nil {
 						return err
 					}
 					tagIDs[key] = existing.ID

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
@@ -13,8 +14,8 @@ import (
 // LoadSource 实现 graph.ProductGuard：找不到商品时返回 nil, nil。
 func (GraphGuard) LoadSource(ctx context.Context, tx *gorm.DB, productID string) (*graph.SourceProduct, error) {
 	var rec schema.Products
-	err := tx.WithContext(ctx).Select("id, name, category, price, source_note, current_fact_set_version_id").
-		Where("id = ?", productID).Take(&rec).Error
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Select("id, name, category, price, source_note, current_fact_set_version_id").
+		Where("id = ?", productID), "merchant_id").Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -31,9 +32,9 @@ func (GraphGuard) LoadSources(ctx context.Context, tx *gorm.DB, productIDs []str
 		return out, nil
 	}
 	var recs []schema.Products
-	err := tx.WithContext(ctx).
+	err := auth.ScopeMerchant(ctx, tx.WithContext(ctx).
 		Select("id, name, category, price, source_note, current_fact_set_version_id").
-		Where("id IN ?", productIDs).
+		Where("id IN ?", productIDs), "merchant_id").
 		Find(&recs).Error
 	if err != nil {
 		return nil, err

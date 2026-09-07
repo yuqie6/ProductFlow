@@ -21,7 +21,7 @@ import (
 func recipeCreationFixture(t *testing.T) (*productServer, recipe.Service, RecipeCreateInput) {
 	t.Helper()
 	ps := newProductServer(t)
-	ctx := context.Background()
+	ctx := ps.merchantCtx(t)
 	created, err := ps.svc.CreateDirect(ctx, CreateInput{Name: "recipe source", Uploads: []Upload{{Filename: "source.png", MIMEType: "image/png", Content: pngFile(t, 8, 6)}}}, []graph.DirectCreateImageType{{Key: "hero", Quantity: 1}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func storedFiles(t *testing.T, ps *productServer) []string {
 
 func TestRecipeCreationPreviewAndAtomicConfirmation(t *testing.T) {
 	ps, recipes, in := recipeCreationFixture(t)
-	ctx := context.Background()
+	ctx := ps.merchantCtx(t)
 	count := productCount(t, ps)
 	files := storedFiles(t, ps)
 	for i := 0; i < 2; i++ {
@@ -139,7 +139,7 @@ func TestRecipeCreationConcurrentConfirmation(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := range results {
 		wg.Add(1)
-		go func() { defer wg.Done(); results[i], errs[i] = ps.svc.CreateFromRecipe(context.Background(), in) }()
+		go func() { defer wg.Done(); results[i], errs[i] = ps.svc.CreateFromRecipe(ps.merchantCtx(t), in) }()
 	}
 	wg.Wait()
 	for _, err := range errs {
@@ -196,7 +196,7 @@ func TestRecipeCreationHTTPContract(t *testing.T) {
 
 func TestRecipeCreationCommitFailureRollsBackFiles(t *testing.T) {
 	ps, _, in := recipeCreationFixture(t)
-	ctx := context.Background()
+	ctx := ps.merchantCtx(t)
 	count, files := productCount(t, ps), storedFiles(t, ps)
 	_, err := ps.pool.Exec(ctx, `
 CREATE FUNCTION fail_recipe_creation_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'commit failure probe'; END $$;

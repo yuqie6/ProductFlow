@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -313,7 +314,7 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 			}
 			requestHash = hashed
 			var rec schema.MediaLibraryUploadKeys
-			scanErr := pgxTx.WithContext(ctx).Where("idempotency_key = ?", key).Take(&rec).Error
+			scanErr := auth.ScopeMerchant(ctx, pgxTx.WithContext(ctx).Where("idempotency_key = ?", key), "merchant_id").Take(&rec).Error
 			if scanErr == nil {
 				if rec.RequestHash != requestHash {
 					return apperr.Conflict("相同 idempotency key 不能用于不同的上传参数")
@@ -360,9 +361,11 @@ func (s Service) Upload(ctx context.Context, items []UploadItem, folderID *strin
 			createdIDs = append(createdIDs, id)
 		}
 		if key != "" {
+			merchantID := auth.ResolveMerchantID(ctx)
 			raw, _ := json.Marshal(createdIDs)
 			if err := pgxTx.WithContext(ctx).Create(&schema.MediaLibraryUploadKeys{
 				ID:             clockid.New(),
+				MerchantID:     merchantID,
 				IdempotencyKey: key,
 				RequestHash:    requestHash,
 				AssetIdsJSON:   string(raw),

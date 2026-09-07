@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/config"
@@ -41,7 +42,8 @@ func TestBackupRestoreThenExecuteGraph(t *testing.T) {
 	dstURL := isolatedEmptyDB(t, head, raw, dstName)
 
 	root := t.TempDir()
-	ctx := context.Background()
+	merchantID := auth.MustDevMerchantID(t, srcDB)
+	ctx := auth.WithMerchantID(context.Background(), merchantID)
 	created, err := (product.Service{
 		DB:    srcDB,
 		Media: media.Store{Files: storage.Local{Root: root}},
