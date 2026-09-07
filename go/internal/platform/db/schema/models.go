@@ -370,6 +370,16 @@ type DeliveryAdoptionSlots struct {
 
 func (DeliveryAdoptionSlots) TableName() string { return "delivery_adoption_slots" }
 
+// ProductVisualSelections 对应表 product_visual_selections。
+// 商品显式选定的视觉方案版本；追加新版本不静默改此指针。
+type ProductVisualSelections struct {
+	ProductID             string    `gorm:"column:product_id;type:varchar(36);primaryKey"`
+	VisualSystemVersionID string    `gorm:"column:visual_system_version_id;type:varchar(36);not null"`
+	SelectedAt            time.Time `gorm:"column:selected_at;type:timestamptz;not null"`
+}
+
+func (ProductVisualSelections) TableName() string { return "product_visual_selections" }
+
 // ImageSessionAssets 对应表 image_session_assets。
 // 连续生图会话里的参考图或生成图，指向 MediaObject。
 type ImageSessionAssets struct {
@@ -1176,6 +1186,7 @@ func AllModels() []any {
 		&ProductAssetFolders{},
 		&ProductFactSetVersions{},
 		&ProductImageAssets{},
+		&ProductVisualSelections{},
 		&Products{},
 		&ProviderBindings{},
 		&ProviderProfiles{},

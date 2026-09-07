@@ -262,6 +262,38 @@ export function RecipeApplyPreviewBody({ preview }: { preview: WorkflowRecipePre
         ) : null}
       </PreviewSection>
 
+      {preview.reuse_preview ? (
+        <>
+          <PreviewSection title={t("workbench.recipe.inheritedSection")} empty={!preview.reuse_preview.inherited.length}>
+            {preview.reuse_preview.inherited.length ? (
+              <ul data-recipe-preview-inherited className="space-y-1 text-xs text-text-primary">
+                {preview.reuse_preview.inherited.map((item) => (
+                  <li key={item.key}>
+                    <span>{item.label}</span>
+                    <span className="ml-1 text-[10px] text-text-secondary">{item.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </PreviewSection>
+          <PreviewSection title={t("workbench.recipe.pendingSection")} empty={!preview.reuse_preview.pending.length}>
+            {preview.reuse_preview.pending.length ? (
+              <ul data-recipe-preview-pending className="space-y-1 text-xs text-text-primary">
+                {preview.reuse_preview.pending.map((item) => (
+                  <li key={item.key} data-reuse-source={item.source}>
+                    <span>{item.label}</span>
+                    <span className="ml-1 text-[10px] text-text-secondary">{item.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </PreviewSection>
+          <p className="text-[10px] text-text-muted" data-recipe-preview-priority>
+            {t("workbench.recipe.inheritancePriority")}
+          </p>
+        </>
+      ) : null}
+
       <div className="text-[10px] text-text-secondary">{t("workbench.recipe.previewRevision", { revision: preview.base_graph_revision })}</div>
     </div>
   );

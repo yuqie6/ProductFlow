@@ -10,6 +10,7 @@ import (
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	"github.com/yuqie6/productflow/internal/visualsystem"
 )
 
 // Preview 是 Apply 前算出的内部计划摘要，HTTP 用 PreviewView。
@@ -25,6 +26,31 @@ type Preview struct {
 	Groups            []PreviewGroup       // 将新增的一层视觉分组
 	UpdatedNodes      []PreviewUpdatedNode // create 模式应为空
 	RequiredBindings  []string             // 如 product_identity
+	ReusePreview      *ReusePreviewView    // 第二商品继承/待填；creation-preview 必填
+}
+
+// ReusePreviewView 列出可继承项与待填项（消费 IQ-CF-07；Brand 为显式占位）。
+type ReusePreviewView struct {
+	Inherited                      []ReuseItem `json:"inherited"`
+	Pending                        []ReuseItem `json:"pending"`
+	BrandPlaceholder               BrandPlaceholderView `json:"brand_placeholder"`
+	PreferredVisualSystemVersionID *string     `json:"preferred_visual_system_version_id"`
+	InheritancePriority            []string    `json:"inheritance_priority"`
+}
+
+// ReuseItem 是预览中的一项继承或待填说明。
+type ReuseItem struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Source string `json:"source"`
+	Detail string `json:"detail"`
+}
+
+// BrandPlaceholderView 明确 Brand 表未就绪，不假装多品牌实体。
+type BrandPlaceholderView struct {
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+	Detail string `json:"detail"`
 }
 
 // PreviewNode 是预览中将新增的节点（HTTP 字段），还没有 live id。
@@ -78,6 +104,8 @@ type applyPlan struct {
 	Groups            []PreviewGroup
 	UpdatedNodes      []PreviewUpdatedNode
 	RequiredBindings  []string
+	ReusePreview      *ReusePreviewView
+	PreferredVisual   *string
 }
 
 // preview 把内部 plan 收成 HTTP 预览。nil 切片写成空切片，避免前端对 null 再判一次。
@@ -90,6 +118,18 @@ func (p applyPlan) preview() Preview {
 	if updated == nil {
 		updated = []PreviewUpdatedNode{}
 	}
+	reuse := p.ReusePreview
+	if reuse == nil {
+		hasVisual := false
+		for _, node := range p.Nodes {
+			if node.NodeType == graph.NodeVisualSystem {
+				hasVisual = true
+				break
+			}
+		}
+		built := buildReusePreview(p.PreferredVisual, hasVisual, bindings)
+		reuse = &built
+	}
 	return Preview{
 		Mode:              p.Mode,
 		RecipeID:          p.RecipeID,
@@ -101,6 +141,30 @@ func (p applyPlan) preview() Preview {
 		Groups:            p.Groups,
 		UpdatedNodes:      updated,
 		RequiredBindings:  bindings,
+		ReusePreview:      reuse,
+	}
+}
+
+func buildReusePreview(preferred *string, hasVisual bool, bindings []string) ReusePreviewView {
+	src := visualsystem.BuildReusePreview(preferred, hasVisual, bindings)
+	inherited := make([]ReuseItem, 0, len(src.Inherited))
+	for _, item := range src.Inherited {
+		inherited = append(inherited, ReuseItem{Key: item.Key, Label: item.Label, Source: item.Source, Detail: item.Detail})
+	}
+	pending := make([]ReuseItem, 0, len(src.Pending))
+	for _, item := range src.Pending {
+		pending = append(pending, ReuseItem{Key: item.Key, Label: item.Label, Source: item.Source, Detail: item.Detail})
+	}
+	return ReusePreviewView{
+		Inherited: inherited,
+		Pending:   pending,
+		BrandPlaceholder: BrandPlaceholderView{
+			Status: src.BrandPlaceholder.Status,
+			Reason: src.BrandPlaceholder.Reason,
+			Detail: src.BrandPlaceholder.Detail,
+		},
+		PreferredVisualSystemVersionID: src.PreferredVisualSystemVersionID,
+		InheritancePriority:            src.InheritancePriority,
 	}
 }
 

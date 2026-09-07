@@ -38,6 +38,10 @@ import type {
   DeliveryAdoptionListResponse,
   DeliveryAdoptionVersion,
   DeliveryAdoptionPreview,
+  ProductVisualSelection,
+  VisualInheritanceView,
+  VisualSystemSummary,
+  VisualSystemVersion,
   ImageSessionDetail,
   ImageSessionHistoryPage,
   ImageSessionListResponse,
@@ -1385,6 +1389,48 @@ export const api = {
     return request(`/api/v3/products/${encodeURIComponent(productId)}/delivery-adoptions`, {
       method: "POST",
       body: JSON.stringify(body),
+    });
+  },
+  listVisualSystems(includeArchived = false): Promise<VisualSystemSummary[]> {
+    const query = new URLSearchParams();
+    if (includeArchived) query.set("include_archived", "true");
+    const suffix = query.toString() ? `?${query}` : "";
+    return request(`/api/v3/visual-systems${suffix}`);
+  },
+  createVisualSystem(body: {
+    name: string;
+    payload: Record<string, unknown>;
+  }): Promise<VisualSystemSummary> {
+    return request("/api/v3/visual-systems", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  appendVisualSystemVersion(
+    systemId: string,
+    payload: Record<string, unknown>,
+  ): Promise<VisualSystemVersion> {
+    return request(`/api/v3/visual-systems/${encodeURIComponent(systemId)}/versions`, {
+      method: "POST",
+      body: JSON.stringify({ payload }),
+    });
+  },
+  getVisualInheritance(
+    productId: string,
+    productOverride?: Record<string, unknown>,
+  ): Promise<VisualInheritanceView> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/visual-inheritance`, {
+      method: "POST",
+      body: JSON.stringify({ product_override: productOverride ?? {} }),
+    });
+  },
+  selectProductVisualVersion(
+    productId: string,
+    visualSystemVersionId: string,
+  ): Promise<ProductVisualSelection> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/visual-selection`, {
+      method: "PUT",
+      body: JSON.stringify({ visual_system_version_id: visualSystemVersionId }),
     });
   },
   previewDeliveryAdoption(

@@ -34,6 +34,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 | 全局素材整理 Draft | `go/internal/library` | `productflow-api` | `go/internal/library`、`go/internal/agent` |
 | schema-v3 图与执行 | `go/internal/graph` | `productflow-api`、`productflow-worker` | `go/internal/graph` |
 | 配方 | `go/internal/recipe` | `productflow-api` | `go/internal/recipe` |
+| 视觉方案版本 | `go/internal/visualsystem` | `productflow-api` | `go/internal/visualsystem` |
 | 交付图 | `go/internal/delivery` | `productflow-api`、`productflow-worker` | `go/internal/delivery` |
 | 商品图片库 | `go/internal/product`、`go/internal/media` | `productflow-api` | `go/internal/product` |
 | 连续生图 | `go/internal/imagesession` | `productflow-api`、`productflow-worker` | `go/internal/imagesession` |
@@ -190,6 +191,8 @@ WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。配�
 DeliveryRenditionJob 从 ProductImageAsset 读取原始媒体，按裁切、缩放和格式规范异步生成交付文件。交付文件不替换源图。内置 DeliverySpec 模板由 `go/internal/delivery` 提供，只读 API 顺序为淘宝/天猫首屏 3:4、京东主图 1:1、Amazon 主图 1:1、详情竖图 3:4、场景横图 4:3。模板是便捷默认值，不构成平台审核或合规保证；用户可以覆盖宽高、格式和体积。来源标记为 `docs/ARCHITECTURE.md §7`。
 
 交付采用快照由 `delivery_adoption_versions` / `delivery_adoption_slots` 持久化：引用源资产 ID、图位用途、排序、DeliverySpec 与可选事实/视觉版本，不复制图片字节。显式采用创建新版本并把 `products.current_delivery_adoption_version_id` 指向它；历史版本行不可变，节点重跑不改已采用快照。`quality_status=fail` 或文字溢出的图位不得进入合格采用集（IQ-CF-08）。导出与预览共用同一文件计划，复用既有 DeliveryRenditionJob / ZIP，不另建执行器。HTTP：`/api/v3/products/{id}/delivery-adoptions` 及 `current` / `{version_id}` / `preview` / `renditions` / `export`。文稿候选采用（O1–O7）与交付采用分开。
+
+商家内视觉方案版本由 `visual_systems` / `visual_system_versions` 持久化，商品显式选择落在 `product_visual_selections`（钉住不可变版本 id）。追加新版本不静默改选择、在做图任务或已采用交付。继承解析（IQ-CF-07）优先级为本商品覆盖 > 选定方案版本 > 品牌版本占位（`brand_table_not_ready`）> 产品默认；Brand 表未就绪时不伪造多品牌实体。HTTP：`/api/v3/visual-systems` 及版本/impact，以及 `/api/v3/products/{id}/visual-selection` 与 `visual-inheritance`。配方创建预览附带 `reuse_preview`（继承/待填）。
 
 GenerationSpec 保存模型生成意图；provider effective values 和解码后的 actual output 保存在运行/生成记录中。DeliverySpec 是独立确定性合同，不能触发图片模型调用。
 

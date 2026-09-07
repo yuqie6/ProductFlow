@@ -1247,6 +1247,82 @@ export interface WorkflowRecipePreview {
     changed_config_keys: string[];
   }>;
   required_bindings: string[];
+  reuse_preview?: RecipeReusePreview | null;
+}
+
+export interface RecipeReuseItem {
+  key: string;
+  label: string;
+  source: "inherited" | "pending" | "placeholder" | string;
+  detail: string;
+}
+
+export interface RecipeReusePreview {
+  inherited: RecipeReuseItem[];
+  pending: RecipeReuseItem[];
+  brand_placeholder: {
+    status: string;
+    reason: string;
+    detail: string;
+  };
+  preferred_visual_system_version_id: string | null;
+  inheritance_priority: string[];
+}
+
+export interface VisualSystemVersion {
+  id: string;
+  visual_system_id: string;
+  version: number;
+  schema_version: number;
+  payload: Record<string, unknown>;
+  payload_hash: string;
+  created_at: string;
+}
+
+export interface VisualSystemSummary {
+  id: string;
+  name: string;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+  current_version?: VisualSystemVersion | null;
+  versions?: VisualSystemVersion[];
+}
+
+export interface ProductVisualSelection {
+  product_id: string;
+  visual_system_version_id: string;
+  selected_at: string;
+  version: VisualSystemVersion;
+  system: VisualSystemSummary;
+}
+
+export interface VisualInheritanceLayer {
+  layer: string;
+  active: boolean;
+  version_id?: string | null;
+  system_id?: string | null;
+  system_name?: string | null;
+  payload?: Record<string, unknown>;
+  placeholder?: {
+    status: string;
+    reason: string;
+    detail: string;
+  } | null;
+  note: string;
+}
+
+export interface VisualInheritanceView {
+  product_id: string;
+  selected_visual_system_version_id: string | null;
+  effective_payload: Record<string, unknown>;
+  layers: VisualInheritanceLayer[];
+  brand_placeholder: {
+    status: string;
+    reason: string;
+    detail: string;
+  };
+  newer_version_available?: VisualSystemVersion | null;
 }
 
 export interface WorkflowRecipeApplicationResult {

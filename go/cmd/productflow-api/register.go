@@ -12,6 +12,7 @@ import (
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/recipe"
 	"github.com/yuqie6/productflow/internal/settings"
+	"github.com/yuqie6/productflow/internal/visualsystem"
 )
 
 // apiHandlers 是线上 HTTP 面。契约测试必须注册同一组，避免 contracts/http-routes.json 与 cmd/productflow-api 漂移。
@@ -24,6 +25,7 @@ type apiHandlers struct {
 	Recipe       recipe.HTTP
 	ImageSession imagesession.HTTP
 	Delivery     delivery.HTTP
+	VisualSystem visualsystem.HTTP
 	LocalEdit    localedit.HTTP
 	Agent        agent.HTTP
 }
@@ -38,6 +40,7 @@ func registerAPI(engine *gin.Engine, h apiHandlers) {
 	h.Recipe.Register(engine)
 	h.ImageSession.Register(engine)
 	h.Delivery.Register(engine)
+	h.VisualSystem.Register(engine)
 	h.LocalEdit.Register(engine)
 	h.Agent.Register(engine)
 }

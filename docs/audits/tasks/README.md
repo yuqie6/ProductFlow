@@ -22,7 +22,7 @@
 |---|---|---|---|---|---|
 | [merchant-graph-recipe.md](merchant-graph-recipe.md) | 商家平台 | 实现 | 开放 | — | — |
 | [compete-facts-text-trace.md](compete-facts-text-trace.md) | 图片质量 | 实现 | 认领 | sub-compete/compete-facts-text-trace | 2026-09-07T13:22:00+08:00 |
-| [brand-visual-reuse.md](brand-visual-reuse.md) | 工作流体验 | 实现 | 认领 | sub-delivery/brand-visual-reuse | 2026-09-07T13:15:00+08:00 |
+| [workbench-default-entry-walkthrough.md](workbench-default-entry-walkthrough.md) | 工作流体验 | 证据 | 开放 | — | — |
 | [release-d3-restore-drill.md](release-d3-restore-drill.md) | 平台可靠性 | 证据 | 开放 | — | — |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |

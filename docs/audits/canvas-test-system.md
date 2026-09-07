@@ -8,7 +8,7 @@
 
 ## 组职责与交接
 
-2026-09-07 正式版职责校准：本组负责 [总纲第 5 节](../ROADMAP.md#5-正常体验的最低要求) 的创建、成果浏览、修图、采用、交付和复用体验。[完整成果投影](tasks/archive/delivery-workbench-projection.md) 与 [采用/交付快照](tasks/archive/delivery-adoption-snapshot.md) 已交付，保留现有画布默认与手动入口；是否切换默认由后续走查证据决定。下一项 [品牌视觉复用](tasks/brand-visual-reuse.md)；基础配方 preview/原子确认、局部编辑和 ZIP 已有实现，不重复发布。
+2026-09-07 正式版职责校准：本组负责 [总纲第 5 节](../ROADMAP.md#5-正常体验的最低要求) 的创建、成果浏览、修图、采用、交付和复用体验。[完整成果投影](tasks/archive/delivery-workbench-projection.md)、[采用/交付快照](tasks/archive/delivery-adoption-snapshot.md) 与 [品牌视觉复用](tasks/archive/brand-visual-reuse.md) 已交付。保留现有画布默认与手动入口；是否切换默认由后续走查证据决定。基础配方 preview/原子确认、局部编辑和 ZIP 已有实现，不重复发布。
 
 当前没有真实商户用户，内部走查只说明工程可用性。商家平台负责权限语义；本组按其固定合同提供清楚的商家上下文和角色操作入口。二维组合或品牌版本等跨层实现由协调者指定唯一主任务及排他范围，图片质量提供固定质量合同。
 
@@ -20,7 +20,7 @@
 | 修改方案 | 节点与连接、场景组织、检查器保存、候选审阅、撤销重做；能识别实际生效的要求 | `GraphCanvasPanel.tsx`、`GraphNodeInspector.tsx`、`go/internal/graph/` |
 | 控制生成与恢复 | 保存后运行、整图或选定范围、取消、修正后重试；区分旧失败与新结果 | `GraphRunsPanel.tsx`、`graphRunPreview.ts`、`go/internal/graph/runs.go` |
 | 使用结果 | 预览、定位与选择资产、局部编辑入口、原图和交付图下载、交付包 | `ProductImageExplorer.tsx`、`DeliveryRenditionPanel.tsx`、`LocalImageEditController.tsx`、`go/internal/delivery/` |
-| 复用工作 | 明确资产绑定、固定当前结果、配方预览与确认，避免带入错误来源或覆盖目标商品 | `graphAssetDrop.ts`、`recipeSave.ts`、`RecipeLibraryPanel.tsx`、`go/internal/recipe/` |
+| 复用工作 | 明确资产绑定、固定当前结果、配方预览与确认，视觉方案版本保存/选定/显式采用，避免带入错误来源或覆盖目标商品 | `graphAssetDrop.ts`、`recipeSave.ts`、`RecipeLibraryPanel.tsx`、`VisualReuseControls.tsx`、`go/internal/recipe/`、`go/internal/visualsystem/` |
 
 - 图片质量组负责图片内容与视觉要求及其生成链优化；本组负责选择、修改、运行和取用是否符合用户意图。下载文件正确不等于图片质量合格。
 - Agent 质量组负责模型理解、决策与工具行为；本组验证既有 Agent 写入与手动编辑、运行的交错合同，不以模型评分作为确定性操作修复的前置。
@@ -96,6 +96,7 @@ O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；�
 | 局部编辑 | [canvas-local-edit-flow](tasks/archive/canvas-local-edit-flow.md)：隔离 mock Chromium 2 passed，20.2s；providers/localedit Go 通过 | 核检查器入口、谱系、采用/撤销、提交失败不覆盖；未覆盖真实 OpenAI/Gemini 质量或商家任务耗时。现有 filmstrip 不等于镜头列表主界面 |
 | 成果工作视图 | [delivery-workbench-projection](tasks/archive/delivery-workbench-projection.md)：投影/视图 Vitest 16 passed；`just web-build`/`docs-check` 通过；开发站 1440/1280/390 走查切换、定位、`scope=node` 运行 | 默认仍为流程视图；opt-in E2E 未跑；不证明商户效率或应改默认 |
 | 交付采用快照 | [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md)：Go 采用/并发/导出一致；成果视图采用/导出接线；schema `delivery_adoption_*`；Vitest 14 | 浏览器整链 opt-in 未跑；质量判据仍依赖图片质量组判定输入；不宣称 R2 全部通过 |
+| 品牌视觉复用 | [brand-visual-reuse](tasks/archive/brand-visual-reuse.md)：商家内视觉方案版本 CRUD；商品显式选择；IQ-CF-07 继承预览（Brand 占位）；追加版本不静默改选择；配方创建预览列继承/待填；Vitest + Go 包测 | 浏览器整链未跑；Brand 表仍占位；未宣称跨商家分享 |
 
 两项新浏览器交付未修改生产业务代码，分别提交于 `daa4672c` 与 `f7e70e1e`。当时完整 Web 回归为 91 files / 647 tests passed，lint、build 通过，build 保留既有大 chunk 警告。Go delivery 为带 PostgreSQL 的 24 项实际通过，无跳过；不扩展为全部 Go 包通过。
 

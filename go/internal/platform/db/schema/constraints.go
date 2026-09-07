@@ -1169,6 +1169,17 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_delivery_adoption_versions_product_created ON public.delivery_adoption_versions USING btree (product_id, created_at DESC, id DESC);`,
+	`DO $c$ BEGIN
+ALTER TABLE product_visual_selections ADD CONSTRAINT fk_product_visual_selections_product_id FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE product_visual_selections ADD CONSTRAINT fk_product_visual_selections_visual_system_version_id FOREIGN KEY (visual_system_version_id) REFERENCES visual_system_versions(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_product_visual_selections_version ON public.product_visual_selections USING btree (visual_system_version_id);`,
 	`CREATE INDEX IF NOT EXISTS ix_delivery_adoption_slots_version_sort ON public.delivery_adoption_slots USING btree (version_id, sort_order, id);`,
 	`DO $c$ BEGIN
 ALTER TABLE provider_bindings ADD CONSTRAINT provider_bindings_provider_profile_id_fkey FOREIGN KEY (provider_profile_id) REFERENCES provider_profiles(id) ON DELETE SET NULL;

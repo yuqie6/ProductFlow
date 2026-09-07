@@ -32,6 +32,7 @@ import (
 	"github.com/yuqie6/productflow/internal/providers/adapt"
 	"github.com/yuqie6/productflow/internal/recipe"
 	"github.com/yuqie6/productflow/internal/settings"
+	"github.com/yuqie6/productflow/internal/visualsystem"
 	"go.uber.org/zap"
 )
 
@@ -126,6 +127,10 @@ func main() {
 		},
 		Delivery: delivery.HTTP{
 			Service:  delivery.Service{DB: gdb, Media: mediaStore},
+			Settings: settingsStore,
+		},
+		VisualSystem: visualsystem.HTTP{
+			Service:  visualsystem.Service{DB: gdb},
 			Settings: settingsStore,
 		},
 		LocalEdit: localedit.HTTP{

@@ -26,6 +26,7 @@ import (
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/recipe"
 	"github.com/yuqie6/productflow/internal/settings"
+	"github.com/yuqie6/productflow/internal/visualsystem"
 )
 
 var pathParamPattern = regexp.MustCompile(`\{[^}]+\}|:[^/]+`)
@@ -65,6 +66,15 @@ var goOpsExtras = map[string]bool{
 	"POST /api/v3/products/{}/delivery-adoptions/{}/preview":                            true,
 	"POST /api/v3/products/{}/delivery-adoptions/{}/renditions":                         true,
 	"POST /api/v3/products/{}/delivery-adoptions/{}/export":                             true,
+	"GET /api/v3/visual-systems":                                                        true,
+	"POST /api/v3/visual-systems":                                                       true,
+	"GET /api/v3/visual-systems/{}":                                                     true,
+	"POST /api/v3/visual-systems/{}/versions":                                           true,
+	"GET /api/v3/visual-systems/{}/versions/{}":                                         true,
+	"GET /api/v3/visual-systems/{}/versions/{}/impact":                                  true,
+	"GET /api/v3/products/{}/visual-selection":                                          true,
+	"PUT /api/v3/products/{}/visual-selection":                                          true,
+	"POST /api/v3/products/{}/visual-inheritance":                                       true,
 }
 
 // Historical snapshot still lists retired Agent effects, single events and manual fidelity checks.
@@ -115,6 +125,7 @@ func TestSealedHTTPRoutesAreRegistered(t *testing.T) {
 		Recipe:       recipe.HTTP{Settings: fake},
 		ImageSession: imagesession.HTTP{Settings: fake},
 		Delivery:     delivery.HTTP{Settings: fake},
+		VisualSystem: visualsystem.HTTP{Settings: fake},
 		LocalEdit:    localedit.HTTP{Settings: fake},
 		Agent:        agent.HTTP{Settings: fake, InternalToken: "contract-internal-token"},
 	})
@@ -214,6 +225,7 @@ func TestSealedAdminAndInternalRoutesReturnContractUnauthorized(t *testing.T) {
 		Recipe:       recipe.HTTP{Settings: fake},
 		ImageSession: imagesession.HTTP{Settings: fake},
 		Delivery:     delivery.HTTP{Settings: fake},
+		VisualSystem: visualsystem.HTTP{Settings: fake},
 		LocalEdit:    localedit.HTTP{Settings: fake},
 		Agent:        agent.HTTP{Settings: fake, InternalToken: "contract-internal-token"},
 	})

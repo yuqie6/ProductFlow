@@ -56,6 +56,7 @@ import { workflowNodeKindTheme } from "../chrome/WorkflowNodeCard";
 import { CatalogConfigFields } from "./CatalogConfigFields";
 import { NodeDetailFields } from "./NodeDetailFields";
 import { NodeImageHistory } from "./NodeImageHistory";
+import { VisualReuseControls } from "./VisualReuseControls";
 import { generationOptionFields } from "./generationOptions";
 import "./nodeDetailForm.css";
 import { DocumentCandidateReview } from "./DocumentCandidateReview";
@@ -1349,6 +1350,23 @@ function CatalogNodeEditor({
         onChange={(config) => editor.update({ ...editor.draft, config })}
         disabled={busy}
       />
+      {node.node_type === "visual_system" ? (
+        <VisualReuseControls
+          productId={productId}
+          node={node}
+          disabled={busy}
+          onAdoptPayload={(payload, versionId) => {
+            editor.update({
+              ...editor.draft,
+              config: {
+                ...editor.draft.config,
+                visual_system_version_id: versionId,
+                visual_overlay: payload,
+              },
+            });
+          }}
+        />
+      ) : null}
       {node.node_type === "image_generation" && optionsQuery.isError ? <div role="alert" className="text-xs text-state-error">
         {t("nodeDetail.optionsUnavailable")}
         <IconButton label={t("workbench.retry")} onClick={() => void optionsQuery.refetch()}><RotateCcw size={14} /></IconButton>

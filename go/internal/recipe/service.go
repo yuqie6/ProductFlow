@@ -11,12 +11,15 @@ import (
 	"context"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Service 拥有配方提取、预览与应用；应用走 Graph Command。
@@ -128,6 +131,12 @@ func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error)
 		if err != nil {
 			return err
 		}
+		if preferred == nil {
+			preferred, err = preferredVisualFromLive(ctx, pgxTx, in.ProductID, in.WorkflowID)
+			if err != nil {
+				return err
+			}
+		}
 		title, description, err := normalizeTitle(in.Title, in.Description)
 		if err != nil {
 			return err
@@ -198,6 +207,12 @@ func (s Service) Append(ctx context.Context, in AppendInput) (RecipeView, error)
 		preferred, err := optionalVisual(ctx, pgxTx, in.PreferredVisualSystemVersionID)
 		if err != nil {
 			return err
+		}
+		if preferred == nil {
+			preferred, err = preferredVisualFromLive(ctx, pgxTx, in.ProductID, in.WorkflowID)
+			if err != nil {
+				return err
+			}
 		}
 		title, description, err := normalizeTitle(in.Title, in.Description)
 		if err != nil {
@@ -414,6 +429,9 @@ func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, e
 		if err := insertApplication(ctx, pgxTx, appRow); err != nil {
 			return err
 		}
+		if err := upsertProductVisualSelection(ctx, pgxTx, in.ProductID, rec.Current.PreferredVisualSystemVersionID); err != nil {
+			return err
+		}
 		out, err = s.applicationResult(ctx, pgxTx, appRow, true)
 		return err
 	})
@@ -495,7 +513,7 @@ func (s Service) planFromRecipe(
 		identity = &id
 		existing = live.Applied
 	}
-	return planPayload(
+	plan, err := planPayload(
 		target,
 		identity,
 		existing,
@@ -508,6 +526,11 @@ func (s Service) planFromRecipe(
 		required,
 		expectedGraphRevision,
 	)
+	if err != nil {
+		return applyPlan{}, err
+	}
+	plan.PreferredVisual = rec.Current.PreferredVisualSystemVersionID
+	return plan, nil
 }
 
 // applyPlanCommand 把已确认的 change intent 交给 Graph Command。
@@ -578,6 +601,63 @@ func optionalVisual(ctx context.Context, tx *gorm.DB, id *string) (*string, erro
 		return nil, err
 	}
 	return &trimmed, nil
+}
+
+func preferredVisualFromLive(ctx context.Context, tx *gorm.DB, productID, workflowID string) (*string, error) {
+	live, err := graph.TryLive(ctx, tx, productID)
+	if err != nil {
+		return nil, err
+	}
+	if live == nil {
+		return nil, nil
+	}
+	if workflowID != "" && live.Identity.ID != workflowID {
+		return nil, nil
+	}
+	id := extractPreferredVisual(live.Applied)
+	if id == nil {
+		return nil, nil
+	}
+	if err := visualSystemVersionExists(ctx, tx, *id); err != nil {
+		return nil, nil
+	}
+	return id, nil
+}
+
+func extractPreferredVisual(applied graph.AppliedGraph) *string {
+	for _, node := range applied.Nodes {
+		if node.NodeType != graph.NodeVisualSystem {
+			continue
+		}
+		raw, _ := node.Config["visual_system_version_id"].(string)
+		raw = strings.TrimSpace(raw)
+		if raw != "" {
+			return &raw
+		}
+	}
+	return nil
+}
+
+func upsertProductVisualSelection(ctx context.Context, tx *gorm.DB, productID string, versionID *string) error {
+	if versionID == nil || strings.TrimSpace(*versionID) == "" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*versionID)
+	if err := visualSystemVersionExists(ctx, tx, trimmed); err != nil {
+		return err
+	}
+	return visualsystemSelectInTx(ctx, tx, productID, trimmed)
+}
+
+func visualsystemSelectInTx(ctx context.Context, tx *gorm.DB, productID, versionID string) error {
+	now := time.Now().UTC()
+	row := schema.ProductVisualSelections{
+		ProductID: productID, VisualSystemVersionID: versionID, SelectedAt: now,
+	}
+	return tx.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "product_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"visual_system_version_id", "selected_at"}),
+	}).Create(&row).Error
 }
 
 func normalizeTitle(title string, description *string) (string, *string, error) {

@@ -59,6 +59,7 @@ type PreviewView struct {
 	Groups            []PreviewGroup       `json:"groups"`              // 将新增的一层视觉分组
 	UpdatedNodes      []PreviewUpdatedNode `json:"updated_nodes"`       // create 模式应为 []
 	RequiredBindings  []string             `json:"required_bindings"`   // 如 product_identity；目标图必须满足
+	ReusePreview      *ReusePreviewView    `json:"reuse_preview,omitempty"`
 }
 
 // ApplicationView 是配方 Apply 确认后的 HTTP 投影。
@@ -184,6 +185,7 @@ func serializePreview(p Preview) PreviewView {
 		Groups:            groups,
 		UpdatedNodes:      updated,
 		RequiredBindings:  bindings,
+		ReusePreview:      p.ReusePreview,
 	}
 }
 
