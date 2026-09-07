@@ -775,18 +775,8 @@ func validateSourceRun(ctx context.Context, db *gorm.DB, productID, graphID stri
 }
 
 // requireRunnableWorkflow 经 graph 包判断全图是否有可运行节点。没有则 Conflict。Agent 不直接写 graph 表。
-// LoadGraph 经 requireOwnedProduct 需要 ProductGuard（B3）；此处挂上 s.Graph.Products。
 func (s Service) requireRunnableWorkflow(ctx context.Context, db *gorm.DB, productID, graphID string) (int, error) {
-	ctx = graph.WithProductGuard(ctx, s.Graph.Products)
-	id, err := graph.LoadGraph(ctx, db, productID, graphID)
-	if err != nil {
-		return 0, err
-	}
-	applied, err := graph.LoadAppliedGraph(ctx, db, id)
-	if err != nil {
-		return 0, err
-	}
-	selected, err := graph.SelectRunNodeIDs(applied, graph.RunScopeGraph, "", nil)
+	count, err := s.Graph.CountRunnableNodesTx(ctx, db, productID, graphID)
 	if err != nil {
 		var appErr apperr.Error
 		if errors.As(err, &appErr) && appErr.Status == 400 {
@@ -794,10 +784,10 @@ func (s Service) requireRunnableWorkflow(ctx context.Context, db *gorm.DB, produ
 		}
 		return 0, err
 	}
-	if len(selected) == 0 {
+	if count == 0 {
 		return 0, apperr.Conflict("当前工作流没有可运行的节点")
 	}
-	return len(selected), nil
+	return count, nil
 }
 
 // markRequestWaiting 把 conversation 标 awaiting_confirmation；未终态/未暂停的 Task 标 waiting_reason=workflow_run_confirmation。

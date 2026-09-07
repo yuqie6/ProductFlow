@@ -390,6 +390,25 @@ func (s Service) SubmitRunTx(ctx context.Context, pgxTx *gorm.DB, productID, gra
 	return serializeGraphRun(submission.Run), nil
 }
 
+// CountRunnableNodesTx 在调用方事务中统计全图可运行节点，不写库或预留额度。
+// 商品守卫由 Service 提供；空图或节点配置无效保留运行选择器的 Validation。
+func (s Service) CountRunnableNodesTx(ctx context.Context, db *gorm.DB, productID, graphID string) (int, error) {
+	ctx = s.guardCtx(ctx)
+	row, err := loadGraph(ctx, db, productID, graphID)
+	if err != nil {
+		return 0, err
+	}
+	applied, err := loadAppliedGraph(ctx, db, row)
+	if err != nil {
+		return 0, err
+	}
+	selected, err := SelectRunNodeIDs(applied, RunScopeGraph, "", nil)
+	if err != nil {
+		return 0, err
+	}
+	return len(selected), nil
+}
+
 // PreviewRun 返回将入队节点的 planned_action，不写库、不入队。
 // 请求非法返回 Validation；缺图返回 NotFound。
 func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req GraphRunRequest) (GraphRunPreviewResponse, error) {

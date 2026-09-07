@@ -45,6 +45,7 @@
 | Pi 默认并行工具同时追加 checkpoint，Node 为两个请求分配同一序号，Go 对不同内容返回 Conflict | TurnRuntime 串行持久化 checkpoint；清理等待待写链，新 Turn 重置；沿既有 lease 错误中止后续项 | 原代码两种并发场景发送 [1,1]；修复后确认成功发送 [1,2]、首条失败只发一次且两调用失败，清理等待；真实 PG 验证序号绑定内容 | 2b4355ec |
 | 连续生图结算吞掉缺失预留错误，允许终态与实际额度结算分离 | settleGenerationQuota 直接返回 quota.Settle 的错误；原终态事务回滚 | 独立 PostgreSQL 验证成功和已调用失败终态拒绝缺 hold，恢复原预留后同 attempt 可提交并结算 | `c8e00923` |
 | 手动重试缺失活动预留时退回首次已结算键，旧结算幂等结果放行当前终态 | 额度键查询返回是否命中活动预留；结算必须命中，取消/释放消费者保持原合同 | 两种终态的 retry=true 原实现均返回 nil；修复后拒绝并回滚，恢复同一重试 hold 后结算 | `bca12de2` |
+| Agent 统计可运行节点时需注入 Graph 依赖并编排三步内部查询 | Graph Service.CountRunnableNodesTx 拥有依赖和查询步骤，Agent 保留审批 Conflict 解释 | PostgreSQL 正常计数/跨商家/缺依赖/零运行写入；隔离基线 Agent 空图、确认与创建消费者通过 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -66,7 +67,7 @@
 
 1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化已与结算同事务；明确失败终态额度已归入命令，付费成功结算已要求 hold；取消/未知/释放的缺失 hold 合同仍待核实；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 的精确绑定和缺失 hold 处理仍待核实。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
 2. **中：局部编辑未知/释放的缺失 hold 合同与额度底层错误。** 当前唯一运行时 Reserve 入口与 provider_pending 同事务，不产生 claimed + hold；新增真实数据库准备失败后恢复执行回归确认旧 attempt 零 hold、新 attempt 正常结算，不为历史组合新增恢复分支。unknown/release 的缺失 hold 容忍仍待核实。成功结算已拒绝缺 hold。quota.Reserve 的创建错误被替换为通用 Internal，底层 PostgreSQL cause 丢失已由约束故障确认；quota 文件当前被管理后台任务占用，后续在解除占用后修复。
-3. **中：Graph context 服务依赖。** `WithProductGuard` 跨 product/recipe/agent 装配，形成编译期不可见的前置。候选方向是显式 Graph 用例依赖与已有事务入口；必须维持跨商家统一 404、事务组合及 worker 无 HTTP 商家上下文的执行合同。未实施，不把风格判断升级成安全缺陷。
+3. **中：Graph context 服务依赖。** `WithProductGuard` 仍跨 product/recipe 装配，形成编译期不可见的前置。候选方向是显式 Graph 用例依赖与已有事务入口；必须维持跨商家统一 404、事务组合及 worker 无 HTTP 商家上下文的执行合同。Agent 的运行资格查询已归入 Graph Service，非测试 Agent 调用不再装配该 context 依赖；Graph 内部及 product/recipe 低层调用仍未整体迁移，不把依赖改善升级成已复现安全缺陷。
 4. **可选：节点执行职责与跨生成入口共享机制。** 保留三种不同的业务计费身份和 Provider 合同；只在同一规则的重复已导致漂移时抽取 owner。当前不建立统一生成框架，也不因 `execute_node.go` 较长拆文件。Graph 的 cook、效果记录、资产晋升、交付组合是后续逐边界验证对象。
 
 ## 验证入口
@@ -249,3 +250,16 @@ Node [进程重启测试](../../agent-service/src/process-restart.e2e.test.ts) �
 初次补强要求 errors.As 获得 PostgreSQL 23514，实际只收到“创建预留失败”，该轮整包 FAIL（5.401 秒）。读取 quota.Reserve 确认 gdb.Create 错误被替换为 apperr.Internal，属于独立的原因追踪缺陷；没有通过改写错误预期来声称该缺陷已修复。恢复测试保留原非 nil 错误合同并增加上述真实数据库状态证据，最终 localedit 整包通过（4.433 秒），标准 go vet 通过。quota 当前由其他任务持有，未修改其实现或测试；后续需保留底层 cause 并检查同模块其他事务错误转换。
 
 主代理自审完整测试与文档 diff、检查 Reserve 调用者和测试约束清理路径，当前共享工作区 docs-check 与空白检查通过。没有新增业务运行时路径，没有修改其他任务文件，没有真实模型费用或共享服务重启。
+
+
+## Agent 运行资格查询的 Graph 归属
+
+本切片由主代理负责，范围为 `graph/service.go`、`agent/workflow_requests.go` 和 [依赖数据库回归](../../go/internal/graph/runnable_dependency_test.go)。原 Agent requireRunnableWorkflow 直接配置 WithProductGuard，依次 LoadGraph、LoadAppliedGraph、SelectRunNodeIDs。未复现新的业务错误；已确认调用者依赖 Graph 的内部装配与读取步骤，属于边界改善。
+
+新增 Graph Service.CountRunnableNodesTx 复用原查询和选择器，消费调用方的 GORM 事务并装配自身 Products，返回可运行节点数与原错误。Agent 保留空图/Validation 到审批 Conflict 的解释，删除三步读取和 context 注入。未改为 PreviewRun：该方法还加载 source 并生成 planned_action，语义与原审批资格查询不同。没有新增表、HTTP API、状态或另一套节点选择规则。全目录扫描确认 Agent 非测试代码不再调用 WithProductGuard、LoadAppliedGraph 或 SelectRunNodeIDs；全仓扫描确认两个导出读取包装没有其他调用者，删除 graph/export.go，Service 直接复用内部读取函数。其他 Graph context 调用仍存在，本切片不宣称全仓 context 依赖已删除。
+
+真实 PostgreSQL 新回归通过（1.087 秒）：Service.DB 故意为空、只通过调用方事务传入数据库；合法商家得到正数、其他商家返回 NotFound、缺少 Products 返回 Internal、查询后 graph run 仍为零。Agent 消费者组合覆盖空图 Conflict、创建确认单和确认执行的既有测试。共享工作区初次编译被其他评价任务的未使用变量/重复 helper 阻断，记为 FAIL，未修改其文件；HEAD 加本切片的独立临时 checkout 实际通过（1.694 秒）。该组合不是 Agent 全包或 Graph 全包验收。
+
+独立 checkout 的 go vet -stdversion=false 检查通过；标准 vet 的既有 Go 1.23 声明与 testing.Context/Chdir 使用缺口未在本切片改变，关闭该分析项不计为标准 vet 全绿。没有付费模型调用、外部副作用或共享服务重启。
+
+删除无调用者的导出包装后，独立 checkout 的最终 Graph 数据库回归通过（0.877 秒），Agent 消费者组合通过（2.039 秒）；当前共享 docs-check 通过。主代理复核完整切片 diff、导出名称零代码残留和跨商家错误来源；临时 checkout 已清理。最终范围包含删除 graph/export.go，未修改其他任务的 Agent eval_*、后台或活文档。
