@@ -567,6 +567,27 @@
           },
           {
             "affects_digest": true,
+            "choices": [
+              "subject_preserve",
+              "generative"
+            ],
+            "control": "select",
+            "default": null,
+            "fields": [],
+            "hint_key": null,
+            "key": "produce_route",
+            "label_key": "agentWorkbench.nodeEditor.produceRoute",
+            "max_length": null,
+            "max_value": null,
+            "min_value": null,
+            "panel": null,
+            "required": false,
+            "toggle_label_key": null,
+            "value_kind": "string",
+            "visible_when": null
+          },
+          {
+            "affects_digest": true,
             "choices": [],
             "control": "group",
             "default": null,
@@ -1230,6 +1251,27 @@
             "hint_key": null,
             "key": "image_type_key",
             "label_key": null,
+            "max_length": null,
+            "max_value": null,
+            "min_value": null,
+            "panel": null,
+            "required": false,
+            "toggle_label_key": null,
+            "value_kind": "string",
+            "visible_when": null
+          },
+          {
+            "affects_digest": true,
+            "choices": [
+              "subject_preserve",
+              "generative"
+            ],
+            "control": "select",
+            "default": null,
+            "fields": [],
+            "hint_key": null,
+            "key": "produce_route",
+            "label_key": "agentWorkbench.nodeEditor.produceRoute",
             "max_length": null,
             "max_value": null,
             "min_value": null,
@@ -2216,6 +2258,7 @@
         ],
         "config_field_keys": [
           "image_type_key",
+          "produce_route",
           "text_settings",
           "prompt"
         ],
@@ -2297,6 +2340,7 @@
         ],
         "config_field_keys": [
           "image_type_key",
+          "produce_route",
           "variation_instruction",
           "prompt_overrides",
           "text_override",

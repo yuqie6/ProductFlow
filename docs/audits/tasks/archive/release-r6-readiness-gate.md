@@ -40,7 +40,7 @@ B1–B5 路径与部分证据已齐；R6 仍未通过。缺在冻结候选上汇
 - 原因：无。
 - 解除条件：无。
 - 跟进者：无。
-- 交接：已归档；交付随本任务提交。跟进见 [release-r6-clean-candidate-gate](../release-r6-clean-candidate-gate.md)。
+- 交接：已归档；交付随本任务提交。跟进见 [release-r6-clean-candidate-gate](release-r6-clean-candidate-gate.md)。
 
 ## 证据
 

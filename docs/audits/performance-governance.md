@@ -16,7 +16,7 @@
 
 当前实现是单管理员、单商家工作区；2026-09-07 用户明确最终目标为可自托管多商家 SaaS。身份、隔离与商业额度由 [商家平台](merchant-platform.md) 负责；本组增加发行、安装、备份恢复、稳定版升级、调用消费事实及多商家资源限制职责。它们是正式版必要增量，不能继续以 live demo 边界无限后置；实现仍须按 [总纲](../ROADMAP.md) 的固定合同拆分，不零散添加 tenant 字段。
 
-组内 [发行基线调查](tasks/archive/release-readiness-baseline.md) 已在源码只读基线 `d6709c4a` 上给出运行单元、持久面、差距分类与演练合同（见 [自托管发行与恢复基线](#self-host-release-baseline)）。备份必须含数据库、媒体、必要 Pi 数据及可解密/可启动配置；首个稳定版起提供明确升级路径，不恢复 retired V1/v2。真实安装/恢复/升级路径与演练证据已有 B1–B5 及 B6 汇总；**总纲 R6 仍未通过**（G-07 FAIL、缺单一冻结候选与稳定版对）。商业定价、余额与支持裁定归商家平台，实际调用事实、重复执行、unknown、原子预留执行正确性与公平资源调度由本组承担必要实现，一条完整交易链只建一套账本。
+组内 [发行基线调查](tasks/archive/release-readiness-baseline.md) 已在源码只读基线 `d6709c4a` 上给出运行单元、持久面、差距分类与演练合同（见 [自托管发行与恢复基线](#self-host-release-baseline)）。备份必须含数据库、媒体、必要 Pi 数据及可解密/可启动配置；首个稳定版起提供明确升级路径，不恢复 retired V1/v2。真实安装/恢复/升级路径与演练证据已有 B1–B5 及 B6 汇总；干净候选重跑见 [release-r6-clean-candidate-gate](tasks/archive/release-r6-clean-candidate-gate.md)（G-07 在 `e8cb494d`+最窄修补上 PASS，修补已入库）。**总纲 R6 仍未通过**（缺正式 D4 冻结稳定版对、发行 pin≠G-07 候选、资源预算未测）；跟进 [release-r6-pin-and-formal-d4](tasks/release-r6-pin-and-formal-d4.md)。商业定价、余额与支持裁定归商家平台，实际调用事实、重复执行、unknown、原子预留执行正确性与公平资源调度由本组承担必要实现，一条完整交易链只建一套账本。
 
 | 交付问题 | 本组负责 | 交接边界 |
 |---|---|---|
@@ -192,7 +192,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 | G-04 浏览器恢复 | 普通断线、gap、重复、旧 generation、overflow、terminal gap、approval 刷新；无错误断线提示 | 2026-09-05 `ebc7630d` 工作树 `web-e2e-agent-sse` 5 passed；[2026-09-06 原生 EventSource 截断恢复](../history/agent-runtime-timeline.md#2026-09-06-agent-原生-sse-连接截断恢复) 三轮 cursor 0→1、序号各一次、无运行时错误，261.7–262.8ms。单次有限重放，不替代其余矩阵或完整 UI 复验 |
 | G-05 标准容量 | 25 并发 Turn、100 SSE、单 Turn 10k 事件、单会话 1000 Turn，及上表时延与正确性断言 | [2026-09-06 分场景复验](../history/agent-runtime-timeline.md#2026-09-06-agent-容量分场景与实时-sse)：1×10k 深度 / 25×128 并发写 p95 68.57/203.30ms；100 SSE 同一新事件 p95 37.52ms。[浏览器补洞](../history/agent-runtime-timeline.md#2026-09-06-agent-隔离浏览器补洞容量) 10k 事件三轮 595.0/587.3/664.3ms，满足 5s。各维度独立、固定小正文，未测同时满载或持续推送；当前移动工作树不签固定候选全量通过 |
 | G-06 真实业务 | 冻结真实模型/配置的完整 Skill 评测、审批到单一 WorkflowRun、真实图运行、Chromium；确认有效 background 能力为 false | 真实审批/出图已有历史 PASS，行为门仍由 [Agent 质量组](agent-eval-system.md) 的固定 `run_id` 裁定；旧 `gpt-5.6-luna` 15/15 冒烟不满足 L1-L6 出口 |
-| G-07 候选全量 | 干净固定 checkout，无缓存 Go、Agent Service、Web test/lint/build、docs-check、migration fresh/upgrade、diff check | `fb658633` 于 2026-09-04 通过；2026-09-06 全 Go 集成复验失败且运行期间代码变化，不能签收固定候选；详见[集成复验证据](../history/agent-runtime-timeline.md#2026-09-06-后端集成复验与现行路由合同) |
+| G-07 候选全量 | 干净固定 checkout，无缓存 Go、Agent Service、Web test/lint/build、docs-check、migration fresh/upgrade、diff check | `fb658633` 于 2026-09-04 通过；2026-09-06 全 Go 集成复验失败且运行期间代码变化，不能签收固定候选；B6 窗口 FAIL；**2026-09-07** 独立 checkout `e8cb494d`+最窄修补无缓存全量 **PASS**（见 [release-r6-clean-candidate-gate](tasks/archive/release-r6-clean-candidate-gate.md)）。≠ R6 |
 
 当前有效能力保持 D-03：provider profile 与 adapter 能力取交集，Pi adapter 的 `background_resumable` 为 false；不新增绕过 Pi 的模型执行器。字段存在不表示可以后台续跑。PG 权威、7 天 chunk 压缩、不可恢复模型中断与 effect 对账的 D/C 合同在历史来源和现行代码中保留，不因文档重排放宽。
 
@@ -300,7 +300,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 
 **缺验证（机制或文档有，无隔离证据）**
 
-- 空主机等价 D1 主路径已由 B6 在 pin `0.0.0-5ed2b916b569` 采证（登录/设置解锁/`provider_profiles=0`/重启；**浏览器缺 provider UI 仍未采证**）；D3 隔离恢复主路径已由 B4 采证（在途 lease/unknown 仍缺夹具）；迁移失败停机与回退的**合同/脚本/等价夹具**已由 B5 交付（冻结稳定版对上的正式 D4 仍缺）；重启后 unknown 作业；staging 双副本共享卷一致性；**单一冻结候选**上的 G-07（B6 窗口 FAIL，且 pin≠G-07 HEAD）；R6 全项；HEAD 全量 `release-build-images` / registry push；资源预算↔部署规模。
+- 空主机等价 D1 主路径已由 B6 在 pin `0.0.0-5ed2b916b569` 采证（登录/设置解锁/`provider_profiles=0`/重启；**浏览器缺 provider UI 仍未采证**）；D3 隔离恢复主路径已由 B4 采证（在途 lease/unknown 仍缺夹具）；迁移失败停机与回退的**合同/脚本/等价夹具**已由 B5 交付（冻结稳定版对上的正式 D4 仍缺）；重启后 unknown 作业；staging 双副本共享卷一致性；干净候选 G-07（`e8cb494d`+修补）已 PASS 且修补已入库，但 **pin≠该候选**；R6 全项；HEAD 全量 `release-build-images` / registry push；资源预算↔部署规模。
 
 **需 Operator 决策**
 
@@ -360,7 +360,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 | B3 | 备份/恢复脚本与一致点 runbook（含 Pi 与 `.env`） | 隔离卷 | **已交付路径（2026-09-07）**：`scripts/release-backup.sh` / `release-restore.sh` + `release_backup_common.sh`；覆盖 PG（`pg_dump -Fc`）、storage 媒体、agent `/data`、部署 `.env`，可选 Redis / agent traces；`CONSISTENCY_MODE=drain|crash` 记录是否排空在途作业与 commit/digest；默认拒绝共享项目名 `productflow`；发行包经 `release-pack` 带入同脚本；runbook 见 [release/README.md](../../release/README.md)。D2 清单由 MANIFEST 对象与标志对齐。≠ D3 全项实跑（B4）；≠ R6；不写 RPO/RTO/SLA。证据见 [release-backup-restore](tasks/archive/release-backup-restore.md)。 |
 | B4 | 执行 D3 恢复演练并留证据 | 新目录/实例 | **已交付（2026-09-07）**：隔离项目 `pf-d3-src-20260907` → `release-backup`（drain）→ `pf-d3-dst-20260907` 全栈 `release-restore`；发行 pin `0.0.0-5ed2b916b569`。断言 PASS：migrate、四项 health（含 Agent `runtime=productflow-pi`）、`ADMIN_ACCESS_KEY` 登录/会话、探针媒体 HTTP（非 missing）、假 provider `has_api_key`、Agent `/data` 探针、MANIFEST 版本身份 + `CHECKSUMS`。在途作业收敛 **UNKNOWN**（无 lease 夹具）。≠ R6 / ≠ B5；不写 RPO/RTO/SLA。详见 [release-d3-restore-drill](tasks/archive/release-d3-restore-drill.md)。 |
 | B5 | 首个稳定版起 N→N+1 合同、夹具与文档歧义收窄任务 | 双版本夹具 | **已交付（2026-09-07）**：`scripts/release-upgrade.sh`（预检→drain 备份→换 N+1 pin→migrate→四项 health；失败停 app 层、钉回 N pin、打印 `release-restore` 回退）；`release-pack` 带入脚本；`release/README.md` B5/D4 节；收窄 CONTEXT Mainline Scope 与 `docs/README.md` 对经营数据升级的歧义。隔离等价夹具（发行 pin `0.0.0-5ed2b916b569` retag → `0.0.0-b5n1equiv`）主路径与 `UPGRADE_SIMULATE_MIGRATE_FAIL` fail-stop 证据见 [release-n-to-n1-upgrade](tasks/archive/release-n-to-n1-upgrade.md)。≠ R6；不写 RPO/RTO/SLA；等价夹具 ≠ 冻结稳定版对。 |
-| B6 | 冻结候选上 R6 + 所需 G-07 | 隔离资源 | **已汇总（2026-09-07）证据门 FAIL / R6 未通过**：等价 D1（pin `0.0.0-5ed2b916b569`，项目 `pf-r6-d1-20260907`）登录/设置/空 provider/重启 PASS；D3 沿用 B4 PASS（在途 UNKNOWN）；N→N+1 沿用 B5 等价夹具（无冻结稳定版对）；G-07 在起点 `63d41d0b` **FAIL**（脏树 + 跑中 HEAD 漂移至 `d0959fc48`；Go 无缓存全量 / web lint / web-build 失败）。详见 [release-r6-readiness-gate](tasks/archive/release-r6-readiness-gate.md)。跟进 [release-r6-clean-candidate-gate](tasks/release-r6-clean-candidate-gate.md)。**不得**标总纲 R6 通过。 |
+| B6 | 冻结候选上 R6 + 所需 G-07 | 隔离资源 | **已汇总（2026-09-07）证据门 FAIL / R6 未通过**：等价 D1（pin `0.0.0-5ed2b916b569`，项目 `pf-r6-d1-20260907`）登录/设置/空 provider/重启 PASS；D3 沿用 B4 PASS（在途 UNKNOWN）；N→N+1 沿用 B5 等价夹具（无冻结稳定版对）；G-07 在起点 `63d41d0b` **FAIL**（脏树 + 跑中 HEAD 漂移至 `d0959fc48`；Go 无缓存全量 / web lint / web-build 失败）。详见 [release-r6-readiness-gate](tasks/archive/release-r6-readiness-gate.md)。跟进干净候选重跑 [release-r6-clean-candidate-gate](tasks/archive/release-r6-clean-candidate-gate.md)：`e8cb494d`+最窄修补 G-07 **PASS**；正式 D4 / pin 映射 / 资源预算仍缺 → **R6 仍未通过**。**不得**标总纲 R6 通过。 |
 
 未知输入（保持开放）：生产主机 OS/磁盘、备份介质、公网 DNS/TLS、真实商用数据规模、可接受停机策略、首个稳定版日期、是否要求 provider 密钥加密、多商家就绪时间线。不在此填写容量、RPO/RTO 或 SLA 数字。
 
@@ -376,4 +376,5 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 - 2026-09-07 B3：备份/恢复脚本与一致点 runbook（PG + storage + agent `/data` + `.env`，可选 Redis）；MANIFEST 记录版本身份与在途作业处置。详见 [release-backup-restore](tasks/archive/release-backup-restore.md)。未宣称 D3 全项实跑 / R6。
 - 2026-09-07 B4：隔离全栈 D3 恢复演练证据（发行物 `0.0.0-5ed2b916b569`；`pf-d3-src/dst-20260907`）。登录/媒体 HTTP/Agent health/版本身份+CHECKSUMS 通过；在途作业收敛 UNKNOWN。详见 [release-d3-restore-drill](tasks/archive/release-d3-restore-drill.md)。≠ R6 / ≠ B5。
 - 2026-09-07 B5：N→N+1 升级合同与 `release-upgrade.sh`；文档歧义收窄；隔离等价夹具主路径 + migrate fail-stop。详见 [release-n-to-n1-upgrade](tasks/archive/release-n-to-n1-upgrade.md)。≠ R6；≠ 冻结稳定版对正式 D4。
-- 2026-09-07 B6：R6 汇总门证据写入 [release-r6-readiness-gate](tasks/archive/release-r6-readiness-gate.md)；等价 D1 补登录/设置/空 provider；G-07 FAIL；**总纲 R6 未通过**。跟进干净候选重跑见 [release-r6-clean-candidate-gate](tasks/release-r6-clean-candidate-gate.md)。
+- 2026-09-07 B6：R6 汇总门证据写入 [release-r6-readiness-gate](tasks/archive/release-r6-readiness-gate.md)；等价 D1 补登录/设置/空 provider；G-07 FAIL；**总纲 R6 未通过**。跟进干净候选重跑见 [release-r6-clean-candidate-gate](tasks/archive/release-r6-clean-candidate-gate.md)。
+- 2026-09-07 干净候选门：独立 checkout `e8cb494d`；最窄修补后 G-07 无缓存全量 PASS；正式 D4 冻结稳定版对仍缺；pin `0.0.0-5ed2b916b569`≠候选；**R6 仍未通过**。证据见 [release-r6-clean-candidate-gate](tasks/archive/release-r6-clean-candidate-gate.md)。跟进 [release-r6-pin-and-formal-d4](tasks/release-r6-pin-and-formal-d4.md)。

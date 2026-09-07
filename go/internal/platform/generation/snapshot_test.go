@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
@@ -215,6 +216,7 @@ func resetGenerationRows(t *testing.T, db *gorm.DB) {
 
 func insertGraphRun(t *testing.T, db *gorm.DB, now time.Time, nodeStatuses []string) {
 	t.Helper()
+	_ = auth.MustDevMerchantID(t, db)
 	productID := clockid.New()
 	graphID := clockid.New()
 	runID := clockid.New()
@@ -249,6 +251,7 @@ func insertGraphRun(t *testing.T, db *gorm.DB, now time.Time, nodeStatuses []str
 
 func insertImageSession(t *testing.T, db *gorm.DB, now time.Time) string {
 	t.Helper()
+	_ = auth.MustDevMerchantID(t, db)
 	id := clockid.New()
 	if err := db.Exec(`
 		INSERT INTO image_sessions (id, title, created_at, updated_at) VALUES (?, 'capacity', ?, ?)

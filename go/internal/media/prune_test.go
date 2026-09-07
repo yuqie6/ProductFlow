@@ -55,11 +55,17 @@ func TestPruneKeepsReferencedMedia(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	merchantID := clockid.New()
+	if _, err := pfdb.Exec(ctx, tx, `
+		INSERT INTO merchants (id, name, status, created_at, updated_at) VALUES ($1, '引用商家', 'active', NOW(), NOW())
+	`, merchantID); err != nil {
+		t.Fatal(err)
+	}
 	productID := clockid.New()
 	assetID := clockid.New()
 	if _, err := pfdb.Exec(ctx, tx, `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '引用商品', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, name, merchant_id, created_at, updated_at) VALUES ($1, '引用商品', $2, NOW(), NOW())
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pfdb.Exec(ctx, tx, `

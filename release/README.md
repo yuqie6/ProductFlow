@@ -2,7 +2,7 @@
 
 自营与自托管使用**同一套**发行物：版本化镜像 tag、锁定 Compose、`.env` 样例与 `VERSION` / `images.env`。本目录是源码树内的安装包模板；发布者用 `scripts/release-pack.sh` 打出 `dist/release/productflow-<tag>/`（及 `.tar.gz`）交给空主机。
 
-本路径覆盖总纲「可安装」方向与演练合同 **D1**（干净安装步骤），**B3** 备份/恢复与一致点 runbook（对齐 **D2**），**B4** 恢复演练备注，以及 **B5 / D4** 稳定版起 **N→N+1** 升级合同与最小步骤。**B6**（2026-09-07）已在隔离资源汇总 D1/D3/N→N+1/G-07：**R6 未通过**（G-07 FAIL；缺冻结稳定版对与单一候选）。证据见 [`docs/audits/tasks/archive/release-r6-readiness-gate.md`](../docs/audits/tasks/archive/release-r6-readiness-gate.md)；跟进 [`release-r6-clean-candidate-gate`](../docs/audits/tasks/release-r6-clean-candidate-gate.md)。**不**宣称 **R6** 已通过；不杜撰 RPO/RTO/SLA。
+本路径覆盖总纲「可安装」方向与演练合同 **D1**（干净安装步骤），**B3** 备份/恢复与一致点 runbook（对齐 **D2**），**B4** 恢复演练备注，以及 **B5 / D4** 稳定版起 **N→N+1** 升级合同与最小步骤。**B6**（2026-09-07）已在隔离资源汇总 D1/D3/N→N+1/G-07：**R6 未通过**。干净候选重跑（同日）：独立 checkout `e8cb494d`+最窄修补上 G-07 PASS，惟正式 D4 稳定对与 pin=候选仍缺 → **R6 仍未通过**。证据见 [`docs/audits/tasks/archive/release-r6-readiness-gate.md`](../docs/audits/tasks/archive/release-r6-readiness-gate.md) 与 [`release-r6-clean-candidate-gate`](../docs/audits/tasks/archive/release-r6-clean-candidate-gate.md)。跟进 [`release-r6-pin-and-formal-d4`](../docs/audits/tasks/release-r6-pin-and-formal-d4.md)。**不**宣称 **R6** 已通过；不杜撰 RPO/RTO/SLA。
 
 ## 镜像 tag 约定
 

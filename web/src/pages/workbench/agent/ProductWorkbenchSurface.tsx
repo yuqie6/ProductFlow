@@ -5,7 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Boxes, CircleAlert, CircleDot, Eye, Images, Plus, RotateCw, Sparkles, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
@@ -28,13 +28,24 @@ import type {
   WorkflowRecipeSummary,
 } from "../../../lib/types";
 import { inspectableGraphNodeId } from "../canvas/graphCatalog";
-import { GraphAddNodePanel } from "../canvas/GraphAddNodePanel";
 import { GraphCanvasPanel, type GraphCanvasActions, type GraphCanvasCommitNodeInput, type WorkbenchMainView } from "../canvas/GraphCanvasPanel";
 import { resolveWorkbenchMainView } from "../canvas/resultProjection";
-import { GraphLibraryPanel } from "../canvas/GraphLibraryPanel";
-import { GraphNodeInspector } from "../canvas/GraphNodeInspector";
-import { GraphRunsPanel } from "../canvas/GraphRunsPanel";
-import { RecipeLibraryPanel } from "../canvas/RecipeLibraryPanel";
+
+const GraphAddNodePanel = lazy(() =>
+  import("../canvas/GraphAddNodePanel").then((module) => ({ default: module.GraphAddNodePanel })),
+);
+const GraphLibraryPanel = lazy(() =>
+  import("../canvas/GraphLibraryPanel").then((module) => ({ default: module.GraphLibraryPanel })),
+);
+const GraphNodeInspector = lazy(() =>
+  import("../canvas/GraphNodeInspector").then((module) => ({ default: module.GraphNodeInspector })),
+);
+const GraphRunsPanel = lazy(() =>
+  import("../canvas/GraphRunsPanel").then((module) => ({ default: module.GraphRunsPanel })),
+);
+const RecipeLibraryPanel = lazy(() =>
+  import("../canvas/RecipeLibraryPanel").then((module) => ({ default: module.RecipeLibraryPanel })),
+);
 import {
   existingWorkbenchNodeIds,
   patchWorkbenchUiState,
@@ -50,6 +61,11 @@ import {
 } from "./AgentWorkbenchShell";
 import { isHttpErrorStatus, readWorkflowGraphOrNull } from "./productWorkbenchRoute";
 import { WorkflowOnboardingHero } from "./WorkflowOnboardingHero";
+
+
+function SidebarPanelSuspense({ children }: { children: import("react").ReactNode }) {
+  return <Suspense fallback={null}>{children}</Suspense>;
+}
 
 export type CanvasSelectionSource = "pointer" | "agent";
 
@@ -356,6 +372,7 @@ export function ProductWorkbenchSurface({
       label: t("graph.palette.title"),
       icon: <Plus size={17} />,
       content: (
+        <SidebarPanelSuspense>
         <GraphAddNodePanel
           catalog={catalog}
           catalogError={catalogError}
@@ -379,6 +396,7 @@ export function ProductWorkbenchSurface({
             void requestSidebarTool("recipes");
           }}
         />
+        </SidebarPanelSuspense>
       ),
     },
     {
@@ -386,6 +404,7 @@ export function ProductWorkbenchSurface({
       label: t("graph.inspector.title"),
       icon: <Eye size={17} />,
       content: (
+        <SidebarPanelSuspense>
         <GraphNodeInspector
           graph={liveGraph}
           node={selected}
@@ -414,6 +433,7 @@ export function ProductWorkbenchSurface({
           onPreviewRun={actions.previewRun}
           onHideRunPreview={actions.hideRunPreview}
         />
+        </SidebarPanelSuspense>
       ),
     },
     {
@@ -421,6 +441,7 @@ export function ProductWorkbenchSurface({
       label: t("graph.runs.title"),
       icon: <CircleDot size={17} />,
       content: (
+        <SidebarPanelSuspense>
         <GraphRunsPanel
           productId={product.id}
           graph={liveGraph}
@@ -432,6 +453,7 @@ export function ProductWorkbenchSurface({
           onPreviewRun={actions.previewRun}
           onHideRunPreview={actions.hideRunPreview}
         />
+        </SidebarPanelSuspense>
       ),
     },
     {
@@ -440,6 +462,7 @@ export function ProductWorkbenchSurface({
       icon: <Images size={17} />,
       contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
       content: (
+        <SidebarPanelSuspense>
         <GraphLibraryPanel
           product={product}
           graph={liveGraph}
@@ -458,6 +481,7 @@ export function ProductWorkbenchSurface({
           }}
           onBound={() => setBindNodeId(null)}
         />
+        </SidebarPanelSuspense>
       ),
     },
   ] : [];
@@ -479,6 +503,7 @@ export function ProductWorkbenchSurface({
             />
           ) : null}
           <div className="min-h-0 flex-1 overflow-y-auto">
+            <SidebarPanelSuspense>
             <RecipeLibraryPanel
               recipes={recipesQuery.data ?? []}
               loading={recipesQuery.isLoading}
@@ -511,6 +536,7 @@ export function ProductWorkbenchSurface({
               }}
               onArchive={setArchiveRecipe}
             />
+            </SidebarPanelSuspense>
           </div>
         </>
       ),

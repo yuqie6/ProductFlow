@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/generation"
@@ -154,6 +155,7 @@ func TestSnapshotGenerationAdmissionRunningUsesSharedCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
+	_ = auth.MustDevMerchantID(t, gdb)
 	productID, graphID, runID := clockid.New(), clockid.New(), clockid.New()
 	if err := gdb.Exec(`INSERT INTO products (id, name, created_at, updated_at) VALUES (?, 'admission-metric', ?, ?)`, productID, now, now).Error; err != nil {
 		t.Fatal(err)
