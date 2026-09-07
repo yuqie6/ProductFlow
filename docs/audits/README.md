@@ -46,7 +46,8 @@
 | release-readiness-baseline | 平台可靠性；发行差距已归档 | 2026-09-07 完成归档；下一项 B1 `release-compose-proxy-overlay` |
 | release-compose-proxy-overlay | 平台可靠性 B1 | 2026-09-07 完成归档；nginx+prod-ports |
 | release-versioned-artifact | 平台可靠性 B2；版本化发行物 | 新发布开放 |
-| compete-facts-layout-contract | 图片质量；事实/排版合同 | CTO 认领 `sub-image/…`，执行中 |
+| compete-facts-layout-contract | 图片质量合同已归档 | 2026-09-07 完成；下一项 CF-B0 `compete-facts-layer-gate` |
+| compete-facts-layer-gate | 图片质量 CF-B0；事实来源分层闸 | CTO 认领 `sub-image/…`，执行中 |
 | delivery-adoption-snapshot | 工作流体验；交付采用与版本快照 | 新发布；阻塞于成果投影交付 |
 | image-quality-content-pilot | 图片质量真实对照 | CTO goal 授权批次费用上限；状态开放，待隔离栈预约 |
 | eval-skills | Agent 质量；图观察和测量校正已有归档交付 | 保留候选与冻结 A/B 合同；新固定窗口仍未就绪 |

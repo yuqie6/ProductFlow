@@ -12,18 +12,106 @@
 
 ## 组内交付
 
-1. [compete-facts-layout-contract](tasks/compete-facts-layout-contract.md)：冻结事实约束、双路线产图与受控排版/品牌继承的实施合同与批次。
+1. [compete-facts-layout-contract](tasks/archive/compete-facts-layout-contract.md)：已冻结 IQ-CF-01…08 与 CF-B0…B5。下一项 [事实分层闸 CF-B0](tasks/compete-facts-layer-gate.md)。
 2. [image-quality-content-pilot](tasks/image-quality-content-pilot.md)：固定两商品内容策略候选真实对照（费用上限内已授权）。
 3. 有真实差距后按合同发布生成链/排版实现切片；不与旧 42/32 图位完成条件混写。
 4. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
 
 用户已授权组内开发；当前先交付采证任务，有证据的生成链修复按组内序列确认任务范围和占用后推进。共用 provider/DB/浏览器资源仍需排他预约。工作流操作正确性与执行可靠性的固定合同继续适用，不复制 Graph 或图片执行器。
 
+<a id="compete-facts-layout"></a>
+
+## 事实约束与排版分工合同
+
+依据 [总纲 §6.1–§6.3](../ROADMAP.md#61-商品事实约束生产) 与 [compete-facts-layout-contract](tasks/archive/compete-facts-layout-contract.md)。本节冻结实施合同与批次；**不实现业务代码、不选定第三方 SDK、不改下方 IMG 旧 42/32 图位完成条件**。完成合同≠图片质量门 R3 通过。
+
+冻结基线：认领时 HEAD `d6709c4aacb2e26bb30ab70a99d08b1dca05f487`（2026-09-07）。下列「现场枚举」对应该提交的只读结论。
+
+### 现场枚举（对照源码，非复述总纲）
+
+| 区域 | 已有 | 缺口（相对 §6.1–§6.3） |
+|---|---|---|
+| 商品事实 | `product/facts.go`：不可变 `product_fact_set_versions`；`source_type` 闭集 `user\|image_observation\|agent_inference`；`status` 闭集 `observed\|user_declared\|confirmed\|conflicted`；`requires_confirmation` / `evidence_asset_ids` / `conflicts` | 无「营销口吻不得升级为性能证据」的写入闸；无事实变更→依赖图位的影响预览 API/UI；争议展示未成产品合同 |
+| 编译入边与 digest | `graph/compiler.go`：`incomingSorted` 只扫入边；`incomingFactSetVersions` 写入 digest；`execute_node.go` `skipUnchanged` 同 digest 跳过 | 变更后自动跳过≠用户可见的影响预览与「选择更新范围」；未连边资料不进运行输入（已正确，须保持） |
+| 图位文字 | `image_prompt` Catalog 有 `fact_keys`；`listing_prompt.go` 组装「图片内文字」；`text_settings` policy `none\|required` | 无持久化「成片文字 → fact key」追溯；卖点「单图一购买理由」仍靠内容策略候选，非法证据未硬闸 |
+| 配方清身份 | `recipe/payload.go` 剥 `source_product_id` / `fact_set_version_id` / `visual_system_version_id` / `visual_overrides` / `fact_keys` 等 | 结构复用已有；品牌/视觉方案版本继承与「第二商品不带旧身份」缺产品级继承链 |
+| 主体/局部 | `localedit`：供应商 `masked_edit`（`remove\|replace_text\|inpaint`），非确定性抠图保真链 | **无**主体提取+背景/阴影+比例的保留主体产图路线；不能把 localedit 标成像素保真 |
+| 生成式摄影 | `image_generation` + providers；提示词可含「保持一致」类文案 | 无路线标签区分「保留主体 vs 生成式」；无禁止用提示词宣称像素保真的合同闸 |
+| 交付规格 | `delivery/spec.go` + `renderer.go`：确定性缩放/裁切/编码（png/jpeg/webp），`Render` 不调模型 | **不是**图内二维排版；无层/字体/安全区组合器 |
+| 视觉方案 | 表 `visual_systems` / `visual_system_versions`；节点 `visual_overlay`；`mergeImageVisual` 本地 overlay 盖系统；配方 `preferred_visual_system_version_id` | **无** Brand 实体与品牌版本；总纲四级继承未落地；品牌更新静默改在做任务的防护未建 |
+| 采用快照 | 体验组 [delivery-adoption-snapshot](tasks/delivery-adoption-snapshot.md)（阻塞，待成果投影） | 本组定义身份/文字**合格判据**；采用/导出 UX 与快照持久化归体验组 |
+
+### 可执行合同条目
+
+| ID | 合同 | 验证层 | 状态 |
+|---|---|---|---|
+| IQ-CF-01 | **事实来源分层**：每条事实保留 `source_type` 与 `status`；`agent_inference` / 未确认 `observed` 不得静默升为 `confirmed` 性能断言；`conflicted` 与 `requires_confirmation=true` 必须对用户可见且可裁定。品牌营销口吻（卖点文案）不得写入与规格/材质同级的「已确认性能事实」。 | 写入校验 + UI 展示 + 正反夹具；复用 `normalizeFactPayload` 闭集，扩展规则不得开第二事实仓库 | `缺失`（字段已有，分层业务闸未齐） |
+| IQ-CF-02 | **图位文字追溯**：信息图成稿中的可核验文字（规格、容量、材质、卖点短句）须能追到本商品 fact key 或显式「用户本图覆盖」标记；卖点图默认一图一主要购买理由。无依据文字不得进入交付采用合格集。 | 节点/产物元数据或导出旁路索引；对照 `fact_keys` 与成片 OCR/人工检；内容策略候选可作输入不得替代本闸 | `缺失` |
+| IQ-CF-03 | **规格/事实变更影响预览**：确认事实新版本前，列出依赖该 fact（经 RoleFacts 入边 → prompt/generation 图位）的文案与图位；**已完成且 digest 不受影响的图不得自动重做**；用户显式选择更新范围。旧运行仍可通过当时 `fact_set_version_id` + `input_digest` 解释。 | 预览 API/用例 + `skipUnchanged` 回归；禁止全图扫描注入未连接资料 | `缺失`（digest/skip 已有，预览与范围选择无） |
+| IQ-CF-04 | **主体保留路线**：有可靠主体图且需外观保真时，走主体提取→背景/阴影/位置比例→（可选）确定性排版；输出进入现有资产与交付链。透明/反光/遮挡边缘须质量检查，**不得宣称绝对像素保真**。 | 路线标签 + 质检失败留未解决项；与 localedit 供应商修补区分记账 | `缺失` |
+| IQ-CF-05 | **生成式摄影路线**：新场景/创意摄影使用生成模型；记录身份参考与预期可变项；对照实果。提示词或 UI **不得**用「保持像素一致 / 像素级还原」等表述把本路线标成保留主体。 | 路线枚举 + 提示词/文案审计测试；失败留未解决项，不用均分掩盖身份错误 | `缺失`（生成链已有，路线合同与禁令未钉） |
+| IQ-CF-06 | **受控二维排版边界**：营销字、规格、Logo 使用图内组合：图片层、文字层、必要形状、字体、字号、颜色、对齐、安全区。归属图片产出与 media lineage；**不**承担 DAG 调度，**不**第二工作流编辑器。只编辑本系统持有的结构；任意图片分层后置。浏览器预览与服务端导出同输入一致性（中文换行、缺字、长标题、像素尺寸）可测。技术选型在实现任务中按下方比较维度验证后选定，**本文件不指定 SDK**。 | 结构 schema + 预览/导出一致性测试；选型备忘只记比较结果 | `缺失`（DeliverySpec≠排版） |
+| IQ-CF-07 | **品牌/视觉继承优先级**：本商品显式覆盖 > 选定视觉方案版本 > 品牌版本 > 产品默认。事实与身份参考来自目标商品，**不参与**风格继承链。实例保存所选版本 id；品牌/方案更新先列受影响商品，须显式采用新版本，不得静默改在做任务与旧交付。配方继续清除来源商品身份与 fact/visual 版本绑定。 | 继承解析单测 + 配方 extract/apply 回归 + 第二商品无旧身份样例 | `缺失`（visual_system / overlay 局部存在；Brand 与四级链未建） |
+| IQ-CF-08 | **与采用快照交接**：本组判定「身份合格 / 文字合格 / 路线声明正确」；体验组 [delivery-adoption-snapshot](tasks/delivery-adoption-snapshot.md) 负责采用动作、快照持久化、导出 UX。不合格图可生成但**不得**进入「已采用交付」合格集（由体验组消费本判据）。O1–O7 文稿采用 ≠ 交付采用。 | 跨组合同引用；本组提供判据表，不写采用表模型 | `部分完成`（判据见下；快照实现未交付） |
+
+#### IQ-CF-06 技术选型比较维度（不选定实现）
+
+实现切片启动前，对候选渲染/编辑组件（含自研最小集）逐项记分，**未经验证不得写入依赖**：
+
+| 维度 | 必须可回答 |
+|---|---|
+| 能力 | 多图层、文本框、字体子集、对齐、安全区、导出 PNG/JPEG；中文换行与缺字行为 |
+| 一致性 | 浏览器预览像素与服务端导出在固定夹具下的差异上限 |
+| 许可 | 字体与引擎许可证是否允许自托管商用 |
+| 维护 | 上游活跃度、安全响应、打包体积对 `web`/`go` 边界的影响 |
+| 归属 | 排版状态存哪张表/哪个 artifact；失败是否进入现有 unknown 合同 |
+| 非目标 | 不替代 Graph DAG；不做任意图片 PSD 级通用设计器 |
+
+#### 采用合格判据（交体验组）
+
+| 判据 | 合格 | 不合格（可生成，不可采用为交付） |
+|---|---|---|
+| 身份 | 可见主体与参考 SKU 一致；数量/部件与确认事实一致（例：两耳塞不得成三） | 身份漂移、未解决质检项、路线声称像素保真但实为生成式 |
+| 文字 | 成片可核验字可追到 fact 或本图覆盖；无未确认性能参数上图 | 包装臆造参数、无依据功效、卖点多理由堆砌且无法追溯 |
+| 规格变更后 | 用户未选入更新范围的已完成图保持原 artifact | 静默重做未受影响图位 |
+| 品牌复用 | 第二商品仅继承风格链；facts/参考为新商品 | 带入来源商品文案、fact 版本或身份参考 |
+
+### 实施批次
+
+总约束：每批可独立验收；不改 IMG-D/C 与 42/32 图位门槛；不调用真实 provider 完成本合同任务；实现批须另发看板 issue 并确认占用。依赖：CF-B0→CF-B1→CF-B2；CF-B3 可与 CF-B1 并行；CF-B4 依赖 CF-B3 路线标签；CF-B5 依赖 CF-B0 且与商家平台 Brand 骨架衔接（Brand 表未建时先落视觉方案版本+商品覆盖，品牌层用显式占位合同）。
+
+| 批次 | 名称 | 精确范围 | 正测样例 | 反测样例 | 验证层 |
+|---|---|---|---|---|---|
+| **CF-B0** | 事实来源分层闸 | 扩展/收紧 facts 写入与展示：确认门、冲突可见、营销文案与性能事实分栏；不新建事实仓库 | 用户确认容量 `600ml`→`confirmed`+`user`；图观材质→`image_observation` 待确认 | `agent_inference`「保温 24h」未确认即当 `confirmed` 性能；口吻「明星同款」写入规格事实 | `product/facts*` 夹具 + 工作台资料面板 |
+| **CF-B1** | 图位文字追溯 | prompt/generation 产物记录文字所用 `fact_keys` 或本图覆盖；卖点一图一理由检查器（可先非 live） | 规格图「600ml」← fact `capacity`；保温杯卖点只强调「轻量杯身」且有依据 | 成片「24h 保温」无 fact；卖点同时堆三句无关口号且无 key | 产物元数据单测；抽检清单；内容试点可对照但非本批完成条件 |
+| **CF-B2** | 变更影响预览 | 事实保存前预览依赖图位；用户多选更新；未选中已完成节点保持 artifact；解释旧 `fact_set_version_id` | 改 500→600ml：列出规格/卖点图；场景图无容量字则默认不入更新集且不重跑 | 改容量后全图自动重跑；预览注入未连边节点资料 | 预览 API + `skipUnchanged`/`incomingFactSetVersions` 回归 |
+| **CF-B3** | 双路线声明 | 图位/运行记录 `produce_route=subject_preserve\|generative`；生成式禁像素保真文案；保留主体路线失败→未解决项 | 主图 `subject_preserve`；场景 `generative` 且 UI 显示「可能改变外观」 | 生成式路线提示词含「像素级一致」；保留主体失败仍标已交付合格 | 枚举/文案审计测试；路线字段持久化 |
+| **CF-B4** | 受控二维排版 | 先完成选型比较备忘（上表维度），再最小结构：层、字体、安全区、预览/导出一致性；接现有资产 lineage | 规格字排版改字号不重生成杯身；预览与导出同夹具一致 | 排版服务调度 Graph 节点；未经验证 SDK 直接进主依赖；缺字静默空白当合格 | 选型备忘审阅 + 一致性夹具；**本证据任务只冻结维度，不选型** |
+| **CF-B5** | 品牌/视觉继承 | 四级优先级解析；实例存版本 id；更新需显式采用；配方清身份保持；第二商品样例 | 商品 overlay 色盖方案色盖品牌色盖默认；新杯复用方案但容量为新 fact | 事实/参考进入风格链；品牌更新静默改旧交付；配方带回 `source_product_id` | 解析单测 + recipe payload 回归 + 手工第二商品清单 |
+
+#### 保温杯贯通流程 → 批次（可自动化部分）
+
+| 总纲 §6.6 步骤 | 可自动化断言 | 批次 |
+|---|---|---|
+| 上传参考、已知容量/材质；不可确认保温时长留空 | 无证据 key 不得 `confirmed`；留空不造值 | CF-B0 |
+| 删无依据性能宣传；改清单 | 冲突/未确认可见；保存产新 fact 版本 | CF-B0 |
+| 主图保留主体、场景生成式、规格受控排版；费用/预期变化运行前可见 | 路线标签与预期变化字段 | CF-B3、CF-B4 |
+| 改标题/字位不重生成杯身 | 排版重出、主体资产不变 | CF-B4 |
+| 采用与规格文件；重跑不改已交付 | 合格判据 IQ-CF-08；快照归体验组 | CF-B1 判据 + delivery-adoption-snapshot |
+| 第二商品复用布局/视觉；新容量与参考 | 继承链与清身份 | CF-B5 |
+
+### 未知项与非本任务范围
+
+- Brand 实体与商户多品牌 UI 归属商家平台；本组只钉继承优先级与质量判据，表结构实现可与商家批次衔接。
+- 主体提取算法/模型未选型；CF-B3 先钉路线与禁令，CF-B4/实现另发。
+- 成片文字自动 OCR 追溯是否首版必备未裁定；CF-B1 允许「元数据声明 + 抽检」先行，OCR 闸另发。
+- 旧 42 图位池与 32 图位诊断合同保持原状态；本竞争力合同样本独立冻结，不得回写 IMG live 表凑数。
+
 <a id="image-quality"></a>
 
 ## 图片质量验收
 
-以下 IMG 合同和历史证据从原评测账本迁入，数值门槛不变。图片四维评分独立于 Agent pass^k。池规模是任务记录，最新数量须按任务约定核验实际 manifest。
+以下 IMG 合同和历史证据从原评测账本迁入，数值门槛不变。图片四维评分独立于 Agent pass^k。池规模是任务记录，最新数量须按任务约定核验实际 manifest。**本节完成条件与上方 IQ-CF / CF-B\* 相互独立。**
 
 ### 来源与使用规则
 
