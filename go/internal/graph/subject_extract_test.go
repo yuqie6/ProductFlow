@@ -44,6 +44,18 @@ func TestApplySubjectPreserveExtractSuccessMetadata(t *testing.T) {
 	if maskHash != result.MaskSHA256 || cutoutHash != result.CutoutSHA256 {
 		t.Fatal("metadata hashes must match extract result")
 	}
+	composeMeta, ok := gated["subject_compose"].(map[string]any)
+	if !ok || composeMeta["pass"] != true {
+		t.Fatalf("want subject_compose on success: %+v", gated)
+	}
+	pngHash, _ := composeMeta["png_sha256"].(string)
+	if pngHash == "" {
+		t.Fatalf("compose png hash missing: %+v", composeMeta)
+	}
+	placement, _ := composeMeta["placement"].(map[string]any)
+	if placement["w"] == nil || placement["h"] == nil {
+		t.Fatalf("compose placement missing: %+v", composeMeta)
+	}
 }
 
 func TestApplySubjectPreserveExtractFailureUnqualified(t *testing.T) {
@@ -113,6 +125,10 @@ func TestGateImageProduceRouteSubjectPreserveSuccessMetadata(t *testing.T) {
 	}
 	if check["mask_sha256"] == "" || check["cutout_sha256"] == "" {
 		t.Fatalf("verifiable hashes missing: %+v", check)
+	}
+	composeMeta, ok := gated["subject_compose"].(map[string]any)
+	if !ok || composeMeta["pass"] != true || composeMeta["png_sha256"] == "" {
+		t.Fatalf("want subject_compose metadata: %+v", gated)
 	}
 }
 

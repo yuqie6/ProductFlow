@@ -72,9 +72,82 @@ func ApplySubjectPreserveGate(produceRoute map[string]any, result Result) map[st
 	return out
 }
 
+// CheckComposeAsMap 供 produce_route.subject_compose JSON 写入（不含原始 PNG 字节）。
+func CheckComposeAsMap(r ComposeResult) map[string]any {
+	out := map[string]any{
+		"schema_version":  r.SchemaVersion,
+		"engine":          r.Engine,
+		"pass":            r.Pass,
+		"detail":          r.Detail,
+		"contact_shadow":  r.ContactShadow,
+		"background_kind": r.BackgroundKind,
+		"lineage": map[string]any{
+			"kind":                   r.Lineage.Kind,
+			"cutout_content_sha256":  r.Lineage.CutoutContentSHA256,
+			"source_content_sha256":  r.Lineage.SourceContentSHA256,
+		},
+	}
+	if r.Width > 0 {
+		out["width"] = r.Width
+		out["height"] = r.Height
+	}
+	if r.PNGSHA256 != "" {
+		out["png_sha256"] = r.PNGSHA256
+		out["lineage"].(map[string]any)["compose_content_sha256"] = r.Lineage.ComposeContentSHA256
+	}
+	if r.CutoutSHA256 != "" {
+		out["cutout_sha256"] = r.CutoutSHA256
+	}
+	if r.Placement.W > 0 && r.Placement.H > 0 {
+		out["placement"] = map[string]any{
+			"x": r.Placement.X, "y": r.Placement.Y,
+			"w": r.Placement.W, "h": r.Placement.H,
+		}
+	}
+	if len(r.UnresolvedItems) > 0 {
+		out["unresolved_items"] = stringSliceAny(r.UnresolvedItems)
+	}
+	return out
+}
+
+// ApplySubjectComposeGate 把合成结果写入 produce_route.subject_compose；失败强制 route_qualified=false。
+// 成功不抬高原先不合格。非 subject_preserve 路线原样返回。
+func ApplySubjectComposeGate(produceRoute map[string]any, result ComposeResult) map[string]any {
+	out := cloneMap(produceRoute)
+	if out == nil {
+		out = map[string]any{}
+	}
+	route, _ := out["route"].(string)
+	if route != "" && route != "subject_preserve" {
+		return out
+	}
+	if route == "" {
+		out["route"] = "subject_preserve"
+	}
+	out["subject_compose"] = CheckComposeAsMap(result)
+	if !result.Pass {
+		out["route_qualified"] = false
+		unresolved := stringListFromAny(out["unresolved_items"])
+		unresolved = append(unresolved, "保留主体合成质检失败")
+		for _, item := range result.UnresolvedItems {
+			if item == "" {
+				continue
+			}
+			unresolved = append(unresolved, item)
+		}
+		out["unresolved_items"] = stringSliceAny(uniqueSorted(unresolved))
+	}
+	return out
+}
+
 // RouteQualifiedAfterExtract 综合声明合格与提取闸：提取失败则不得 pass。
 func RouteQualifiedAfterExtract(declarationQualified bool, result Result) bool {
 	return declarationQualified && result.Pass
+}
+
+// RouteQualifiedAfterCompose 综合声明合格与提取+合成闸。
+func RouteQualifiedAfterCompose(declarationQualified bool, extract Result, compose ComposeResult) bool {
+	return declarationQualified && extract.Pass && compose.Pass
 }
 
 func cloneMap(in map[string]any) map[string]any {

@@ -260,7 +260,7 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 			HasIdentityReference: hasProductIdentityReference(imgReq.References),
 			PromptTexts:          collectPromptAuditTexts(promptPayload, imgReq.VariationInstruction),
 		}))
-		// IQ-CF-04：subject_preserve 生成路径自动 Apply 主体提取；失败强制 route_qualified=false。
+		// IQ-CF-04：subject_preserve 生成路径自动 Apply 主体提取+合成；失败强制 route_qualified=false。
 		routeRec = gateImageProduceRouteWithSubjectExtract(imgReq.References, routeRec)
 		return e.persistImageArtifact(ctx, run, *nodeRun, node, img, digest, promote, image.Name(), imgReq.PromptArtifactID, imageTrace, routeRec)
 	default:
