@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [release-r6-readiness-gate.md](release-r6-readiness-gate.md) | 完成 | B6 汇总；R6 未通过（G-07 FAIL）；诚实 FAIL |
 | [workbench-remember-last-view.md](workbench-remember-last-view.md) | 完成 | 商品级主视图偏好；无偏好仍条件默认；≠全局成果 |
 | [merchant-isolation-gate.md](merchant-isolation-gate.md) | 完成 | B10/MP-B 自动化门通过；≠开放第二商/R1 |
 | [merchant-ops-surface.md](merchant-ops-surface.md) | 完成 | B9 Op settings/启停/A8草案；≠MP-B/MP-D |

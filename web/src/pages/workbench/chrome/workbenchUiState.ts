@@ -88,7 +88,8 @@ export function clearWorkbenchMainViewPreference(productId: string): void {
   try {
     const current = readWorkbenchUiState(productId);
     if (current.mainView === undefined) return;
-    const { mainView: _removed, ...rest } = current;
+    const rest: WorkbenchUiState = { ...current };
+    delete rest.mainView;
     window.localStorage.setItem(workbenchUiStorageKey(productId), JSON.stringify(rest));
   } catch {
     // 隐私模式或配额错误只影响本地写入
