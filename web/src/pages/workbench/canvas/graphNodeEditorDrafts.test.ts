@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { GraphNode } from "../../../lib/types";
+import { shouldShowFactsImpactPreview } from "./factImpactPreview";
 import {
   confirmProductFactRow,
   graphProductSourceConfig,
@@ -136,5 +137,53 @@ describe("graph node inspector drafts", () => {
       layer: "performance",
       conflicts: [],
     });
+  });
+
+  it("confirm-then-payload keeps key/value so impact preview can be skipped without crashing", () => {
+    const draft = productFactsDraft(
+      {
+        id: "p1",
+        name: "杯",
+        category: null,
+        price: null,
+        source_note: null,
+        cover_image_asset_id: null,
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "fs1",
+        version: 1,
+        facts: [{
+          key: "容量",
+          value: "500 ml",
+          source_type: "image_observation",
+          status: "observed",
+          requires_confirmation: true,
+          layer: "performance",
+        }],
+      },
+    );
+    const confirmed = {
+      ...draft,
+      facts: draft.facts.map((row) => confirmProductFactRow(row)),
+    };
+    const payload = productFactsPayload(confirmed);
+    expect(payload).toMatchObject([{
+      key: "容量",
+      value: "500 ml",
+      status: "confirmed",
+      requires_confirmation: false,
+      source_type: "user",
+    }]);
+    // Same key/value as before → wire often returns null changed_fact_keys.
+    expect(shouldShowFactsImpactPreview({
+      product_id: "p1",
+      changed_fact_keys: null as unknown as string[],
+      nodes: [],
+      default_update_node_ids: [],
+      explanation: "",
+      proposed_fact_count: 1,
+    })).toBe(false);
   });
 });

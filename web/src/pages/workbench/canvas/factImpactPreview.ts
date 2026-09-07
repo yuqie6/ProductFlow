@@ -1,10 +1,16 @@
 import type { FactImpactNode, FactsImpactPreviewResponse } from "../../../lib/types";
 
+/** Wire may encode empty Go slices as JSON null; never read `.length` on those fields bare. */
+function previewList<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
 export function defaultSelectedImpactNodeIds(preview: FactsImpactPreviewResponse): string[] {
-  if (preview.default_update_node_ids?.length) {
-    return [...preview.default_update_node_ids];
+  const defaults = previewList(preview.default_update_node_ids);
+  if (defaults.length) {
+    return [...defaults];
   }
-  return preview.nodes.filter((node) => node.default_selected).map((node) => node.node_id);
+  return previewList(preview.nodes).filter((node) => node.default_selected).map((node) => node.node_id);
 }
 
 export function toggleImpactNodeSelection(selected: string[], nodeId: string, checked: boolean): string[] {
@@ -26,5 +32,6 @@ export function impactNodeLabel(node: FactImpactNode): string {
 }
 
 export function shouldShowFactsImpactPreview(preview: FactsImpactPreviewResponse): boolean {
-  return preview.changed_fact_keys.length > 0 && preview.nodes.length > 0;
+  // Confirm-only saves often leave key/value unchanged; Go then emits changed_fact_keys: null.
+  return previewList(preview.changed_fact_keys).length > 0 && previewList(preview.nodes).length > 0;
 }

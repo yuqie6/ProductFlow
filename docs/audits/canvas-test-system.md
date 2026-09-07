@@ -103,7 +103,7 @@ O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；�
 | 导出叠层可达 | [delivery-export-overlay-fix](tasks/archive/delivery-export-overlay-fix.md)：成果态无浮动工具条；1440/390 UI 点击导出；Vitest 14；隔离 e2e 2 passed | **≠R2 全过**；仅闭合导出可达缺口 |
 | §5.4 局部修图复验 | [delivery-r2-local-edit-retest](tasks/archive/delivery-r2-local-edit-retest.md)：**本门 PASS**（2026-09-07）；隔离 mock Chromium 2 passed / 25.3s；检查器→结果/采用/撤销；1440/390 截图 | **≠R2 全过**；确定性文字层与真实 provider 质量仍缺 |
 | 品牌视觉复用 | [brand-visual-reuse](tasks/archive/brand-visual-reuse.md)：商家内视觉方案版本 CRUD；商品显式选择；IQ-CF-07 继承预览；追加版本不静默改选择；配方创建预览列继承/待填；Vitest + Go 包测 | Brand 实体 B0 已建（占位改为未选定/已存在未合并）；未宣称跨商家分享 / 品牌色全量合并 / R2 |
-| 商家成图任务闭环 | [delivery-merchant-image-loop-gate](tasks/archive/delivery-merchant-image-loop-gate.md)：**本门 PASS**（2026-09-07）；隔离 mock Chromium 1 passed / 22.4s；创建→事实/文案改稿→出图→条件默认成果→采用→导出 sha256→第二商品 Brand `brand_style_merged` 且无旧身份串入 | **≠R2 全过**；mock only；检查器「确认事实」UI 告警未修；批跑/真实 provider/确定性文字层仍缺 |
+| 商家成图任务闭环 | [delivery-merchant-image-loop-gate](tasks/archive/delivery-merchant-image-loop-gate.md)：**本门 PASS**（2026-09-07）；隔离 mock Chromium 1 passed / 22.4s；创建→事实/文案改稿→出图→条件默认成果→采用→导出 sha256→第二商品 Brand `brand_style_merged` 且无旧身份串入 | **≠R2 全过**；mock only；检查器「确认事实」null.length 已由 [delivery-inspector-confirm-facts-null](tasks/archive/delivery-inspector-confirm-facts-null.md) 修；批跑/真实 provider/确定性文字层仍缺 |
 
 两项新浏览器交付未修改生产业务代码，分别提交于 `daa4672c` 与 `f7e70e1e`。当时完整 Web 回归为 91 files / 647 tests passed，lint、build 通过，build 保留既有大 chunk 警告。Go delivery 为带 PostgreSQL 的 24 项实际通过，无跳过；不扩展为全部 Go 包通过。
 

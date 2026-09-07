@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [delivery-inspector-confirm-facts-null.md](delivery-inspector-confirm-facts-null.md) | 完成 | 确认事实 impact-preview null.length 兜底；≠R2 |
 | [merchant-mp-c-price-display-workbench.md](merchant-mp-c-price-display-workbench.md) | 完成 | 工作台 Agent 确认展示 graph.image_generation；≠R5 |
 | [delivery-merchant-image-loop-gate.md](delivery-merchant-image-loop-gate.md) | 完成 | 商家成图闭环本门 PASS（mock）；≠R2 |
 | [merchant-mp-c-unknown-expiry-b0.md](merchant-mp-c-unknown-expiry-b0.md) | 完成 | unknown TTL 全额 Settle + Op resolve；≠R5 |

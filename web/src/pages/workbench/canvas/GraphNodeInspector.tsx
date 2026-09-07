@@ -1209,7 +1209,7 @@ function ProductSourceEditor({
               <p className="font-semibold text-text-primary">{t("graph.inspector.productFactsImpactTitle")}</p>
               <p>{t("graph.inspector.productFactsImpactHint")}</p>
               <ul className="space-y-1.5">
-                {factsImpact.nodes.map((node) => {
+                {(factsImpact.nodes ?? []).map((node) => {
                   const checked = factsUpdateNodeIds.includes(node.node_id);
                   return (
                     <li key={node.node_id} className="flex items-start gap-2">

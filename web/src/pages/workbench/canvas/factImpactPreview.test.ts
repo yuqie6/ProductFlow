@@ -55,4 +55,20 @@ describe("factImpactPreview", () => {
   it("hides preview when no connected nodes", () => {
     expect(shouldShowFactsImpactPreview({ ...preview, nodes: [] })).toBe(false);
   });
+
+  it("survives confirm-only impact preview with JSON-null slices", () => {
+    // Go encodes empty ChangedFactKeys via append([]string(nil), …) as null.
+    // Confirm「确认事实」then save often only flips status, so keys are unchanged.
+    const wire = {
+      ...preview,
+      changed_fact_keys: null,
+      nodes: null,
+      default_update_node_ids: null,
+    } as unknown as FactsImpactPreviewResponse;
+
+    expect(() => shouldShowFactsImpactPreview(wire)).not.toThrow();
+    expect(shouldShowFactsImpactPreview(wire)).toBe(false);
+    expect(() => defaultSelectedImpactNodeIds(wire)).not.toThrow();
+    expect(defaultSelectedImpactNodeIds(wire)).toEqual([]);
+  });
 });
