@@ -119,6 +119,7 @@ export class TurnRuntime implements ToolRuntime {
   private readonly activeToolStepDetails = new Map<string, ToolStepDetails>();
   private readonly toolStepFailureDetails = new Map<string, ToolStepDetails>();
   private checkpointSequence = 0;
+  private checkpointWrites = Promise.resolve();
   private modelRequestSequence = 0;
   private queuedEventSequence = 0;
   private currentModelRequestID?: string;
@@ -717,7 +718,13 @@ export class TurnRuntime implements ToolRuntime {
   }
 
   /** 写入 ProductFlow checkpoint；追加失败即丢失租约并中止。 */
-  async checkpoint(kind: CheckpointKind, payload: JsonObject): Promise<void> {
+  checkpoint(kind: CheckpointKind, payload: JsonObject): Promise<void> {
+    const operation = this.checkpointWrites.then(() => this.appendCheckpoint(kind, payload));
+    this.checkpointWrites = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async appendCheckpoint(kind: CheckpointKind, payload: JsonObject): Promise<void> {
     const lease = this.executionLease;
     if (!lease || this.executionLeaseError || this.executionStopping) {
       throw this.executionLeaseError ?? new RuntimeError(409, "execution_unavailable", "Agent execution lease is unavailable");
@@ -1502,6 +1509,7 @@ export class TurnRuntime implements ToolRuntime {
     this.artifact = undefined;
     this.executionLease = undefined;
     this.checkpointSequence = 0;
+    this.checkpointWrites = Promise.resolve();
     this.modelRequestSequence = 0;
     this.queuedEventSequence = 0;
     this.currentModelRequestID = undefined;
@@ -1535,6 +1543,7 @@ export class TurnRuntime implements ToolRuntime {
   }
 
   private async cleanupAfterTurn(): Promise<void> {
+    await this.checkpointWrites;
     this.flushStreamChunks();
     await this.eventChain;
     // terminal 失败后队首仍保留原批次；本地只更新状态快照，cleanup

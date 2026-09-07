@@ -42,6 +42,7 @@
 | Graph effect 只记执行身份元数据，无法核对调用时的 typed request 与参考图字节 | callProvider/callImageProvider 持有同一个请求并直接传 Provider 方法；原 effect 记录完整请求字段、参考图元数据与 SHA-256 | Provider 内读取真实数据库，记录与收到的请求一致；256 KiB 参考图只存摘要，超限请求不写 intent/不占额度/不调用 Provider | `2610f2b0` |
 | 局部编辑成功结算容忍缺失 hold，可提交未结算资产及 succeeded | settleEditQuota 对唯一付费成功路径返回原额度错误；取消和未调用释放不扩改 | 原代码真实数据库复现缺 hold 仍成功；修复后资产/任务/attempt 回滚，补足原 attempt 预留后成功结算 | `5deb31e2` |
 | 连续生图活跃 hold 查询失败退回初始键，原数据库错误丢失甚至被后续 NotFound 容忍吞掉 | 三种 finalizer 直接消费 activeQuotaKey 的错误，删除 mustActiveQuotaKey，保留底层数据库 cause | 独立 PostgreSQL 关系不可用时三条入口透传 SQLSTATE 42P01；真实预留与余额不变 | `a32f72bc` |
+| Pi 默认并行工具同时追加 checkpoint，Node 为两个请求分配同一序号，Go 对不同内容返回 Conflict | TurnRuntime 串行持久化 checkpoint；清理等待待写链，新 Turn 重置；沿既有 lease 错误中止后续项 | 原代码两种并发场景发送 [1,1]；修复后确认成功发送 [1,2]、首条失败只发一次且两调用失败，清理等待；真实 PG 验证序号绑定内容 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -185,7 +186,7 @@ Graph 停滞跟进：当前调用链保持文稿采用先 run 后 graph，尚未
 
 本轮由同一主代理只读复核 Node manager → TurnRuntime → ProductFlowClient → Go execution/journal。当前 Node 控制实现保留：manager 拥有 admission 和 handoff 调度；TurnRuntime 拥有 lease、checkpoint、问题等待者和终态编排；PiSessionAdapter 拥有 session/model。没有发现需要将这些职责合并的证据，没有修改业务代码。
 
-- `TurnRuntime.checkpoint` 在 lease 缺失、停止或已丢失时拒绝；追加错误保存为 executionLeaseError，并 abort 当前 runtime/session。序号在追加确认后推进，每次新 Turn 重置。当前方法本身不串行化多次并发调用；尚未确认 Pi 是否可同时进入两个需要 checkpoint 的工具路径，因此列为待验证的可达性风险，不宣称已经复现竞争。
+- `TurnRuntime.checkpoint` 在 lease 缺失、停止或已丢失时拒绝；追加错误保存为 executionLeaseError，并 abort 当前 runtime/session。序号在追加确认后推进，每次新 Turn 重置。初读时尚未确认并发可达；后续已核对安装的 Pi 0.83.0 默认并行工具，并复现重复序号，后续切片已串行化 checkpoint 持久化。
 - `updateExecutionPhase` 复用 Promise 链串行发送，发送时读取最新 phase；`stopExecutionHeartbeat` 停止计时并等待该链完成。现有测试显式延迟第一个 heartbeat，验证旧请求不能覆盖 waiting_input。无需再增加 heartbeat 队列或第二套租约。
 - Node 的终态通过 journal 发布；PG 已确认的 terminal 不重复提交 checkpoint。cleanup 等待 eventChain，处理终态发布失败并释放执行；问题 waiter 被拒绝并清理。Go 负责实际 fencing、事件唯一性和 journal/projection 的事务权威，Node 本地文件结果不替代它。
 
@@ -194,3 +195,10 @@ Graph 停滞跟进：当前调用链保持文稿采用先 run 后 graph，尚未
 对应真实 PostgreSQL 边界组合实际执行并通过（5.125 秒）：`TestClaimNewAttemptResetsCheckpointSequence`、`TestJournalBatchExactReplayReturnsOriginalReceiptWithoutDuplicateRows`、`TestRejectedTurnEndCannotSplitJournalAndProjection`、`TestRecoverExpiredExecutionsRejectsStaleFencingWriter`、`TestAppendEventsAndCheckpointDoNotDeadlock`。分别核对新尝试序号、重复事件原 receipt/零重复行、非法终态不改投影、过期恢复后旧 lease 写入被拒绝，以及可控交错下的 checkpoint/journal 锁序。这不等同全部 Node/Go 进程 SIGKILL 矩阵或真实模型质量验收。
 
 本轮未运行付费模型、opt-in 重启与规模门，未改动冻结评价资源。Node 与 Go Agent 路径无新增 diff，正常 build 输出未提交。该复核补充当前证据并保留有价值的现有边界，不将测试全绿作为整体控制链路完成声明。
+
+
+Node checkpoint 顺序切片由本任务主代理负责，范围为 `agent-service/src/turn-runtime.ts`、既有 runtime 回归及 [Go 序号数据库合同](../../go/internal/agent/checkpoint_sequence_test.go)。已安装 pi-agent-core 0.83.0 的 agent.js 默认 toolExecution 为 parallel，agent-loop.js 在没有 sequential 工具时通过 Promise.all 执行工具；ProductFlow 工具及 session 未配置 sequential。多个工具经 withEffect 进入同一 checkpoint，旧代码在 await 追加后才推进序号；实测两个请求均发 sequence=1，原成功/失败两种用例都失败。
+
+修复在 TurnRuntime 内用 Promise 链串行分配序号和追加确认。单项错误仍返回原调用者并设置既有 executionLeaseError；链尾仅承接排队，后续项读取该错误后拒绝，不再次发送。cleanup 等待链完成，再释放 lease、清理 session；新 Turn 重置链和序号。两个新增 Node 回归包含延迟首条、成功/失败分支和清理等待，不为此改变 Pi 工具业务并行策略。
+
+最终 Node 整包 37 文件通过、2 文件跳过，315 测试通过、9 跳过（10.36 秒）；build 和生成合同检查通过。真实 PostgreSQL 序号冲突、尝试重置及 journal/checkpoint 锁序组合通过（2.735 秒）：同序号不同内容 Conflict，后续连续序号实际留下两行，last_checkpoint_sequence=2。本证据分别验证 Node 发送顺序与 Go 持久化合同，不声称已运行真实模型并行工具或完整跨进程 SIGKILL。主代理完整 diff 自审、docs-check 通过；未修改评价任务独占的 evals 或 eval_* 文件。

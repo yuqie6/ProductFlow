@@ -1962,3 +1962,55 @@ describe("PiRuntimeManager turn state", () => {
     }
   });
 });
+
+it.each([false, true])("orders concurrent checkpoints and stops queued writes after failure=%s", async (failFirst) => {
+  const root = await mkdtemp(join(tmpdir(), "productflow-checkpoint-order-"));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const original = new Error("checkpoint write failed");
+  const sequences: number[] = [];
+  try {
+    const store = new TurnStore(root);
+    await store.init();
+    const client = {
+      appendTurnCheckpoint: async (_conversation: string, _execution: string, args: { sequence: number }) => {
+        sequences.push(args.sequence);
+        if (sequences.length === 1) {
+          await gate;
+          if (failFirst) throw original;
+        }
+      },
+    } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
+    const manager = new PiRuntimeManager({ ...config, dataRoot: root }, store, client, {} as ConstructorParameters<typeof PiRuntimeManager>[3]);
+    const runtime = await (manager as unknown as { runtimeFor(input: Scope): Promise<import("./turn-runtime.js").TurnRuntime> }).runtimeFor(scope);
+    (runtime as unknown as { executionLease: unknown }).executionLease = {
+      execution_id: "execution-order", owner_id: "owner-order", lease_token: "lease-order",
+    };
+    const pending = Promise.allSettled([
+      runtime.checkpoint("tool_effect_intent", { tool_call_id: "one" }),
+      runtime.checkpoint("tool_effect_intent", { tool_call_id: "two" }),
+    ]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const beforeRelease = [...sequences];
+    let cleaned = false;
+    const cleanup = (runtime as unknown as { cleanupAfterTurn(): Promise<void> }).cleanupAfterTurn().then(() => { cleaned = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const cleanedBeforeRelease = cleaned;
+    release();
+    const results = await pending;
+    await cleanup;
+    expect(cleanedBeforeRelease).toBe(false);
+    expect(beforeRelease).toEqual([1]);
+    if (failFirst) {
+      expect(sequences).toEqual([1]);
+      expect(results).toEqual([{ status: "rejected", reason: original }, { status: "rejected", reason: original }]);
+    } else {
+      expect(sequences).toEqual([1, 2]);
+      expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+    }
+    await runtime.close();
+  } finally {
+    release();
+    await rm(root, { recursive: true, force: true });
+  }
+});
