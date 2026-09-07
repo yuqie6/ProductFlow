@@ -1,9 +1,9 @@
 # 任务：有产出时默认进入成果视图
 
-状态：开放
+状态：认领
 类型：实现
-认领者：—
-认领于：—
+认领者：sub-delivery/workbench-conditional-results-default
+认领于：2026-09-07T14:00:00+08:00
 业务组：工作流体验
 父账本：canvas-test-system.md
 完成后可拆：记忆上次视图（可选）；不改生成链

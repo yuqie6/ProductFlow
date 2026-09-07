@@ -288,3 +288,7 @@ release-backup:
 # Restore a productflow-backup-* directory into a new compose project. See release/README.md.
 release-restore:
     bash scripts/release-restore.sh
+
+# N→N+1 in-place upgrade (precheck → backup → pin swap → migrate → smoke). See release/README.md.
+release-upgrade:
+    bash scripts/release-upgrade.sh

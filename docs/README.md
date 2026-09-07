@@ -62,7 +62,7 @@
 3. 不再新增 ADR。已有 `adr/` 当档案；当前设计只维护 CONTEXT / PRD / ARCHITECTURE / USER_GUIDE。
 4. 用户操作变化更新受影响的 USER_GUIDE 内容；与 HelpPage 共享的操作按上方投影规则同步。
 5. 实现敏感声明指向当前代码所有者或测试。
-6. 主仓库不新增兼容层、双序列化或旧数据迁移；残留路径删除。见 [`../CONTEXT.md`](../CONTEXT.md) Mainline Scope。
+6. 主仓库不新增面向退役范式的兼容层、双序列化或旧 JSON/V1/v2 迁移；残留路径删除。这**不**禁止首个稳定版起的经营数据 N→N+1（`schema.Apply` / `release-upgrade`），见 [`../CONTEXT.md`](../CONTEXT.md) Mainline Scope 与 [`../release/README.md`](../release/README.md)。
 7. 整理或归档更新活跃索引和链接，保留历史结论、原始 run_id、采证基线与证据归属。历史文件可修复失效链接，但不改写当时的判断。删除范围外或他人的材料仍需明确授权。
 
 `just docs-check` 校验索引、前端路由、code owner 路径、仓库内链接，以及内部 issue 元数据、看板同步和归档索引。规格目录若重新出现才检查状态标注。它不裁定验收证据是否充分，也不自动判断文件写入或运行资源冲突。

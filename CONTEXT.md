@@ -4,9 +4,9 @@
 
 ProductFlow is a single-administrator, single-merchant visual production workspace. A user uploads real product references, selects intended image types and quantities, and works on a live schema-v3 graph. Agent-first create writes that graph immediately; the Agent applies or proposes ChangeSets instead of submitting a WorkflowDraft.
 
-The current implementation is an unreleased, rapid-development baseline with no commercial merchant users. Breaking changes are expected. There is no current compatibility window, dual runtime, or old-data migration contract; following this baseline may require recreating the database and storage. Multi-tenancy, billing and team roles are not implemented capabilities.
+The current implementation is an unreleased, rapid-development baseline with no commercial merchant users. Breaking changes are expected on the pre-stable mainline: there is no general compatibility window or dual runtime, and following this baseline may still require recreating the database and storage. From the first stable release onward, supported **operating-data** N→N+1 upgrades follow the contract in [`release/README.md`](release/README.md) (precheck → backup → pin swap → `schema.Apply` migrate → smoke; migrate failure stops the app tier and rolls back via the pre-upgrade backup). That contract does not cover retired V1/v2 or experimental data. Multi-tenancy, billing and team roles are not implemented capabilities.
 
-The intended product is a self-hostable, multi-merchant SaaS, also deployed by the project owner as an operated service. The current single-merchant boundary does not define the final product scope. The [release roadmap](docs/ROADMAP.md) owns the unimplemented identity, isolation, commercial, experience and stable-release requirements. Supported upgrades will begin with the first stable release; retired V1/v2 and experimental data remain outside that future contract.
+The intended product is a self-hostable, multi-merchant SaaS, also deployed by the project owner as an operated service. The current single-merchant boundary does not define the final product scope. The [release roadmap](docs/ROADMAP.md) owns the unimplemented identity, isolation, commercial, experience and stable-release requirements.
 
 ## Online Flow
 
@@ -79,7 +79,7 @@ The intended product is a self-hostable, multi-merchant SaaS, also deployed by t
 
 ## Mainline Scope
 
-The online product is schema-v3 graphs, Agent-first create, the workbench, media library, and current provider settings. Retired V1/v2 editors, executors, WorkflowDraft writes, archive/cutover gates, Gallery backfill, and old-JSON readers are not product requirements. Do not add compatibility shims, dual serializers, or migration commands. Delete leftover paths instead of wrapping them.
+The online product is schema-v3 graphs, Agent-first create, the workbench, media library, and current provider settings. Retired V1/v2 editors, executors, WorkflowDraft writes, archive/cutover gates, Gallery backfill, and old-JSON readers are not product requirements. Do not add compatibility shims, dual serializers, or migration commands **for those retired paradigms**—delete leftover paths instead of wrapping them. This ban does **not** forbid the official stable-release operating-data upgrade path (`productflow-migrate` / `schema.Apply`, documented under [`release/README.md`](release/README.md) for N→N+1).
 
 ## Documentation Map
 

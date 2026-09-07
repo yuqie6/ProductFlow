@@ -2,7 +2,7 @@
 
 自营与自托管使用**同一套**发行物：版本化镜像 tag、锁定 Compose、`.env` 样例与 `VERSION` / `images.env`。本目录是源码树内的安装包模板；发布者用 `scripts/release-pack.sh` 打出 `dist/release/productflow-<tag>/`（及 `.tar.gz`）交给空主机。
 
-本路径覆盖总纲「可安装」方向与演练合同 **D1**（干净安装步骤），以及 **B3** 备份/恢复脚本与一致点 runbook（对齐 **D2** 清单）。**不**包含稳定版 N→N+1（B5），也**不**宣称 **D3** 全项实跑或 **R6** 已通过；不杜撰 RPO/RTO/SLA。
+本路径覆盖总纲「可安装」方向与演练合同 **D1**（干净安装步骤），**B3** 备份/恢复与一致点 runbook（对齐 **D2**），**B4** 恢复演练备注，以及 **B5 / D4** 稳定版起 **N→N+1** 升级合同与最小步骤。**不**宣称 **R6** 已通过；不杜撰 RPO/RTO/SLA。
 
 ## 镜像 tag 约定
 
@@ -92,7 +92,7 @@ docker compose --env-file images.env --env-file .env \
 | `docker-compose.yml` | 仅 `image:`，无 `build:` |
 | `docker-compose.prod-ports.yml` | 生产式端口 overlay |
 | `.env.example` | 启动密钥与端口样例（无秘密） |
-| `scripts/release-backup.sh` 等 | B3 备份/恢复（与源码树同一工具链） |
+| `scripts/release-backup.sh` 等 | B3 备份/恢复；B5 `release-upgrade.sh`（与源码树同一工具链） |
 | `SHA256SUMS` | 包内文本文件校验 |
 | `images/*.tar` | 可选；`RELEASE_PACK_SAVE_IMAGES=1` 时生成 |
 
@@ -102,7 +102,7 @@ docker compose --env-file images.env --env-file .env \
 
 ## 备份与恢复（B3 / D2）
 
-自营与自托管使用**同一套**脚本（源码树 `scripts/`；发行包内为 `scripts/release-backup.sh` 与 `scripts/release-restore.sh`）。备份对象不能只有数据库：PostgreSQL、`/app/storage` 媒体、Agent `/data`、部署 `.env` 为必备；Redis 与 agent traces 可选。
+自营与自托管使用**同一套**脚本（源码树 `scripts/`；发行包内含 `release-backup.sh`、`release-restore.sh`、`release-upgrade.sh`）。备份对象不能只有数据库：PostgreSQL、`/app/storage` 媒体、Agent `/data`、部署 `.env` 为必备；Redis 与 agent traces 可选。
 
 ### 一致点
 
@@ -152,7 +152,7 @@ bash scripts/release-restore.sh
 
 恢复结束后脚本打印 **D3 业务断言清单**（登录、媒体非 missing、provider 密钥列、任务/outbox、Agent health）。**完整隔离实跑证据归 B4**；跑通本脚本不等于 D3 通过，也不等于 R6。
 
-B4 演练备注（2026-09-07）：隔离项目 `pf-d3-src-20260907` → 备份 → `pf-d3-dst-20260907` 全栈恢复；发行 pin `0.0.0-5ed2b916b569`；证据见 [`docs/audits/tasks/release-d3-restore-drill.md`](../docs/audits/tasks/release-d3-restore-drill.md)。≠ R6。
+B4 演练备注（2026-09-07）：隔离项目 `pf-d3-src-20260907` → 备份 → `pf-d3-dst-20260907` 全栈恢复；发行 pin `0.0.0-5ed2b916b569`；证据见 [`docs/audits/tasks/archive/release-d3-restore-drill.md`](../docs/audits/tasks/archive/release-d3-restore-drill.md)。≠ R6。
 
 ### D2 清单对齐
 
@@ -160,8 +160,51 @@ B4 演练备注（2026-09-07）：隔离项目 `pf-d3-src-20260907` → 备份 �
 2. 同窗口备份 PG + storage + agent-data + `.env`（可选 Redis）。
 3. 断言：`MANIFEST` 含四类对象与 commit/digest，并记录是否排空在途作业。
 
+## 稳定版 N→N+1 升级（B5 / D4）
+
+**起点**：首个**稳定发行版**标签之后。研发主线 pre-stable 仍可 breaking；retired V1/v2 / 实验库**永远**不在本合同内。官方路径是 `schema.Apply`（Compose `productflow-migrate`），不是 AutoMigrate，也不是为退役编辑器/JSON 读者写的兼容迁移。
+
+**受支持版本对**：稳定版发布说明列出 `N`（当前 pin）→ `N+1`（下一 pin）。在首个稳定版冻结前，可用**等价夹具**（同一 schema 的镜像 retag / 幂等 `Apply`）跑通本脚本主路径；等价夹具**不**冒充已冻结的稳定版本对。
+
+### 最小步骤
+
+1. **预检**：隔离 Compose 项目名（默认拒绝共享名 `productflow`）；N 栈 postgres healthy；本机已有 N+1 三镜像（`docker pull` / `docker load` / retag）；`docker compose config` 通过。
+2. **备份**：`CONSISTENCY_MODE=drain` 跑 `scripts/release-backup.sh`（脚本自动调用）；pin 快照写入 `RELEASE_DIR/.productflow-upgrade-pre/` 与备份内 `pre-upgrade-pin/`。
+3. **换 pin**：用 N+1 包的 `VERSION` / `images.env` 覆盖当前安装目录（卷与 `.env` 保留）。
+4. **migrate**：`docker compose run --rm --no-deps productflow-migrate`（经升级脚本）；**非 0 即停**。
+5. **冒烟**：API `/healthz`、web `/healthz`、web `/api/healthz`、Agent `/healthz`（`runtime=productflow-pi`）。
+
+```bash
+COMPOSE_PROJECT_NAME=pf-site \
+PRODUCTFLOW_RELEASE_DIR=/opt/productflow \
+PRODUCTFLOW_TARGET_RELEASE_DIR=/opt/productflow-n1 \
+bash scripts/release-upgrade.sh
+```
+
+`just release-upgrade` 为同上入口（仍须导出上述变量）。
+
+### 迁移失败：停机与回退
+
+| 步骤 | 行为 |
+|---|---|
+| 检测 | migrate 容器 exit ≠ 0（或 `UPGRADE_SIMULATE_MIGRATE_FAIL=1` 夹具） |
+| 停机 | **停止** web / api / worker / dispatcher / agent / migrate；**不** `compose down`，更不 `down -v`；postgres/redis 可留着便于取证 |
+| 钉回 N | 从 `.productflow-upgrade-pre/` 恢复 N 的 `images.env` / `VERSION` |
+| 回退数据 | 用升级前备份：`release-restore.sh` 到**新**隔离项目（推荐），或在接受丢弃当前逻辑库内容的前提下同项目恢复；`PRODUCTFLOW_RESTORE_OVERWRITE_ENV=1` 按需 |
+
+禁止：半迁移状态继续对外服务；引入 V1/v2 兼容层或双序列化当「回退」。
+
+### 双版本 / 等价夹具（最小）
+
+1. 隔离项目起 N 发行栈，写入探针（商品/媒体/Agent 文件等，与 D2/D3 同类）。
+2. 准备 N+1：正式稳定对，或等价 retag（`docker tag …:N …:Nplus-equiv` + 目标 `images.env`）。
+3. 跑 `release-upgrade.sh` 主路径；另跑一次 `UPGRADE_SIMULATE_MIGRATE_FAIL=1` 确认 fail-stop 文案与钉回。
+4. 证据记入任务文件；**完成 ≠ R6**。
+
+B5 演练备注见 [`docs/audits/tasks/release-n-to-n1-upgrade.md`](../docs/audits/tasks/release-n-to-n1-upgrade.md)。
+
 ## 明确不做
 
-- B5 稳定版 N→N+1 升级包
 - 容量 SLA、RPO/RTO、R6 总项通过声明
-- 本 README 不把脚本存在当作 D3 / R6 已通过
+- 把「脚本存在」或「等价夹具 PASS」写成「任意稳定版对 / R6 已通过」
+- retired V1/v2 或历史实验库的升级/回填

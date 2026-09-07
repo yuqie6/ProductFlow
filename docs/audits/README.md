@@ -53,7 +53,8 @@
 | release-versioned-artifact | 发行 B2 | 2026-09-07 完成归档 |
 | release-backup-restore | 发行 B3；备份恢复 | 2026-09-07 完成归档 |
 | release-d3-restore-drill | 发行 B4；D3 恢复演练 | 2026-09-07 完成归档 |
-| release-n-to-n1-upgrade | 发行 B5；N→N+1 | CTO 认领 `sub-release/…`，执行中 |
+| release-n-to-n1-upgrade | 发行 B5；N→N+1 | 2026-09-07 完成归档 |
+| release-r6-readiness-gate | 发行 B6；R6 汇总门 | 开放 |
 | delivery-workbench-projection | 成果视图 | 完成归档；默认仍为流程 |
 | delivery-adoption-snapshot | 采用快照 | 2026-09-07 完成归档 |
 | brand-visual-reuse | 品牌视觉复用 | 2026-09-07 完成归档 |

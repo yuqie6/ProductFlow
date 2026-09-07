@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Assemble a versioned install package: locked compose, env sample, VERSION,
-# images.env, install + backup/restore instructions and scripts.
+# images.env, install + backup/restore/upgrade instructions and scripts.
 # Optionally docker-save product images for offline / local-registry-free hosts.
 #
 # Usage:
@@ -42,9 +42,11 @@ cp "${root}/scripts/release_common.sh" "${pkg_dir}/scripts/release_common.sh"
 cp "${root}/scripts/release_backup_common.sh" "${pkg_dir}/scripts/release_backup_common.sh"
 cp "${root}/scripts/release-backup.sh" "${pkg_dir}/scripts/release-backup.sh"
 cp "${root}/scripts/release-restore.sh" "${pkg_dir}/scripts/release-restore.sh"
+cp "${root}/scripts/release-upgrade.sh" "${pkg_dir}/scripts/release-upgrade.sh"
 chmod +x \
   "${pkg_dir}/scripts/release-backup.sh" \
-  "${pkg_dir}/scripts/release-restore.sh"
+  "${pkg_dir}/scripts/release-restore.sh" \
+  "${pkg_dir}/scripts/release-upgrade.sh"
 
 release_write_version_file "${pkg_dir}/VERSION"
 
@@ -67,6 +69,7 @@ EOF
     scripts/release_backup_common.sh \
     scripts/release-backup.sh \
     scripts/release-restore.sh \
+    scripts/release-upgrade.sh \
     >>SHA256SUMS
 )
 

@@ -268,7 +268,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 1. Compose：`productflow-migrate` 在 postgres healthy 后跑一次；API/worker/dispatcher `depends_on: service_completed_successfully`。
 2. 命令：`schema.Apply`（EnumDDL → CreateTable/AddColumn → ExtraDDL）再 `graph.BackfillDocumentOrigin`；**不**删退役表/列；**不用** AutoMigrate。
 3. 包测：`go/internal/platform/db/schema/migrate_test.go`（空库 Apply、二次 Apply 保行、补列探针）——**开发库测**，不是发行 N→N+1 夹具。
-4. 升级起点：首个**稳定发行版**之后；retired V1/v2 / 实验库仍不支持。实现升级合同时须同步收窄 [CONTEXT Mainline Scope](../../CONTEXT.md)、[`docs/README.md`](../README.md) 中「主仓库不新增…旧数据迁移」等对**经营数据 N→N+1** 的歧义表述（本证据任务不改这些工程制度正文）。
+4. 升级起点：首个**稳定发行版**之后；retired V1/v2 / 实验库仍不支持。B5 已收窄 [CONTEXT Mainline Scope](../../CONTEXT.md)、[`docs/README.md`](../README.md) 中对**经营数据 N→N+1** 的歧义表述（退役范式兼容仍禁止；稳定版 `schema.Apply` 升级不在禁止之列）。
 
 ### 逐单元：配置 → 持久 → 备份 → 恢复 → 业务断言
 
@@ -293,14 +293,14 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 1. **Web 反代上游名**：**已由 B1 修正**——`web/nginx.conf` 现指向 Compose 服务名 `productflow-go-api:29280`（见 [release-compose-proxy-overlay](tasks/archive/release-compose-proxy-overlay.md)）。
 2. **无版本化发行物**：**B2 已交付安装包路径**——不可变镜像 tag、`release/` 锁定 compose/env/`VERSION`、`scripts/release-{build,push,pack}*`；空主机按 [release/README.md](../../release/README.md) 安装。仍缺：正式 registry 上的稳定版冻结、完整 D1 隔离实跑证据（见任务）、R6。
 3. **无备份/恢复工具与一致点自动化**：**B3 已交付脚本与 runbook**；**B4 已交付隔离全栈 D3 演练证据**（登录/媒体/Agent health/版本身份；在途作业 UNKNOWN）。仍缺：R6；真实在途 lease / unknown 作业夹具实跑。
-4. **无稳定版 N→N+1 升级包**：无受支持版本对、预检/失败停止/回滚说明、旧版数据夹具。
+4. **无稳定版 N→N+1 升级包**：**B5 已交付合同与脚本**——`scripts/release-upgrade.sh`（预检→备份→换 pin→migrate→冒烟；migrate 失败停 app 层并钉回 N pin / 指引 `release-restore`）；`release/README.md` 与 CONTEXT / docs/README 歧义已收窄。仍缺：首个**冻结稳定版对**上的正式 D4；R6。等价夹具证据见 [release-n-to-n1-upgrade](tasks/archive/release-n-to-n1-upgrade.md)。
 5. **开发端口默认可达 PG/Redis/metrics**：开发 `docker-compose.yml` 仍映射本机调试端口；**生产式叠用** `docker-compose.prod-ports.yml` 已提供（B1），不把 PG/Redis/metrics 发布到宿主。
 6. **正式 Operator/商家初始化**：仍为单 `ADMIN_ACCESS_KEY`；多商家引导属商家平台，发行侧缺对接点说明。
 7. **诊断包**：无脱敏一键诊断交付物。
 
 **缺验证（机制或文档有，无隔离证据）**
 
-- 空主机干净安装的**完整** D1 业务断言（本任务已做发行物四项 health + tarball config；登录/缺 provider UI 未单独采证）；缺凭据/缺 provider 仍可管理；D3 隔离恢复主路径已由 B4 采证（在途 lease/unknown 仍缺夹具）；迁移失败停机与回退；重启后 unknown 作业；staging 双副本共享卷一致性；当前 HEAD 的 G-07；R6 全项；HEAD 全量 `release-build-images` / registry push。
+- 空主机干净安装的**完整** D1 业务断言（本任务已做发行物四项 health + tarball config；登录/缺 provider UI 未单独采证）；缺凭据/缺 provider 仍可管理；D3 隔离恢复主路径已由 B4 采证（在途 lease/unknown 仍缺夹具）；迁移失败停机与回退的**合同/脚本/等价夹具**已由 B5 交付（冻结稳定版对上的正式 D4 仍缺）；重启后 unknown 作业；staging 双副本共享卷一致性；当前 HEAD 的 G-07；R6 全项；HEAD 全量 `release-build-images` / registry push。
 
 **需 Operator 决策**
 
@@ -319,7 +319,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 | 缺凭据 | 缺强制 env → Compose 拒启；缺 provider → 登录成功但生成/Agent Unavailable | 部分机制有，缺验证 |
 | 恢复缺媒体 | DB 有 `storage_path`，读文件 → missing；标记 `verification_status=missing` | 机制有，缺恢复演练 |
 | 恢复缺密钥 | 缺 `.env` 无法启动或会话/Agent 令牌失败；缺 PG 密钥列则 provider Unavailable | 同上 |
-| 迁移失败 | migrate 非 0 → API/worker/dispatcher 不达 healthy | Compose 依赖有，缺故意失败夹具 |
+| 迁移失败 | migrate 非 0 → API/worker/dispatcher 不达 healthy；B5 升级脚本 fail-stop 并钉回 N pin | Compose 依赖有；B5 合同/等价夹具有；冻结稳定对上正式 D4 仍缺 |
 | 重启有 unknown | 不可证明结果保持 unknown，不自动当失败重试；lease 过期后 recovery 收敛 | 域内测试有，缺发行拓扑实跑 |
 
 ### 可执行演练合同（后续隔离任务）
@@ -359,8 +359,8 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 | B2 | 版本化镜像 tag + 锁定安装包（compose、env 样例、版本文件） | 镜像仓库或本地 registry | **已交付路径（2026-09-07）**：不可变 tag `<VERSION>-<sha12>`；`scripts/release-build-images.sh` / `release-push-images.sh` / `release-pack.sh`；`release/` 锁定 compose + prod-ports + `.env.example` + 空主机 [release/README.md](../../release/README.md)。包输出 `dist/release/productflow-<tag>/`。自营与自托管同一发行物。≠ R6；≠ B3 备份。构建环境若 registry TLS 失败须如实记录，不得伪装 HEAD 全量 build。D1 隔离实跑可另证据或同窗口；合同与缺口见 [release-versioned-artifact](tasks/archive/release-versioned-artifact.md)。 |
 | B3 | 备份/恢复脚本与一致点 runbook（含 Pi 与 `.env`） | 隔离卷 | **已交付路径（2026-09-07）**：`scripts/release-backup.sh` / `release-restore.sh` + `release_backup_common.sh`；覆盖 PG（`pg_dump -Fc`）、storage 媒体、agent `/data`、部署 `.env`，可选 Redis / agent traces；`CONSISTENCY_MODE=drain|crash` 记录是否排空在途作业与 commit/digest；默认拒绝共享项目名 `productflow`；发行包经 `release-pack` 带入同脚本；runbook 见 [release/README.md](../../release/README.md)。D2 清单由 MANIFEST 对象与标志对齐。≠ D3 全项实跑（B4）；≠ R6；不写 RPO/RTO/SLA。证据见 [release-backup-restore](tasks/archive/release-backup-restore.md)。 |
 | B4 | 执行 D3 恢复演练并留证据 | 新目录/实例 | **已交付（2026-09-07）**：隔离项目 `pf-d3-src-20260907` → `release-backup`（drain）→ `pf-d3-dst-20260907` 全栈 `release-restore`；发行 pin `0.0.0-5ed2b916b569`。断言 PASS：migrate、四项 health（含 Agent `runtime=productflow-pi`）、`ADMIN_ACCESS_KEY` 登录/会话、探针媒体 HTTP（非 missing）、假 provider `has_api_key`、Agent `/data` 探针、MANIFEST 版本身份 + `CHECKSUMS`。在途作业收敛 **UNKNOWN**（无 lease 夹具）。≠ R6 / ≠ B5；不写 RPO/RTO/SLA。详见 [release-d3-restore-drill](tasks/archive/release-d3-restore-drill.md)。 |
-| B5 | 首个稳定版起 N→N+1 合同、夹具与文档歧义收窄任务 | 双版本夹具 | 开放任务 [release-n-to-n1-upgrade](tasks/release-n-to-n1-upgrade.md) |
-| B6 | 冻结候选上 R6 + 所需 G-07 | 隔离资源 | 总纲 R6；**不得**回写为已通过直至证据齐 |
+| B5 | 首个稳定版起 N→N+1 合同、夹具与文档歧义收窄任务 | 双版本夹具 | **已交付（2026-09-07）**：`scripts/release-upgrade.sh`（预检→drain 备份→换 N+1 pin→migrate→四项 health；失败停 app 层、钉回 N pin、打印 `release-restore` 回退）；`release-pack` 带入脚本；`release/README.md` B5/D4 节；收窄 CONTEXT Mainline Scope 与 `docs/README.md` 对经营数据升级的歧义。隔离等价夹具（发行 pin `0.0.0-5ed2b916b569` retag → `0.0.0-b5n1equiv`）主路径与 `UPGRADE_SIMULATE_MIGRATE_FAIL` fail-stop 证据见 [release-n-to-n1-upgrade](tasks/archive/release-n-to-n1-upgrade.md)。≠ R6；不写 RPO/RTO/SLA；等价夹具 ≠ 冻结稳定版对。 |
+| B6 | 冻结候选上 R6 + 所需 G-07 | 隔离资源 | 开放任务 [release-r6-readiness-gate](tasks/release-r6-readiness-gate.md)；总纲 R6；**不得**回写为已通过直至证据齐 |
 
 未知输入（保持开放）：生产主机 OS/磁盘、备份介质、公网 DNS/TLS、真实商用数据规模、可接受停机策略、首个稳定版日期、是否要求 provider 密钥加密、多商家就绪时间线。不在此填写容量、RPO/RTO 或 SLA 数字。
 
@@ -375,3 +375,4 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 - 2026-09-07 B2：版本化镜像 tag 约定与 build/push/pack 脚本；`release/` 锁定安装包与无 git 空主机 D1 方向文档。详见 [release-versioned-artifact](tasks/archive/release-versioned-artifact.md)。未宣称 R6 / B3。
 - 2026-09-07 B3：备份/恢复脚本与一致点 runbook（PG + storage + agent `/data` + `.env`，可选 Redis）；MANIFEST 记录版本身份与在途作业处置。详见 [release-backup-restore](tasks/archive/release-backup-restore.md)。未宣称 D3 全项实跑 / R6。
 - 2026-09-07 B4：隔离全栈 D3 恢复演练证据（发行物 `0.0.0-5ed2b916b569`；`pf-d3-src/dst-20260907`）。登录/媒体 HTTP/Agent health/版本身份+CHECKSUMS 通过；在途作业收敛 UNKNOWN。详见 [release-d3-restore-drill](tasks/archive/release-d3-restore-drill.md)。≠ R6 / ≠ B5。
+- 2026-09-07 B5：N→N+1 升级合同与 `release-upgrade.sh`；文档歧义收窄；隔离等价夹具主路径 + migrate fail-stop。详见 [release-n-to-n1-upgrade](tasks/archive/release-n-to-n1-upgrade.md)。≠ R6；≠ 冻结稳定版对正式 D4。
