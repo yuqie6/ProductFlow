@@ -120,9 +120,9 @@ export async function withEffect(
     return options.terminate ? { ...encoded, terminate: true } : encoded;
   };
 
+  let result: unknown;
   try {
-    const result = await options.mutate(idempotencyKey);
-    return await finishApplied(result);
+    result = await options.mutate(idempotencyKey);
   } catch (error) {
     if (entry.effect === "ui_effect" || !(error instanceof ProductFlowError) || error.status < 500) {
       await runtime.checkpoint("tool_effect_result", {
@@ -193,6 +193,9 @@ export async function withEffect(
     );
     throw error;
   }
+  // The business effect is already applied. Checkpoint/encoding failures must
+  // propagate without reclassifying it as failed or reconciling the mutation.
+  return await finishApplied(result);
 }
 
 function sanitizeRequestPayload(value: JsonObject): JsonObject {

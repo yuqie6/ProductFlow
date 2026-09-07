@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { MAX_CHECKPOINT_PAYLOAD_BYTES } from "./contracts.js";
+import { describe, expect, it, vi } from "vitest";
+import { MAX_CHECKPOINT_PAYLOAD_BYTES, ProductFlowError } from "./contracts.js";
 import {
   TOOL_EFFECT_INTENT_KEYS,
   TOOL_EFFECT_INTENT_SCHEMA_VERSION,
   buildToolEffectIntent,
+  withEffect,
+  type EffectRuntime,
 } from "./tool-effect.js";
 
 describe("tool_effect_intent schema v1", () => {
@@ -47,5 +49,34 @@ describe("tool_effect_intent schema v1", () => {
         change_set: { summary: "x".repeat(MAX_CHECKPOINT_PAYLOAD_BYTES) },
       }),
     ).toThrow(/checkpoint payload limit/);
+  });
+});
+
+describe("applied effect persistence boundary", () => {
+  it.each(["checkpoint", "encoding"])("does not reconcile or rewrite an applied effect after %s failure", async (failure) => {
+    const error = new ProductFlowError(503, "persistence_unavailable", "result unavailable");
+    const checkpoint = vi.fn<EffectRuntime["checkpoint"]>(async (kind) => {
+      if (failure === "checkpoint" && kind === "tool_effect_result") throw error;
+    });
+    const runtime: EffectRuntime = {
+      checkpoint,
+      reconcileEffect: vi.fn(),
+      markEffectUnknown: vi.fn(),
+      requestApproval: vi.fn(),
+      idempotencyKey: () => "key-1",
+    };
+    const mutate = vi.fn(async () => ({ product_id: "product-1" }));
+    await expect(withEffect(runtime, "create_product_workspace_v1", "call-1", {
+      mutate,
+      unknownReason: "business effect unknown",
+      resultMeta: () => {
+        if (failure === "encoding") throw error;
+        return {};
+      },
+    })).rejects.toBe(error);
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(checkpoint.mock.calls.map(([, payload]) => payload.result)).toEqual([undefined, "applied"]);
+    expect(runtime.reconcileEffect).not.toHaveBeenCalled();
+    expect(runtime.markEffectUnknown).not.toHaveBeenCalled();
   });
 });

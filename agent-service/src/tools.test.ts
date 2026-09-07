@@ -469,7 +469,7 @@ describe("ProductFlow Pi tools", () => {
 
   it("does not classify an applied workspace as failed when result checkpoint persistence fails", async () => {
     const calls: string[] = [];
-    let checkpointCount = 0;
+    const checkpoints: Array<{ kind: string; payload: Record<string, unknown> }> = [];
     const client = {
       createProductWorkspace: async () => {
         calls.push("create");
@@ -486,9 +486,9 @@ describe("ProductFlow Pi tools", () => {
         globalScope,
         client,
         undefined,
-        async () => {
-          checkpointCount += 1;
-          if (checkpointCount === 2) throw new Error("checkpoint unavailable");
+        async (kind, payload) => {
+          checkpoints.push({ kind, payload });
+          if (checkpoints.length === 2) throw new Error("checkpoint unavailable");
         },
       ),
     ).find((candidate) => candidate.name === "create_product_workspace_v1");
@@ -498,6 +498,7 @@ describe("ProductFlow Pi tools", () => {
       "checkpoint unavailable",
     );
     expect(calls).toEqual(["create"]);
+    expect(checkpoints.map(({ payload }) => payload.result)).toEqual([undefined, "applied"]);
   });
 
   it("marks a workspace create unknown when read-only reconciliation cannot prove an outcome", async () => {
