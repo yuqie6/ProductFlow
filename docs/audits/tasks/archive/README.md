@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [delivery-r2-local-edit-retest.md](delivery-r2-local-edit-retest.md) | 完成 | §5.4 局部修图复验本门 PASS；≠R2 全过 |
 | [merchant-mp-c-balance-http-b4.md](merchant-mp-c-balance-http-b4.md) | 完成 | 商家/Op 余额 HTTP + Adjust；≠R5/支付 |
 | [image-quality-subject-extract-apply.md](image-quality-subject-extract-apply.md) | 完成 | image_generation 自动 Apply 主体提取；≠R3 |
 | [delivery-export-overlay-fix.md](delivery-export-overlay-fix.md) | 完成 | 成果态收起工具条；UI 真实点击导出；≠R2 |
@@ -12,7 +13,7 @@
 | [image-quality-ocr-adoption-wire.md](image-quality-ocr-adoption-wire.md) | 完成 | CreateAdoption 默认 OCR；缺字/空期望拒绝；≠R3 |
 | [merchant-mp-c-wire-b2-graph.md](merchant-mp-c-wire-b2-graph.md) | 完成 | Graph image_generation 额度接线；≠R5/Agent |
 | [image-quality-ocr-trace-b0.md](image-quality-ocr-trace-b0.md) | 完成 | 字形 OCR 对照+失败不得 text_qualified；≠R3/采用默认接线 |
-| [delivery-r2-core-path-gate.md](delivery-r2-core-path-gate.md) | 完成 | 本门 PASS；R2 仍未通过；§5.4/Brand/导出叠层缺口 |
+| [delivery-r2-core-path-gate.md](delivery-r2-core-path-gate.md) | 完成 | 本门 PASS；R2 仍未通过；Brand/批跑等缺口（§5.4/导出叠层已另归档） |
 | [merchant-mp-c-wire-b1.md](merchant-mp-c-wire-b1.md) | 完成 | 图会话 Generate 额度接线；≠R5/Graph/Agent |
 | [image-quality-selling-point-live.md](image-quality-selling-point-live.md) | 完成 | 炸锅 selling_point live k=1；闸门改善保真平；≠R3 |
 | [merchant-mp-c-quota-b0.md](merchant-mp-c-quota-b0.md) | 完成 | MP-C B0 预留/结算骨架；入口未接线；≠R5 |

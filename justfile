@@ -249,7 +249,7 @@ web-e2e-canvas-asset-recipe *args:
 
 # Chromium local edit adopt/lineage; requires isolated mock image bindings.
 web-e2e-canvas-local-edit *args:
-    PRODUCTFLOW_RUN_CANVAS_WORKFLOW=1 pnpm --dir web exec playwright test e2e/canvas-local-edit.spec.ts --config playwright.config.ts {{args}}
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_CANVAS_WORKFLOW=1 PRODUCTFLOW_LOCAL_EDIT_EVIDENCE_DIR="${PRODUCTFLOW_LOCAL_EDIT_EVIDENCE_DIR:-$PWD/storage-dev/audits/delivery-r2-local-edit-retest}" pnpm --dir web exec playwright test e2e/canvas-local-edit.spec.ts --config playwright.config.ts {{args}}'
 
 # R2 core path: create → results → adopt → export → rerun preserve → recipe second product; temporary mock bind+restore.
 web-e2e-delivery-r2-core-path *args:

@@ -1,8 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
 
 import type { GraphProjection, GraphRun, LocalImageEditTask } from "../src/lib/types";
 import { assertMockImageProviders, lockLocale, loginAsAdmin, requiredEnv } from "./liveGraph";
 import { createWorkflow, selectWorkflowNode, waitForWorkflowRun, workflowGraph, workflowProductId, workflowRunsPath } from "./canvasWorkflow";
+
+const EVIDENCE_ROOT =
+  process.env.PRODUCTFLOW_LOCAL_EDIT_EVIDENCE_DIR?.trim() ||
+  path.join(process.cwd(), "..", "storage-dev", "audits", "delivery-r2-local-edit-retest");
 
 test.describe("canvas local edit", () => {
   test.skip(process.env.PRODUCTFLOW_RUN_CANVAS_WORKFLOW !== "1", "set PRODUCTFLOW_RUN_CANVAS_WORKFLOW=1 with an isolated mock stack");
@@ -15,6 +21,7 @@ test.describe("canvas local edit", () => {
   });
 
   test("inspector local edit creates a lineage asset, adopts, and reverts", async ({ page }) => {
+    fs.mkdirSync(EVIDENCE_ROOT, { recursive: true });
     const { imageId, sourceId } = await generatedSource(page);
     const capability = await page.request.get("/api/v3/local-image-edits/capability");
     expect(capability.ok(), await capability.text()).toBeTruthy();
@@ -24,6 +31,31 @@ test.describe("canvas local edit", () => {
     await completeLocalEdit(page, "去掉选区杂物");
     await expect(page.locator("[data-local-edit-result]")).toBeVisible();
     await expect(page.locator("[data-local-edit-adopted]")).toHaveAttribute("data-local-edit-adopted", "false");
+    await expect(page.locator('[data-local-edit-result-tab="result"]')).toBeVisible();
+    await expect(page.getByRole("button", { name: "采用为当前结果", exact: true })).toBeVisible();
+
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await expect(page.locator("[data-local-edit-result]")).toBeVisible();
+    await page.screenshot({
+      path: path.join(EVIDENCE_ROOT, "desktop-1440x960-local-edit-result.png"),
+      fullPage: false,
+    });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("[data-local-edit-result]")).toBeVisible();
+    await expect(page.getByRole("button", { name: "采用为当前结果", exact: true })).toBeVisible();
+    const mobileGeometry = await page.evaluate(() => ({
+      viewport: window.innerWidth,
+      client: document.documentElement.clientWidth,
+      resultVisible: Boolean(document.querySelector("[data-local-edit-result]")),
+    }));
+    expect(mobileGeometry.viewport).toBe(390);
+    expect(mobileGeometry.resultVisible).toBe(true);
+    await page.screenshot({
+      path: path.join(EVIDENCE_ROOT, "mobile-390x844-local-edit-result.png"),
+      fullPage: false,
+    });
+    await page.setViewportSize({ width: 1440, height: 960 });
 
     const task = await latestLocalEdit(page);
     expect(task.status).toBe("succeeded");
@@ -39,11 +71,36 @@ test.describe("canvas local edit", () => {
     await page.getByRole("button", { name: "采用为当前结果", exact: true }).click();
     await expect(page.locator("[data-local-edit-adopted]")).toHaveAttribute("data-local-edit-adopted", "true");
     await expect.poll(async () => (await workflowGraph(page)).nodes.find((node) => node.id === imageId)?.preview_asset_id).toBe(resultId);
+    await page.screenshot({
+      path: path.join(EVIDENCE_ROOT, "desktop-1440x960-local-edit-adopted.png"),
+      fullPage: false,
+    });
 
     await page.getByRole("button", { name: "撤销采用", exact: true }).click();
     await expect(page.locator("[data-local-edit-adopted]")).toHaveAttribute("data-local-edit-adopted", "false");
     await expect.poll(async () => (await workflowGraph(page)).nodes.find((node) => node.id === imageId)?.preview_asset_id).toBe(sourceId);
     expect((await downloadAsset(page, sourceId)).equals(sourceBytes)).toBeTruthy();
+
+    fs.writeFileSync(
+      path.join(EVIDENCE_ROOT, "path-table.json"),
+      JSON.stringify(
+        {
+          source_asset_id: sourceId,
+          result_asset_id: resultId,
+          origin_type: "local_edit",
+          parent_asset_id: sourceId,
+          image_node_id: imageId,
+          product_id: workflowProductId(page),
+          screenshots: [
+            "desktop-1440x960-local-edit-result.png",
+            "mobile-390x844-local-edit-result.png",
+            "desktop-1440x960-local-edit-adopted.png",
+          ],
+        },
+        null,
+        2,
+      ),
+    );
   });
 
   test("submit failure keeps the node current image", async ({ page }) => {

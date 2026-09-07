@@ -49,17 +49,28 @@ export async function openCanvasView(page: Page): Promise<void> {
 }
 
 export async function loginAsAdmin(page: Page, adminKey: string): Promise<void> {
+  const email = process.env.PRODUCTFLOW_E2E_EMAIL?.trim() || "e2e-operator@example.com";
+  const password = process.env.PRODUCTFLOW_E2E_PASSWORD?.trim() || "productflow-e2e-pass";
   await page.goto("/login");
-  const keyInput = page.getByPlaceholder("请输入管理员密钥");
   await Promise.race([
     page.waitForURL("**/products"),
-    keyInput.waitFor({ state: "visible" }),
+    page.getByPlaceholder("you@example.com").waitFor({ state: "visible" }),
   ]);
-  if (new URL(page.url()).pathname === "/login") {
-    await keyInput.fill(adminKey);
-    await page.getByRole("button", { name: "登录" }).click();
-    await page.waitForURL("**/products");
+  if (new URL(page.url()).pathname !== "/login") {
+    return;
   }
+  const keyInput = page.getByPlaceholder("请输入管理员密钥");
+  if (await keyInput.isVisible()) {
+    await keyInput.fill(adminKey);
+    const merchant = page.getByPlaceholder("开发商家");
+    if (await merchant.isVisible()) {
+      await merchant.fill("开发商家");
+    }
+  }
+  await page.getByPlaceholder("you@example.com").fill(email);
+  await page.getByPlaceholder("至少 8 个字符").fill(password);
+  await page.getByRole("button", { name: /^(完成初始化|登录)$/ }).click();
+  await page.waitForURL("**/products");
 }
 
 export async function assertRealImageProviders(request: APIRequestContext, settingsToken: string): Promise<void> {
