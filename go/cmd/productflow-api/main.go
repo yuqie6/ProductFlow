@@ -31,6 +31,7 @@ import (
 	"github.com/yuqie6/productflow/internal/product"
 	"github.com/yuqie6/productflow/internal/providers"
 	"github.com/yuqie6/productflow/internal/providers/adapt"
+	"github.com/yuqie6/productflow/internal/quota"
 	"github.com/yuqie6/productflow/internal/recipe"
 	"github.com/yuqie6/productflow/internal/settings"
 	"github.com/yuqie6/productflow/internal/visualsystem"
@@ -110,6 +111,7 @@ func main() {
 			Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken,
 			OperatorOnly: operatorOnly,
 		},
+		Quota: quota.HTTP{DB: gdb, Auth: authHTTP},
 		Product: product.HTTP{
 			Service: product.Service{
 				DB: gdb, Media: mediaStore, Canvas: agent.WriteProductCanvas,

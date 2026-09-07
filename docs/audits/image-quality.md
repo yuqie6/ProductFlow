@@ -20,7 +20,8 @@
 6. [采用路径 OCR 接线](tasks/archive/image-quality-ocr-adoption-wire.md)：已归档；`CreateAdoption` 对有期望的 `text_trace` 默认 OCR；≠R3。
 7. [主体提取 B0](tasks/archive/image-quality-subject-extract-b0.md)：已归档；角点色差分割蒙版/抠图 + `produce_route` 闸；≠R3 / ≠像素保真。
 8. [主体提取接入生成路径](tasks/archive/image-quality-subject-extract-apply.md)：已归档；`image_generation` 对 `subject_preserve` 自动 Apply；≠R3。
-9. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
+9. [主体合成 B1](tasks/image-quality-subject-compose-b1.md)：进行中；背景/阴影/比例；≠R3。
+10. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
 
 用户已授权组内开发；当前先交付采证任务，有证据的生成链修复按组内序列确认任务范围和占用后推进。共用 provider/DB/浏览器资源仍需排他预约。工作流操作正确性与执行可靠性的固定合同继续适用，不复制 Graph 或图片执行器。
 

@@ -3,9 +3,8 @@
 // 与平台调用事实分离：agent_model_invocations.usage_source 仍是 provider/estimated/unavailable
 // 操作事实；本包只管商家被收取的服务额度（available/reserved/事件），不另造平台成本账。
 //
-// B0 账本已交付；B1 将图会话 Generate 入队点接到 Reserve/Settle/Release/MarkUnknown。
-// B2 将 Graph image_generation 出图前接到同一账本。B3 将 Agent before_model_request 接到同一账本。
-// 余额 HTTP 仍未接线。未知结果必须走 MarkUnknown，禁止把超时自动当零消费 Release。
+// B0 账本已交付；B1–B3 已接图会话 / Graph / Agent 主入口。
+// B4 余额 HTTP：商家只读本商 + Op 只读/调账（见 http.go）。未知结果必须走 MarkUnknown，禁止把超时自动当零消费 Release。
 package quota
 
 import (

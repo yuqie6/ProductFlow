@@ -1,14 +1,15 @@
 # 任务：MP-C B4 商家/Op 余额 HTTP 面
 
-状态：认领
+状态：完成
 类型：实现
 认领者：sub-mpc/merchant-mp-c-balance-http-b4
 认领于：2026-09-07T18:07:00+08:00
+完成于：2026-09-07T18:16:30+08:00
 业务组：商家平台
 父账本：merchant-platform.md
 完成后可拆：R5 关闭裁定（仍须全入口核对）；≠真实支付
 
-任务合同以本文件为准；认领、阻塞、审核与关闭遵循 [Issue 协议](README.md)。
+任务合同以本文件为准；认领、阻塞、审核与关闭遵循 [Issue 协议](../README.md)。按 [所有权前置规则](../README.md#认领与并行) 已确认认领。
 
 ## 问题来源
 
@@ -53,6 +54,12 @@ B0–B3 账本与主入口已接线，但**商家/Op 无法经 HTTP 查看余额
 ## 证据
 
 - 命令 / 日期 / 结果：
-- 交付定位：随本任务提交
-- 审核者 / 结论：
+  - `2026-09-07`（执行者）：`bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/quota/ ./cmd/productflow-api/ -count=1 -p 1'` → `internal/quota` PASS；`cmd/productflow-api` PASS（含路由合同）。
+  - `2026-09-07`（执行者）：`just docs-check` → passed。
+  - 覆盖：`TestMerchantQuotaCrossMerchantDenied`（跨商 GET 403；本商只读零余额投影）；`TestOpAdjustIdempotentAndInsufficientConflict`（Op Adjust 幂等、Op GET、非 Op 403、超额扣减 409）。
+- 交付定位：随本任务提交（用 `git log --follow -- docs/audits/tasks/archive/merchant-mp-c-balance-http-b4.md` 查询）
+- 审核者 / 结论：主代理自审通过（2026-09-07）。复测 `./internal/quota` + `./cmd/productflow-api` PASS；跨商拒绝/幂等/超额冲突齐。≠R5 ≠支付。
 - Issue 结果 / 业务门槛结果 / 剩余缺口：
+  - Issue：**完成**（B4 余额 HTTP）。
+  - 业务门槛：MP-C 主账本+入口+余额面已齐；**R5 未通过**（全入口归属/真实单价/支付仍缺）。
+  - 剩余缺口：全入口核对；真实价格版本；支付；生产零余额运营策略。

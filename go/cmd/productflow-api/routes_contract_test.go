@@ -81,6 +81,9 @@ var goOpsExtras = map[string]bool{
 	"POST /api/ops/support-sessions":                                                    true,
 	"GET /api/ops/support-sessions/{}":                                                  true,
 	"POST /api/ops/support-sessions/{}/end":                                             true,
+	"GET /api/merchants/{}/quota":                                                       true,
+	"GET /api/ops/merchants/{}/quota":                                                   true,
+	"POST /api/ops/merchants/{}/quota/adjust":                                           true,
 }
 
 // Historical snapshot still lists retired Agent effects, single events and manual fidelity checks.

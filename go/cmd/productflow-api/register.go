@@ -10,6 +10,7 @@ import (
 	"github.com/yuqie6/productflow/internal/library"
 	"github.com/yuqie6/productflow/internal/localedit"
 	"github.com/yuqie6/productflow/internal/product"
+	"github.com/yuqie6/productflow/internal/quota"
 	"github.com/yuqie6/productflow/internal/recipe"
 	"github.com/yuqie6/productflow/internal/settings"
 	"github.com/yuqie6/productflow/internal/visualsystem"
@@ -28,12 +29,14 @@ type apiHandlers struct {
 	VisualSystem visualsystem.HTTP
 	LocalEdit    localedit.HTTP
 	Agent        agent.HTTP
+	Quota        quota.HTTP
 }
 
 // registerAPI 按固定顺序挂上各垂直切片。增删路由必须同时改测试与 http-routes.json，不要只改一处。
 func registerAPI(engine *gin.Engine, h apiHandlers) {
 	h.Auth.Register(engine)
 	h.Settings.Register(engine)
+	h.Quota.Register(engine)
 	h.Product.Register(engine)
 	h.Library.Register(engine)
 	h.Graph.Register(engine)
