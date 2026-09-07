@@ -27,6 +27,12 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
+| [saas-auth-entry-security.md](saas-auth-entry-security.md) | 商家平台 | 实现 | 开放 | — | — |
+| [saas-workspace-context.md](saas-workspace-context.md) | 商家平台 | 实现 | 阻塞 | — | — |
+| [saas-account-team.md](saas-account-team.md) | 商家平台 | 实现 | 阻塞 | — | — |
+| [saas-preferences-settings.md](saas-preferences-settings.md) | 商家平台 | 实现 | 阻塞 | — | — |
+| [saas-ops-console.md](saas-ops-console.md) | 商家平台 | 实现 | 阻塞 | — | — |
+| [saas-multimerchant-capacity-baseline.md](saas-multimerchant-capacity-baseline.md) | 平台可靠性 | 证据 | 开放 | — | — |
 | [image-quality-subject-preserve-live-smoke.md](image-quality-subject-preserve-live-smoke.md) | 图片质量 | 证据 | 认领 | sub-iq/image-quality-subject-preserve-live-smoke | 2026-09-07T19:35:00+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
