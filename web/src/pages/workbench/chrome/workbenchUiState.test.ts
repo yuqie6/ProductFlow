@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { GraphProjection } from "../../../lib/types";
 import {
+  clearWorkbenchMainViewPreference,
   existingWorkbenchGroupId,
   existingWorkbenchNodeIds,
   keepAgentWorkbenchPlaceholder,
+  parseWorkbenchMainView,
   parseWorkbenchSidebarTool,
   parseWorkbenchUiState,
   patchWorkbenchUiState,
@@ -24,6 +26,7 @@ describe("parseWorkbenchUiState", () => {
       inspectorCollapsed: false,
       enteredGroupId: "group-1",
       filmstripVisible: false,
+      mainView: "results",
     }))).toEqual({
       sidebarTool: "runs",
       selectedNodeIds: ["node-a", "node-b"],
@@ -31,13 +34,15 @@ describe("parseWorkbenchUiState", () => {
       inspectorCollapsed: false,
       enteredGroupId: "group-1",
       filmstripVisible: false,
+      mainView: "results",
     });
   });
 
   it("drops unknown tools and malformed payloads", () => {
     expect(parseWorkbenchSidebarTool("digest")).toBeNull();
+    expect(parseWorkbenchMainView("digest")).toBeNull();
     expect(parseWorkbenchUiState("{")).toEqual({});
-    expect(parseWorkbenchUiState(JSON.stringify({ sidebarTool: "payloadHash" }))).toEqual({});
+    expect(parseWorkbenchUiState(JSON.stringify({ sidebarTool: "payloadHash", mainView: "digest" }))).toEqual({});
   });
 });
 
@@ -68,6 +73,13 @@ describe("workbench ui storage", () => {
       chromeCollapsed: true,
     });
     expect(workbenchUiStorageKey(productId)).toContain(productId);
+  });
+
+  it("stores and clears an explicit main-view preference", () => {
+    patchWorkbenchUiState(productId, { sidebarTool: "details", mainView: "flow" });
+    expect(readWorkbenchUiState(productId).mainView).toBe("flow");
+    clearWorkbenchMainViewPreference(productId);
+    expect(readWorkbenchUiState(productId)).toEqual({ sidebarTool: "details" });
   });
 });
 

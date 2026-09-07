@@ -13,6 +13,7 @@ import {
   graphHasResultItems,
   graphHasUsableResultImages,
   projectGraphResults,
+  resolveWorkbenchMainView,
 } from "./resultProjection";
 
 function makeNode(
@@ -276,5 +277,27 @@ describe("defaultWorkbenchMainView", () => {
   it("keeps flow for null/empty graphs", () => {
     expect(defaultWorkbenchMainView(null)).toBe("flow");
     expect(defaultWorkbenchMainView(makeGraph([]))).toBe("flow");
+  });
+});
+
+describe("resolveWorkbenchMainView", () => {
+  it("prefers an explicit flow preference over usable result images", () => {
+    const graph = makeGraph([
+      makeNode("image-ready", "image_generation", null, "asset-1"),
+    ]);
+    expect(resolveWorkbenchMainView(graph, "flow")).toBe("flow");
+  });
+
+  it("prefers an explicit results preference over an empty graph", () => {
+    expect(resolveWorkbenchMainView(makeGraph([]), "results")).toBe("results");
+  });
+
+  it("falls back to the conditional default without a preference", () => {
+    const withImage = makeGraph([
+      makeNode("image-ready", "image_generation", null, "asset-1"),
+    ]);
+    expect(resolveWorkbenchMainView(withImage, undefined)).toBe("results");
+    expect(resolveWorkbenchMainView(withImage, null)).toBe("results");
+    expect(resolveWorkbenchMainView(makeGraph([]), undefined)).toBe("flow");
   });
 });

@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [workbench-remember-last-view.md](workbench-remember-last-view.md) | 完成 | 商品级主视图偏好；无偏好仍条件默认；≠全局成果 |
 | [merchant-isolation-gate.md](merchant-isolation-gate.md) | 完成 | B10/MP-B 自动化门通过；≠开放第二商/R1 |
 | [merchant-ops-surface.md](merchant-ops-surface.md) | 完成 | B9 Op settings/启停/A8草案；≠MP-B/MP-D |
 | [merchant-queue-frontend.md](merchant-queue-frontend.md) | 完成 | B8 队列 merchant 快照+前端切换边界；≠MP-B |

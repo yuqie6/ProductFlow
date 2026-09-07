@@ -73,7 +73,7 @@ import {
 } from "./shotChangeSet";
 import { GraphShotFilmstrip } from "./GraphShotFilmstrip";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
-import { defaultWorkbenchMainView } from "./resultProjection";
+import { resolveWorkbenchMainView } from "./resultProjection";
 import { projectGraphShots, type GraphShotProjection } from "./shotProjection";
 
 const WorkbenchResultsViewSwitcher = lazy(async () => {
@@ -250,12 +250,19 @@ export function GraphCanvasPanel({
   } | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [filmstripVisible, setFilmstripVisible] = useState(restoredCanvas.filmstripVisible);
-  const [mainViewState, setMainViewState] = useState<WorkbenchMainView>(() => defaultWorkbenchMainView(graph));
+  const [mainViewState, setMainViewState] = useState<WorkbenchMainView>(() => resolveWorkbenchMainView(
+    graph,
+    readWorkbenchUiState(productId).mainView,
+  ));
   const mainView = mainViewProp ?? mainViewState;
   const setMainView = useCallback((view: WorkbenchMainView) => {
-    if (mainViewProp === undefined) setMainViewState(view);
+    if (mainViewProp === undefined) {
+      setMainViewState(view);
+      // 仅非受控路径落盘；受控时由 Surface 在显式切换时写入，避免打开初值冒充偏好。
+      patchWorkbenchUiState(productId, { mainView: view });
+    }
     onMainViewChange?.(view);
-  }, [mainViewProp, onMainViewChange]);
+  }, [mainViewProp, onMainViewChange, productId]);
   const [focusRequest, setFocusRequest] = useState<GraphCanvasFocusRequest | null>(null);
   const [runningShotGroupId, setRunningShotGroupId] = useState<string | null>(null);
   const runningShotGroupRef = useRef<string | null>(null);

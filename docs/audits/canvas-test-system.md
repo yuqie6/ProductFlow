@@ -96,7 +96,8 @@ O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；�
 | 局部编辑 | [canvas-local-edit-flow](tasks/archive/canvas-local-edit-flow.md)：隔离 mock Chromium 2 passed，20.2s；providers/localedit Go 通过 | 核检查器入口、谱系、采用/撤销、提交失败不覆盖；未覆盖真实 OpenAI/Gemini 质量或商家任务耗时。现有 filmstrip 不等于镜头列表主界面 |
 | 成果工作视图 | [delivery-workbench-projection](tasks/archive/delivery-workbench-projection.md)：投影/视图 Vitest 16 passed；`just web-build`/`docs-check` 通过；开发站 1440/1280/390 走查切换、定位、`scope=node` 运行 | 投影与切换已交付；打开默认见下条条件默认 |
 | 默认入口走查 | [workbench-default-entry-walkthrough](tasks/archive/workbench-default-entry-walkthrough.md)：共享 dev 浏览器路径创建→（代理）出图→成果→定位；Vitest 成果/采用 17 + 视觉/配方 9 passed | **建议暂不全局默认成果**；已跟进 [有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) |
-| 有产出时默认成果 | [workbench-conditional-results-default](tasks/archive/workbench-conditional-results-default.md)：`defaultWorkbenchMainView`；有当前图 → results，否则 flow；Vitest 2 files / 17 passed | 非全局一律成果；不记忆跨会话；浏览器整链未宣称 |
+| 有产出时默认成果 | [workbench-conditional-results-default](tasks/archive/workbench-conditional-results-default.md)：`defaultWorkbenchMainView`；有当前图 → results，否则 flow；Vitest 2 files / 17 passed | 非全局一律成果；跨会话记忆见下条 |
+| 记忆上次主视图 | [workbench-remember-last-view](tasks/archive/workbench-remember-last-view.md)：商品级显式偏好；无偏好仍条件默认；`clearWorkbenchMainViewPreference` 可关 | 已交付；≠全局一律成果；浏览器整链未宣称 |
 | 交付采用快照 | [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md)：Go 采用/并发/导出一致；成果视图采用/导出接线；schema `delivery_adoption_*`；Vitest 14 | 浏览器整链 opt-in 未跑；质量判据仍依赖图片质量组判定输入；不宣称 R2 全部通过 |
 | 品牌视觉复用 | [brand-visual-reuse](tasks/archive/brand-visual-reuse.md)：商家内视觉方案版本 CRUD；商品显式选择；IQ-CF-07 继承预览（Brand 占位）；追加版本不静默改选择；配方创建预览列继承/待填；Vitest + Go 包测 | 浏览器整链未跑；Brand 表仍占位；未宣称跨商家分享 |
 
@@ -156,4 +157,4 @@ just docs-check
 
 [完整配方创建入口](tasks/archive/canvas-full-recipe-entry.md) 已修复：新建页直接预览并事务确认，不经过默认 birth graph 或无图工作台。已有图不可覆盖、取消不创建商品/图、目标身份及重试去重保持。前单入口 FAIL 保留为历史；临时 probe 已移除，正向路径纳入常规资产与配方门禁。[局部编辑](tasks/archive/canvas-local-edit-flow.md) 已修复：mock 绑定下检查器可完成消除/换字/重绘、采用或只留图库，失败不改节点当前图。商家任务耗时与镜头列表主界面仍未知，本组当前没有已发布的后续实现单。
 
-其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) 已按条件默认实现；记忆上次视图仍为可拆可选。采用/视觉整链浏览器验收仍须栈挂载 delivery-adoption 与 visual-systems 路由。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。
+其余观察不足保留为未知，不立即制造一批“补齐所有测试”的任务。新交互、局部编辑扩展或主界面改版须有具体商家问题与独立范围；不预设重做编辑器，不引入新运行模型、兼容旧数据或无界动作搜索。[有产出时默认成果](tasks/archive/workbench-conditional-results-default.md) 已按条件默认实现；[记忆上次视图](tasks/archive/workbench-remember-last-view.md) 已交付商品级显式偏好。采用/视觉整链浏览器验收仍须栈挂载 delivery-adoption 与 visual-systems 路由。每次交付更新本文件受影响的结论与证据，详细执行过程留在任务归档。

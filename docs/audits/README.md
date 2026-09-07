@@ -53,20 +53,18 @@
 | merchant-ops-surface | 商家平台 B9；运营面最小集 | 2026-09-07 完成归档 |
 | merchant-isolation-gate | 商家平台 B10；双商隔离门 MP-B | 2026-09-07 完成归档（自动化门通过；未开放第二商） |
 | release-r6-readiness-gate | 平台可靠性 R6 汇总门 | CTO 认领 `sub-release/…`，执行中 |
-| workbench-remember-last-view | 工作流体验；记忆上次视图 | CTO 认领 `sub-delivery/…`，执行中 |
+| workbench-remember-last-view | 工作流体验；记忆上次视图 | 2026-09-07 完成归档 |
 | release-readiness-baseline | 发行差距 | 完成归档 |
 | release-compose-proxy-overlay | 发行 B1 | 完成归档 |
 | release-versioned-artifact | 发行 B2 | 2026-09-07 完成归档 |
 | release-backup-restore | 发行 B3；备份恢复 | 2026-09-07 完成归档 |
 | release-d3-restore-drill | 发行 B4；D3 恢复演练 | 2026-09-07 完成归档 |
 | release-n-to-n1-upgrade | 发行 B5；N→N+1 | 2026-09-07 完成归档 |
-| release-r6-readiness-gate | 发行 B6；R6 汇总门 | 开放 |
 | delivery-workbench-projection | 成果视图 | 完成归档；默认仍为流程 |
 | delivery-adoption-snapshot | 采用快照 | 2026-09-07 完成归档 |
 | brand-visual-reuse | 品牌视觉复用 | 2026-09-07 完成归档 |
 | workbench-default-entry-walkthrough | 默认入口走查 | 2026-09-07 完成归档；建议暂不全局默认成果 |
 | workbench-conditional-results-default | 有产出时默认成果 | 2026-09-07 完成归档 |
-| workbench-remember-last-view | 记忆上次视图 | 开放 |
 | compete-facts-layout-contract | 事实/排版合同 | 完成归档 |
 | compete-facts-layer-gate | CF-B0 事实分层闸 | 2026-09-07 完成归档 |
 | compete-facts-text-trace | CF-B1 图位文字追溯 | 2026-09-07 完成归档 |

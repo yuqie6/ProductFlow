@@ -9,6 +9,8 @@ import type { GraphProjection } from "../../../lib/types";
 export const WORKBENCH_SIDEBAR_TOOLS = ["agent", "add", "details", "runs", "library", "recipes"] as const;
 export type WorkbenchSidebarToolId = (typeof WORKBENCH_SIDEBAR_TOOLS)[number];
 
+export type WorkbenchMainViewPreference = "flow" | "results";
+
 export interface WorkbenchUiState {
   sidebarTool?: WorkbenchSidebarToolId;
   selectedNodeIds?: string[];
@@ -16,6 +18,8 @@ export interface WorkbenchUiState {
   inspectorCollapsed?: boolean;
   enteredGroupId?: string | null;
   filmstripVisible?: boolean;
+  /** 用户显式切换后的主视图；缺省时走条件默认，不把打开初值写成偏好。 */
+  mainView?: WorkbenchMainViewPreference;
 }
 
 const STORAGE_PREFIX = "productflow.workbench.ui.v1:";
@@ -31,6 +35,10 @@ export function parseWorkbenchSidebarTool(value: unknown): WorkbenchSidebarToolI
     : null;
 }
 
+export function parseWorkbenchMainView(value: unknown): WorkbenchMainViewPreference | null {
+  return value === "flow" || value === "results" ? value : null;
+}
+
 export function parseWorkbenchUiState(raw: string | null): WorkbenchUiState {
   if (!raw) return {};
   try {
@@ -40,6 +48,7 @@ export function parseWorkbenchUiState(raw: string | null): WorkbenchUiState {
     const selectedNodeIds = parseSelectedNodeIds(record.selectedNodeIds);
     const sidebarTool = parseWorkbenchSidebarTool(record.sidebarTool) ?? undefined;
     const enteredGroupId = parseOptionalId(record.enteredGroupId);
+    const mainView = parseWorkbenchMainView(record.mainView) ?? undefined;
     return {
       ...(sidebarTool ? { sidebarTool } : {}),
       ...(selectedNodeIds.length ? { selectedNodeIds } : {}),
@@ -47,6 +56,7 @@ export function parseWorkbenchUiState(raw: string | null): WorkbenchUiState {
       ...(typeof record.inspectorCollapsed === "boolean" ? { inspectorCollapsed: record.inspectorCollapsed } : {}),
       ...(enteredGroupId !== undefined ? { enteredGroupId } : {}),
       ...(typeof record.filmstripVisible === "boolean" ? { filmstripVisible: record.filmstripVisible } : {}),
+      ...(mainView ? { mainView } : {}),
     };
   } catch {
     return {};
@@ -67,6 +77,19 @@ export function patchWorkbenchUiState(productId: string, patch: WorkbenchUiState
   try {
     const next = { ...readWorkbenchUiState(productId), ...patch };
     window.localStorage.setItem(workbenchUiStorageKey(productId), JSON.stringify(next));
+  } catch {
+    // 隐私模式或配额错误只影响本地写入
+  }
+}
+
+/** 清除主视图显式偏好，下次打开回退条件默认。 */
+export function clearWorkbenchMainViewPreference(productId: string): void {
+  if (typeof window === "undefined" || !productId) return;
+  try {
+    const current = readWorkbenchUiState(productId);
+    if (current.mainView === undefined) return;
+    const { mainView: _removed, ...rest } = current;
+    window.localStorage.setItem(workbenchUiStorageKey(productId), JSON.stringify(rest));
   } catch {
     // 隐私模式或配额错误只影响本地写入
   }

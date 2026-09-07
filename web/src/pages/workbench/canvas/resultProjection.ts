@@ -52,7 +52,7 @@ export function graphHasResultItems(graph: GraphProjection): boolean {
 
 /**
  * 打开工作台时的条件默认：至少一枚生图/证据项已有当前图 → results；
- * 无产出或仅有空位节点 → flow。不记忆跨会话；完成 ≠ 全局一律成果。
+ * 无产出或仅有空位节点 → flow。完成 ≠ 全局一律成果。
  */
 export function graphHasUsableResultImages(graph: GraphProjection | null | undefined): boolean {
   if (!graph) return false;
@@ -67,6 +67,18 @@ export function defaultWorkbenchMainView(
   graph: GraphProjection | null | undefined,
 ): "flow" | "results" {
   return graphHasUsableResultImages(graph) ? "results" : "flow";
+}
+
+/**
+ * 商品级显式偏好优先；无偏好或非法值时回退条件默认。
+ * 打开时不得把条件默认写成偏好。
+ */
+export function resolveWorkbenchMainView(
+  graph: GraphProjection | null | undefined,
+  preferred: "flow" | "results" | null | undefined,
+): "flow" | "results" {
+  if (preferred === "flow" || preferred === "results") return preferred;
+  return defaultWorkbenchMainView(graph);
 }
 
 export function projectGraphResults(

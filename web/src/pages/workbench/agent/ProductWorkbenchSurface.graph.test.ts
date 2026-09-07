@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../../lib/api";
 import type {
@@ -11,6 +11,7 @@ import type {
   WorkflowRecipePreview,
   WorkflowRecipeSummary,
 } from "../../../lib/types";
+import { patchWorkbenchUiState, workbenchUiStorageKey } from "../chrome/workbenchUiState";
 import {
   buildAgentWorkflowRecipeApplyInput,
   clearAgentWorkflowRecipeIdempotencyKey,
@@ -138,6 +139,73 @@ describe("GraphAgentPanel", () => {
     ));
     expect(markup).toContain('data-graph-main-view-panel="results"');
   });
+
+  it("honors a stored product-level main-view preference over the conditional default", () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          storage.set(key, value);
+        },
+        removeItem: (key: string) => {
+          storage.delete(key);
+        },
+      },
+    });
+    try {
+      patchWorkbenchUiState("p1", { mainView: "flow" });
+      expect(storage.get(workbenchUiStorageKey("p1"))).toContain('"mainView":"flow"');
+
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const product = {
+        id: "p1",
+        name: "夏季主图",
+      } as CanonicalProductDetail;
+      const graph = {
+        id: "g1",
+        product_id: "p1",
+        title: "夏季主图",
+        schema_version: 3,
+        revision: 1,
+        last_operation_group_id: null,
+        can_undo: false,
+        can_redo: false,
+        nodes: [{
+          id: "image-1",
+          node_type: "image_generation",
+          title: "主图",
+          position_x: 0,
+          position_y: 0,
+          config: { image_type_key: "hero" },
+          bound_asset_id: null,
+          group_id: null,
+          preview_asset_id: "asset-1",
+          config_status: "ready",
+          unused: false,
+          incoming: [],
+          outgoing: [],
+        }],
+        edges: [],
+        groups: [],
+      } as GraphProjection;
+      const markup = renderToStaticMarkup(createElement(
+        QueryClientProvider,
+        { client },
+        createElement(MemoryRouter, null, createElement(ProductWorkbenchSurface, {
+          product,
+          initialGraph: graph,
+        })),
+      ));
+      expect(markup).toContain('data-graph-main-view-panel="flow"');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("Graph recipe apply contract", () => {
