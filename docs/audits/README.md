@@ -76,7 +76,8 @@
 | compete-facts-produce-route | CF-B3 双路线声明 | 2026-09-07 完成归档 |
 | compete-facts-controlled-layout | CF-B4 受控二维排版 | 2026-09-07 完成归档 |
 | compete-facts-brand-inherit | CF-B5 品牌/视觉继承 | 2026-09-07 完成归档 |
-| image-quality-content-pilot | 图片质量真实对照 | 认领 `sub-iq/…`；费用已授权 |
+| image-quality-content-pilot | 图片质量真实对照 | 2026-09-07 完成归档；16/16；闸门 2/8；≠全面改善 |
+| image-quality-selling-point-fidelity | 卖点保真与一理由对齐 | 认领 `sub-iq/…` |
 | compete-adoption-hard-gate | IQ-CF-08 采用硬闸 | 2026-09-07 完成归档；服务端强制 text/route_qualified；≠R3 |
 | merchant-r1-close-ruling | 总纲 R1 关闭裁定 | 2026-09-07 完成归档；**R1 通过**（夹具双商；CreateMerchant 仍 409） |
 | eval-skills | Agent 质量 | 阻塞；保留候选与冻结 A/B |

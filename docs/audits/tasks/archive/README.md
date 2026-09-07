@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [image-quality-content-pilot.md](image-quality-content-pilot.md) | 完成 | 两商品 16/16 对照；闸门 2/8；卖点保真退步单列；≠R3 |
 | [compete-adoption-hard-gate.md](compete-adoption-hard-gate.md) | 完成 | CreateAdoption 强制 text/route_qualified；无元数据禁 pass；≠R3 |
 | [merchant-r1-close-ruling.md](merchant-r1-close-ruling.md) | 完成 | 总纲 R1 通过；夹具双商；CreateMerchant 仍 409；≠MP-C/D |
 | [release-r6-close-ruling.md](release-r6-close-ruling.md) | 完成 | 总纲 R6 通过；残余非宣称已列；≠R1–R5/SLA |

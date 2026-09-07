@@ -67,7 +67,7 @@
 ### 2.2 必须保留的未成熟结论
 
 - 图片旧候选 `36ade164` 的 32 图位只有 24 个有效评分，相对同模型直调为 11 胜、6 平、7 负；卖点图 2 胜、4 负。参考/金标分类、非盲单评委和未完成图位限制结论，不能宣传总体领先。原始合同见 [对照任务](audits/tasks/image-quality-comparison.md)。
-- 单图卖点修复 `61426ed6` 已提交，新的 [内容试跑](audits/tasks/image-quality-content-pilot.md) 仍缺本批费用授权，未取得改善结论。
+- 单图卖点修复 `61426ed6` 已提交；[内容试跑](audits/tasks/archive/image-quality-content-pilot.md) 两商品完整对照已采证（闸门仍各 2/8，工作台均分有升有降），已归档，不写成全面改善；跟进卖点保真对齐任务。
 - 195 个文件有效样本已被接受为当前池规模；参考身份与金标语义尚不等于合格。保留 [原 42 图位合同](audits/tasks/image-eval-pool.md)，不以新设计偷换旧验收。
 - Agent 当前缺可信完整开发基线，不能用旧 pass^k 或工具参数格式正确证明业务可靠性。
 - 没有真实生产商家，因此 [生产回流](audits/tasks/eval-production-mine.md) 是上线后的证据任务，不能要求现在补出不存在的生产用户记录。

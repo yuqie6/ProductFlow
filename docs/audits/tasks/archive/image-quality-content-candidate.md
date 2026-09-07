@@ -48,7 +48,7 @@
 - `creative-brief.md` 复用 key_messages 按图种分配买家问题和可见证据；必需内容与套图覆盖信息分开。画面方案只选择本图对应消息，生成文字与策划标签分开。场景交代使用关系和部件状态；细节选择可确认部位。
 - 读取链路：`graph.AssemblePromptRequest` 加载图种职责 → `providers.GeneratePrompt` 使用固定 instructions → `graph.CompileImageModelPrompt` 拼接已确认方案及图种默认指令。未新增字段、节点、自动采用、重试或持久化行为，未修改系列风格节点。
 - `bash scripts/with_dev_env.sh bash -lc 'go test -C go ./prompts ./internal/providers -count=1 -p 1'` 通过；graph 的 CompileImageModelPrompt、ImageInstructions、LocalSupplement、AssemblePrompt、SeedPrompt 相关 11 条回归通过。`go vet` 对 prompts/providers/graph 通过。没有把字符串检查当作模型服从度证据。
-- 后续两商品试验材料已复制到 `storage-dev/image-quality-content-pilot-0906/`，两臂共用原校正参考/金标；10 张源图大小和 SHA-256 均匹配，无参考/金标重叠。试验文件 SHA-256 `9a923d536accdf8405a93849b451ed936ae24ab4cd47e50623f168ca112b9e76`；新增运行见 [内容策略试验](../image-quality-content-pilot.md)。
+- 后续两商品试验材料已复制到 `storage-dev/image-quality-content-pilot-0906/`，两臂共用原校正参考/金标；10 张源图大小和 SHA-256 均匹配，无参考/金标重叠。试验文件 SHA-256 `9a923d536accdf8405a93849b451ed936ae24ab4cd47e50623f168ca112b9e76`；新增运行见 [内容策略试验](image-quality-content-pilot.md)。
 - 审核者：主代理-image-quality-0906-0132，自审。移除的是默认冲突，用户已指定的精确文案与创作限制仍有优先权；完整任务 diff 与文档检查在提交前复核。
 - Issue 结果：生成内容策略候选交付。组内实图改善未验证，原 32 图位诊断仍缺 8 个有效评分，多系列作用域与独立单图任务结构尚未实现。
 - 交付定位：随本任务提交；试验原版使用该交付的父提交，候选使用该交付本身，保证生成策略是代码的唯一行为差异。
