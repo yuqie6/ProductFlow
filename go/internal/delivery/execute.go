@@ -39,14 +39,11 @@ func (e Executor) Execute(ctx context.Context, jobID string) error {
 	if err != nil {
 		if re, ok := media.AsReadError(err); ok {
 			if re.Kind == media.ReadIO {
-				e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true)
-				return nil
+				return e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true)
 			}
-			e.fail(ctx, jobID, attemptID, apperr.Validation(sourceMissingDetail), false)
-			return nil
+			return e.fail(ctx, jobID, attemptID, apperr.Validation(sourceMissingDetail), false)
 		}
-		e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true)
-		return nil
+		return e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true)
 	}
 	rendered, err := Render(source.Bytes, claimed.spec)
 	if err != nil {
@@ -55,12 +52,10 @@ func (e Executor) Execute(ctx context.Context, jobID string) error {
 		if errors.As(err, &ae) && ae.Status == 400 {
 			retryable = false
 		}
-		e.fail(ctx, jobID, attemptID, err, retryable)
-		return nil
+		return e.fail(ctx, jobID, attemptID, err, retryable)
 	}
 	if err := e.persist(ctx, claimed, rendered); err != nil {
-		e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true)
-		return nil
+		return e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true)
 	}
 	return nil
 }
@@ -211,8 +206,8 @@ func (e Executor) persist(ctx context.Context, claimed claim, rendered Rendered)
 	return nil
 }
 
-func (e Executor) fail(ctx context.Context, jobID, attemptID string, reason error, retryable bool) {
-	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+func (e Executor) fail(ctx context.Context, jobID, attemptID string, reason error, retryable bool) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		return failJob(ctx, pgxTx, jobID, attemptID, reason, retryable)
 	})
 }
