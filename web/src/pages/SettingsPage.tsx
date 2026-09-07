@@ -30,6 +30,9 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
+import { cn } from "../components/ui/cn";
+import { CONTROL_CLASS } from "../components/ui/field";
+import { buttonVariants } from "../components/ui/button";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { TopNav } from "../components/TopNav";
 import { MerchantOpsPanel } from "./settings/MerchantOpsPanel";
@@ -131,32 +134,14 @@ export interface AgentBindingDraft {
   service_tier: string;
 }
 
-const INPUT_CLASS =
-  "h-11 w-full rounded-lg border border-border-l1 bg-surface-base px-4 text-sm text-text-primary " +
-  "placeholder:text-text-muted shadow-sm  focus:border-accent focus:bg-surface-raised " +
-  "focus:outline-none focus:ring-1 focus:ring-accent " +
-  "dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary dark:shadow-black/20 " +
-  "dark:placeholder:text-text-muted dark:focus:border-accent dark:focus:bg-surface-panel";
-
-const TEXTAREA_CLASS =
-  "w-full rounded-lg border border-border-l1 bg-surface-base px-4 py-3 text-sm text-text-primary " +
-  "placeholder:text-text-muted shadow-sm  focus:border-accent focus:bg-surface-raised " +
-  "focus:outline-none focus:ring-1 focus:ring-accent dark:border-border-l1 dark:bg-surface-panel " +
-  "dark:text-text-primary dark:shadow-black/20 dark:placeholder:text-text-muted dark:focus:border-accent";
-
-const PANEL_CLASS =
-  "rounded-xl border border-border-l1 bg-surface-raised p-6 shadow-sm  " +
-  "dark:border-border-l2 dark:bg-surface-panel dark:shadow-black/25";
-
-const SETTINGS_MAIN_ACTION_CLASS =
-  "inline-flex h-11 items-center justify-center rounded-lg bg-accent px-5 text-sm font-semibold text-accent-fg " +
-  "shadow-sm  hover:bg-accent disabled:opacity-50 dark:bg-accent dark:hover:bg-accent";
-
-const PROVIDER_DRAWER_INPUT_CLASS =
-  "h-[43px] w-full rounded-xl border border-border-l3 bg-surface-raised px-4 text-sm font-medium text-text-primary " +
-  "placeholder:text-text-muted outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20 " +
-  "dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary dark:placeholder:text-text-muted " +
-  "dark:focus:border-accent dark:focus:ring-accent/35";
+const INPUT_CLASS = cn(CONTROL_CLASS, "h-11 px-4 text-sm");
+const TEXTAREA_CLASS = cn(CONTROL_CLASS, "px-4 py-3 text-sm");
+const PANEL_CLASS = "border-t border-border-l1 py-6";
+const SETTINGS_MAIN_ACTION_CLASS = cn(
+  buttonVariants({ variant: "primary", size: "lg" }),
+  "h-11 px-5 text-sm lg:h-11",
+);
+const PROVIDER_DRAWER_INPUT_CLASS = cn(CONTROL_CLASS, "h-11 px-4 text-sm font-medium");
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
   {

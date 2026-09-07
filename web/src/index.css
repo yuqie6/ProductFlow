@@ -602,28 +602,6 @@ textarea {
   border-color: var(--color-accent);
 }
 
-.input-premium,
-.textarea-premium {
-  color: var(--color-text-primary);
-  background-color: var(--color-surface-raised);
-  border: 1px solid var(--color-border-l1);
-  border-radius: var(--radius-panel);
-  box-shadow: inset 0 1px 2px rgb(15 23 42 / 0.02);
-  transition: border-color var(--duration-fast) var(--ease-in-out), box-shadow var(--duration-fast) var(--ease-in-out);
-}
-
-.input-premium:focus,
-.textarea-premium:focus {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px var(--color-focus-ring);
-  outline: none;
-}
-
-.input-premium::placeholder,
-.textarea-premium::placeholder {
-  color: var(--color-text-muted);
-}
-
 .copy-editor-card {
   position: relative;
   background-color: var(--color-surface-panel);

@@ -4,7 +4,7 @@ import { cn } from "./cn";
 
 const FIELD_LABEL_CLASS = "mb-1 block text-label font-semibold text-text-muted";
 const CONTROL_CLASS =
-  "w-full rounded-control border border-border-l1 bg-surface-subtle px-2.5 text-xs text-text-primary outline-none transition-[border-color,box-shadow,background-color] duration-fast placeholder:text-text-muted focus:border-accent focus:bg-surface-raised focus:ring-2 focus:ring-focus-ring disabled:cursor-not-allowed disabled:opacity-45";
+  "w-full rounded-control border border-border-l1 bg-surface-subtle px-2.5 text-xs text-text-primary outline-none transition-[border-color,box-shadow,background-color] duration-fast placeholder:text-text-muted focus:border-accent focus:bg-surface-raised focus:ring-2 focus:ring-focus-ring disabled:cursor-not-allowed disabled:opacity-45 motion-reduce:transition-none";
 
 export function Field({
   label,

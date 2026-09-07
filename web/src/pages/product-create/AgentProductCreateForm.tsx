@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
+import { cn } from "../../components/ui/cn";
+import { CONTROL_CLASS } from "../../components/ui/field";
 import { ImageDropZone } from "../../components/ImageDropZone";
 import { Dialog, DialogContent } from "../../components/ui/dialog";
 import { IMAGE_TYPE_FAMILY_ORDER, imageTypeFamily, isEvidenceImageType } from "../../lib/imageTypeFamilies";
@@ -387,7 +389,7 @@ export function AgentProductCreateForm({
               disabled={isSubmitting || editingLocked}
               onChange={(event) => onProductNameChange(event.target.value)}
               placeholder={t("agentCreate.namePlaceholder")}
-              className="input-premium h-12 w-full px-4 text-[15px] font-medium text-text-primary read-only:cursor-not-allowed read-only:bg-surface-subtle/70 read-only:text-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
+              className={cn(CONTROL_CLASS, "h-12 px-4 text-[15px] font-medium read-only:cursor-not-allowed read-only:bg-surface-subtle/70 read-only:text-text-secondary")}
             />
           </label>
           <div data-delivery-preset-control className="border-t border-border-l2 pt-4">
@@ -401,7 +403,7 @@ export function AgentProductCreateForm({
                   value={deliveryPresetKey ?? ""}
                   disabled={isSubmitting || editingLocked || isDeliveryPresetLoading || isDeliveryPresetError}
                   onChange={(event) => onDeliveryPresetChange(event.target.value || null)}
-                  className="input-premium h-11 w-full px-3 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                  className={cn(CONTROL_CLASS, "h-11 px-3 text-sm")}
                 >
                   <option value="">{t("agentCreate.deliveryPreset.none")}</option>
                   {(deliveryPresetCatalog?.items ?? []).map((preset) => (
@@ -685,7 +687,7 @@ export function AgentProductCreateForm({
                 value={outputDraft.textLanguage}
                 disabled={isSubmitting || editingLocked}
                 onChange={(event) => updateOutput({ textLanguage: event.target.value })}
-                className="input-premium h-11 w-full px-3 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                className={cn(CONTROL_CLASS, "h-11 px-3 text-sm")}
               >
                 {CREATE_TEXT_LANGUAGE_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>

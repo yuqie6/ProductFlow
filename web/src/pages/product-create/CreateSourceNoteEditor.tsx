@@ -62,7 +62,7 @@ export function CreateSourceNoteEditor({
   };
 
   return (
-    <div data-create-source-note-editor className="textarea-premium space-y-0 overflow-hidden p-0">
+    <div data-create-source-note-editor className="space-y-0 overflow-hidden rounded-control border border-border-l1 bg-surface-subtle p-0 focus-within:border-accent focus-within:ring-2 focus-within:ring-focus-ring">
       <label htmlFor="agent-product-brief" className="block px-3 py-3">
         <span className="sr-only">{t("agentCreate.brief")}</span>
         <textarea
@@ -72,7 +72,7 @@ export function CreateSourceNoteEditor({
           disabled={disabled}
           onChange={(event) => patchVisible(event.target.value)}
           placeholder={t("agentCreate.briefPlaceholder")}
-          className="min-h-24 w-full resize-y border-0 bg-transparent px-1 py-1 text-[15px] leading-6 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
+          className="min-h-24 w-full resize-y border-0 bg-transparent px-1 py-1 text-[15px] leading-6 text-text-primary outline-none focus:bg-surface-raised focus:ring-2 focus:ring-inset focus:ring-focus-ring placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
         />
       </label>
 
@@ -104,7 +104,7 @@ export function CreateSourceNoteEditor({
                       maxLength={16}
                       placeholder={t("agentCreate.briefFieldLabel")}
                       onChange={(event) => patchField(field.id, { label: event.target.value })}
-                      className="w-full border-0 bg-transparent px-1 py-1 text-[13px] font-medium text-text-secondary outline-none placeholder:text-text-muted/70 disabled:cursor-not-allowed"
+                      className="w-full border-0 bg-transparent px-1 py-1 text-[13px] font-medium text-text-secondary outline-none focus:bg-surface-raised focus:ring-2 focus:ring-inset focus:ring-focus-ring placeholder:text-text-muted/70 disabled:cursor-not-allowed"
                     />
                   </td>
                   <td className="border-t border-border-l1 px-2 py-1 align-middle">
@@ -116,7 +116,7 @@ export function CreateSourceNoteEditor({
                       placeholder={t("agentCreate.briefFieldPlaceholder")}
                       onChange={(event) => patchField(field.id, { value: event.target.value })}
                       onKeyDown={(event) => onValueKeyDown(field.id, event)}
-                      className="w-full border-0 bg-transparent px-1 py-1 text-[13px] leading-5 text-text-primary outline-none placeholder:text-text-muted/60 disabled:cursor-not-allowed"
+                      className="w-full border-0 bg-transparent px-1 py-1 text-[13px] leading-5 text-text-primary outline-none focus:bg-surface-raised focus:ring-2 focus:ring-inset focus:ring-focus-ring placeholder:text-text-muted/60 disabled:cursor-not-allowed"
                     />
                   </td>
                   <td className="border-t border-border-l1 p-0 align-middle">

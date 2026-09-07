@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
+import { cn } from "../../../components/ui/cn";
+import { CONTROL_CLASS } from "../../../components/ui/field";
 import type { LocalImageEditTaskStatus } from "../../../lib/types";
 import { Dialog, DialogContent, DialogTitle } from "../../../components/ui/dialog";
 import { IconButton } from "../../../components/ui/icon-button";
@@ -787,7 +789,7 @@ export function LocalImageEditDialog({
                       <input
                         value={sourceText}
                         onChange={(event) => setSourceText(event.target.value)}
-                        className="h-10 w-full min-w-0 rounded-lg border border-border-l1 bg-surface-base px-3 text-sm font-normal outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                        className={cn(CONTROL_CLASS, "h-11 min-w-0 px-3 text-sm font-normal")}
                       />
                     </label>
                     <label className="min-w-0 space-y-1.5 text-xs font-medium">
@@ -795,7 +797,7 @@ export function LocalImageEditDialog({
                       <input
                         value={replacementText}
                         onChange={(event) => setReplacementText(event.target.value)}
-                        className="h-10 w-full min-w-0 rounded-lg border border-border-l1 bg-surface-base px-3 text-sm font-normal outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                        className={cn(CONTROL_CLASS, "h-11 min-w-0 px-3 text-sm font-normal")}
                       />
                     </label>
                   </div>
@@ -806,7 +808,7 @@ export function LocalImageEditDialog({
                       value={instruction}
                       onChange={(event) => setInstruction(event.target.value)}
                       rows={3}
-                      className="min-h-20 w-full resize-y rounded-lg border border-border-l1 bg-surface-base px-3 py-2 text-sm font-normal leading-5 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+                      className={cn(CONTROL_CLASS, "min-h-20 resize-y px-3 py-2 text-sm font-normal leading-5")}
                     />
                   </label>
                 )}
@@ -819,6 +821,7 @@ export function LocalImageEditDialog({
                     </span>
                     <input
                       type="range"
+                      className="accent-accent"
                       min="4"
                       max="256"
                       step="4"
@@ -833,6 +836,7 @@ export function LocalImageEditDialog({
                     </span>
                     <input
                       type="range"
+                      className="accent-accent"
                       min="0"
                       max="1"
                       step="0.05"
@@ -861,8 +865,11 @@ export function LocalImageEditDialog({
                 </div>
 
                 <div
-                  className="relative w-full min-w-0 overflow-hidden rounded-lg border border-border-l1 bg-surface-subtle"
-                  style={{ aspectRatio: `${renderWidth} / ${renderHeight}` }}
+                  className="relative mx-auto min-w-0 overflow-hidden rounded-control border border-border-l1 bg-surface-subtle"
+                  style={{
+                    aspectRatio: `${renderWidth} / ${renderHeight}`,
+                    width: `min(100%, ${48 * renderWidth / renderHeight}vh)`,
+                  }}
                   data-local-edit-stage
                 >
                   <img
