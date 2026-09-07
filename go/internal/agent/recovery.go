@@ -378,6 +378,9 @@ func recoverNextExpiredExecution(ctx context.Context, s Service, skipped map[str
 				Updates(map[string]any{"status": "interrupted", "finished_at": now, "updated_at": now}).Error; updErr != nil {
 				return updErr
 			}
+			if qErr := finalizeQuotaForInterruptedInvocations(ctx, pgxTx, item.ProjectionID); qErr != nil {
+				return qErr
+			}
 			if updErr := pgxTx.Model(&schema.AgentTurnExecutions{}).Where("id = ?", item.ID).Updates(map[string]any{
 				"phase": "terminal",
 			}).Error; updErr != nil {

@@ -188,6 +188,7 @@ func newAgentServerOnDB(t *testing.T, gw Gateway, internalToken string, pool *pg
 	t.Cleanup(srv.Close)
 	as := &agentServer{pool: pool, db: gdb, svc: svc, srv: srv, client: &http.Client{}}
 	as.cookies = auth.MustAuthenticate(t, as.client, srv.URL)
+	mustSeedMerchantQuota(t, gdb, auth.MustDevMerchantID(t, gdb), 10_000)
 	_, _ = as.pool.Exec(context.Background(), `
 		INSERT INTO app_settings (key, value, created_at, updated_at)
 		VALUES ('admin_access_required', 'true', NOW(), NOW())

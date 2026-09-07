@@ -294,7 +294,7 @@ func (s Service) AppendCheckpoint(ctx context.Context, conversationID, execution
 				Kind: existing.Kind, CreatedAt: existing.CreatedAt,
 			}
 			if kind == "before_model_request" {
-				if err := recordModelInvocationStart(gdb, lease, payload, existing.CreatedAt); err != nil {
+				if err := recordModelInvocationStart(ctx, gdb, lease, payload, existing.CreatedAt); err != nil {
 					return err
 				}
 			}
@@ -329,7 +329,7 @@ func (s Service) AppendCheckpoint(ctx context.Context, conversationID, execution
 			return err
 		}
 		if kind == "before_model_request" {
-			if err := recordModelInvocationStart(gdb, lease, payload, now); err != nil {
+			if err := recordModelInvocationStart(ctx, gdb, lease, payload, now); err != nil {
 				return err
 			}
 		}
@@ -449,7 +449,7 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 					}
 				}
 				if kind == "assistant/message" {
-					if err := finishModelInvocation(gdb, lease.ProjectionID, input.Payload, existing.CreatedAt); err != nil {
+					if err := finishModelInvocation(ctx, gdb, lease.ProjectionID, input.Payload, existing.CreatedAt); err != nil {
 						return err
 					}
 				}
@@ -497,7 +497,7 @@ func (s Service) AppendEvents(ctx context.Context, conversationID, executionID, 
 				}
 			}
 			if kind == "assistant/message" {
-				if err := finishModelInvocation(gdb, lease.ProjectionID, input.Payload, createdAt); err != nil {
+				if err := finishModelInvocation(ctx, gdb, lease.ProjectionID, input.Payload, createdAt); err != nil {
 					return err
 				}
 			}
@@ -568,12 +568,13 @@ func foldJournalProjection(gdb *gorm.DB, projectionID, kind string, payload json
 	return gdb.Model(&schema.AgentTurnProjections{}).Where("id = ?", projectionID).Updates(updates).Error
 }
 
-// recordModelInvocationStart 在 before_model_request checkpoint 时幂等插入 agent_model_invocations。
+// recordModelInvocationStart 在 before_model_request checkpoint 时幂等插入 agent_model_invocations，并 Reserve 商业额度。
 //
 // 由 AppendCheckpoint 调用。把当前 lease 的 execution_id、attempt、fencing_token 钉在 model_request_id 上。同一 ID 已存在且身份一致则回放；已绑定不同 execution / fence / 模型则 Conflict。
+// 额度不足返回 Conflict，禁止 agent-service 继续发出 provider 调用。
 //
 // 当前 adapter 只接受 execution_mode=foreground。禁区：不要在恢复路径用新 fence 覆盖旧调用行；不要把 Pi 日志当成 invocation 权威。
-func recordModelInvocationStart(gdb *gorm.DB, lease ExecutionLeaseResponse, payload json.RawMessage, now time.Time) error {
+func recordModelInvocationStart(ctx context.Context, gdb *gorm.DB, lease ExecutionLeaseResponse, payload json.RawMessage, now time.Time) error {
 	var doc struct {
 		ModelRequestID string `json:"model_request_id"`
 		Provider       string `json:"provider"`
@@ -595,6 +596,28 @@ func recordModelInvocationStart(gdb *gorm.DB, lease ExecutionLeaseResponse, payl
 	if err != nil || len(digest) != 32 || doc.HarnessHash != strings.ToLower(doc.HarnessHash) {
 		return apperr.Validation("Agent model request checkpoint harness_hash 必须为小写 SHA-256")
 	}
+	var existing schema.AgentModelInvocations
+	err = gdb.Where("turn_projection_id = ? AND model_request_id = ?", lease.ProjectionID, doc.ModelRequestID).Take(&existing).Error
+	if err == nil {
+		if existing.ExecutionID != lease.ExecutionID || existing.Attempt != lease.Attempt || existing.FencingToken != lease.FencingToken || existing.Provider != doc.Provider || existing.Model != doc.Model || existing.ExecutionMode != doc.ExecutionMode || ptrString(existing.HarnessHash) != doc.HarnessHash {
+			return apperr.Conflict("Agent model request ID 已绑定不同调用")
+		}
+		merchantID, mErr := merchantIDForProjection(ctx, gdb, lease.ProjectionID)
+		if mErr != nil {
+			return mErr
+		}
+		return reserveModelInvocationQuota(ctx, gdb, merchantID, lease.ProjectionID, doc.ModelRequestID)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	merchantID, err := merchantIDForProjection(ctx, gdb, lease.ProjectionID)
+	if err != nil {
+		return err
+	}
+	if err := reserveModelInvocationQuota(ctx, gdb, merchantID, lease.ProjectionID, doc.ModelRequestID); err != nil {
+		return err
+	}
 	row := schema.AgentModelInvocations{
 		ID: newID(), TurnProjectionID: lease.ProjectionID, ExecutionID: lease.ExecutionID,
 		ModelRequestID: doc.ModelRequestID, Attempt: lease.Attempt, FencingToken: lease.FencingToken,
@@ -602,26 +625,16 @@ func recordModelInvocationStart(gdb *gorm.DB, lease ExecutionLeaseResponse, payl
 		HarnessHash: &doc.HarnessHash,
 		Status:      "started", UsageSource: "unavailable", StartedAt: now, CreatedAt: now, UpdatedAt: now,
 	}
-	var existing schema.AgentModelInvocations
-	err = gdb.Where("turn_projection_id = ? AND model_request_id = ?", lease.ProjectionID, doc.ModelRequestID).Take(&existing).Error
-	if err == nil {
-		if existing.ExecutionID != lease.ExecutionID || existing.Attempt != lease.Attempt || existing.FencingToken != lease.FencingToken || existing.Provider != doc.Provider || existing.Model != doc.Model || existing.ExecutionMode != doc.ExecutionMode || ptrString(existing.HarnessHash) != doc.HarnessHash {
-			return apperr.Conflict("Agent model request ID 已绑定不同调用")
-		}
-		return nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
 	return gdb.Create(&row).Error
 }
 
-// finishModelInvocation 在 assistant/message 入 journal 后，把对应 agent_model_invocations 从 started 收成 completed / interrupted / failed。
+// finishModelInvocation 在 assistant/message 入 journal 后，把对应 agent_model_invocations 从 started 收成 completed / interrupted / failed，并收口额度 hold。
 //
 // 由 AppendEvents 调用。缺少 model_request_id 对应行是 Conflict（消息不能早于 before_model_request）。已终态行幂等忽略。全 0 usage 保持创建时的 unavailable，不能冒充 provider。
+// completed/failed → Settle；interrupted → MarkUnknown（已准入后不明结果，禁止当零消费 Release）。
 //
 // provider_response_id 撞唯一约束返回 Conflict。禁区：不要用估算 usage 覆盖已有 provider 数字；不要在这里改 Turn 或 Goal。
-func finishModelInvocation(gdb *gorm.DB, projectionID string, payload json.RawMessage, finishedAt time.Time) error {
+func finishModelInvocation(ctx context.Context, gdb *gorm.DB, projectionID string, payload json.RawMessage, finishedAt time.Time) error {
 	var doc struct {
 		ModelRequestID     string  `json:"model_request_id"`
 		Reason             string  `json:"reason"`
@@ -702,7 +715,17 @@ func finishModelInvocation(gdb *gorm.DB, projectionID string, payload json.RawMe
 		}
 		return result.Error
 	}
-	return nil
+	if result.RowsAffected == 0 {
+		return nil
+	}
+	merchantID, err := merchantIDForProjection(ctx, gdb, projectionID)
+	if err != nil {
+		return err
+	}
+	if status == "interrupted" {
+		return markModelInvocationQuotaUnknown(ctx, gdb, merchantID, projectionID, requestID)
+	}
+	return settleModelInvocationQuota(ctx, gdb, merchantID, projectionID, requestID)
 }
 
 func ptrString(value *string) string {

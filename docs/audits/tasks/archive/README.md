@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-mp-c-wire-b3-agent.md](merchant-mp-c-wire-b3-agent.md) | 完成 | Agent before_model_request 额度接线；≠R5/HTTP 余额 |
 | [image-quality-ocr-adoption-wire.md](image-quality-ocr-adoption-wire.md) | 完成 | CreateAdoption 默认 OCR；缺字/空期望拒绝；≠R3 |
 | [merchant-mp-c-wire-b2-graph.md](merchant-mp-c-wire-b2-graph.md) | 完成 | Graph image_generation 额度接线；≠R5/Agent |
 | [image-quality-ocr-trace-b0.md](image-quality-ocr-trace-b0.md) | 完成 | 字形 OCR 对照+失败不得 text_qualified；≠R3/采用默认接线 |
