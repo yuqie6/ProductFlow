@@ -305,9 +305,6 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 			}
 			batch = remaining
 		}
-		if err := e.markCandidateStarted(ctx, taskID, attemptID, completed, candidate, count); err != nil {
-			return err
-		}
 		reqJSON := map[string]any{
 			"prompt": prompt, "size": size, "candidate_start_index": candidate, "candidate_count": batch,
 			"base_asset_id": baseID, "selected_reference_asset_ids": refs, "tool_options": toolOpts,
@@ -514,6 +511,18 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 				return err
 			}
 			result = "unknown"
+		}
+		if result == "pending" {
+			if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).Where("id = ?", taskID).
+				Updates(map[string]any{
+					"active_candidate_index": start,
+					"progress_phase":         "candidate_started",
+					"progress_updated_at":    now,
+					"progress_metadata":      string(candidateProgressJSON(start, task.GenerationCount)),
+				}).Error; err != nil {
+				return err
+			}
+			return notifyTaskSession(ctx, pgxTx, taskID)
 		}
 		return nil
 	})
@@ -814,25 +823,6 @@ func promptVersionFor(result ChatResult, providerName string) string {
 		return version[:32]
 	}
 	return version
-}
-
-func (e Executor) markCandidateStarted(ctx context.Context, taskID, attemptID string, completed, candidate, count int) error {
-	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
-		now := time.Now().UTC()
-		meta := string(candidateProgressJSON(candidate, count))
-		if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
-			Where("id = ? AND active_attempt_id = ? AND status = ?", taskID, attemptID, "running").
-			Updates(map[string]any{
-				"completed_candidates":   completed,
-				"active_candidate_index": candidate,
-				"progress_phase":         "candidate_started",
-				"progress_updated_at":    now,
-				"progress_metadata":      meta,
-			}).Error; err != nil {
-			return err
-		}
-		return notifyTaskSession(ctx, pgxTx, taskID)
-	})
 }
 
 func candidateProgressJSON(candidate, count int) []byte {

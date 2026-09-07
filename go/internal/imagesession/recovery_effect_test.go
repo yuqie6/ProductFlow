@@ -16,6 +16,9 @@ func TestRecoveryDoesNotTrustCompletedCountWithoutSavedRounds(t *testing.T) {
 	if _, _, err := (Executor{DB: ss.db}).ensureEffect(ctx, taskID, attempt, 1, 1, clockid.New(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "fixture", map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := ss.pool.Exec(ctx, "UPDATE image_session_generation_tasks SET progress_phase='candidate_saved', active_candidate_index=NULL, progress_updated_at=NOW()-interval '1 hour' WHERE id=$1", taskID); err != nil {
+		t.Fatal(err)
+	}
 	result, err := recoverImageTaskState(ctx, ss.db, taskID, time.Now().Add(-time.Minute))
 	if err != nil {
 		t.Fatal(err)

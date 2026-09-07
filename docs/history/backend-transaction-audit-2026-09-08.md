@@ -34,7 +34,8 @@
 | 连续生图 effect 完成只按任务/批次写入，旧 worker 结果没有 attempt 围栏 | `markEffect` 显式接收 attempt，锁任务并核对当前执行，再按 effect attempt 更新 | failed/unknown/applied 三种旧结果均被拒绝且新 effect 保持 pending；原实现三种写入均接受 | `e4591471` |
 | 连续生图 effect 写失败被吞掉或作为业务失败自动重试，队列可能消费未完成持久化 | effectPersistenceError 保留底层错误，Execute 将其返回队列；各结果分支检查写入结果，Provider 错误仅分类一次再统一写账本 | 确认失败/未知/applied 三种 PostgreSQL 约束故障原代码均被消费；修复后 SQLSTATE 23514 透传、任务 running、信封 pending，恢复不重复 Provider | `18ad035b` |
 | 连续生图恢复删除已保存结果的 pending effect，仅凭 completed 计数可安全重排队 | 恢复事务用同会话/同生成组完整轮次与资产证明批次完成，保留 effect 并标 applied；证据不足收敛 unknown | 原代码复现恢复后 effect 丢失及无轮次仍重排队；修复后调用记录保留，恢复 applied 写失败回滚任务，缺证据不再重投 | `bcd0fce5` |
-| 连续生图接管 pending/忽略 unknown，重试 failed 时未重置结果与 Provider/hash | `ensureEffect` 只允许确认失败重新准备；未决 intent 保留原身份转 unknown，applied 复用 | 原实现三种缺陷复现；新调用 pending 元数据与请求一致，未决返回 unknown 且保留原 request/attempt，applied 批次数不变 | 随本次提交 |
+| 连续生图接管 pending/忽略 unknown，重试 failed 时未重置结果与 Provider/hash | `ensureEffect` 只允许确认失败重新准备；未决 intent 保留原身份转 unknown，applied 复用 | 原实现三种缺陷复现；新调用 pending 元数据与请求一致，未决返回 unknown 且保留原 request/attempt，applied 批次数不变 | `4e17ba26` |
+| 连续生图先提交 candidate_started，再插入调用 intent；插入失败仍被恢复判为调用未知 | `ensureEffect` 持锁事务同时写 intent、候选阶段和通知；删除独立 markCandidateStarted | 原代码复现 Provider 零调用却留下活动候选；intent 或阶段写失败均无残留 intent、保持 running，解除故障后安全重排队且仅调用一次 Provider | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -131,3 +132,8 @@ effect 持久化切片当前工作区 imagesession 整包通过（31.598 秒）�
 连续生图 effect 复用切片由本任务主代理负责，范围为 `imagesession/execute.go` 与 [四种效果状态合同](../../go/internal/imagesession/effect_reuse_test.go)。保留既有按批次唯一账本，只将 confirmed failed 作为允许替换的冲突行；更新新尝试的 pending、Provider、request hash/JSON，清除旧响应与失败详情。pending 的未知转换在事务提交后再返回 unknownErr，避免因返回分类错误回滚；已有 unknown 不继续调用。账本创建/更新错误同样保持持久化错误语义，数据库读取错误不再伪装成 attempt 失效。
 
 复用切片最终当前工作区 imagesession 整包通过（37.238 秒），新增四状态数据库回归实际执行。首次整包因新状态夹具遗留 running 占用包级容量而出现 queue.ErrLater，保留为 FAIL；改用独立 `pf_effectreuse_*` 测试库，测试结束自动清理。复核包级库未发现仍运行的本轮 effect-reuse 任务，没有删除其他测试数据。`just docs-check` 与完整 diff 自审通过；旧 pending 接管条件及旧 failed 元数据残留已删除。
+
+
+连续生图调用准备切片由本任务主代理负责，范围为 `imagesession/execute.go`、[调用前事务回归](../../go/internal/imagesession/provider_preparation_test.go) 和恢复负例夹具调整。候选开始投影与批次 intent 复用同一持锁事务，Provider 仍在提交后调用；已 applied 的批次不再额外写 candidate_started。准备持久化失败沿既有 effectPersistenceError 返回队列，未发出的调用可以由过期恢复安全重排队。新增回归分别拒绝 intent 插入和候选阶段更新，直接检查真实数据库的阶段、活动候选和 effect 行数，以及恢复结果与 Provider 调用次数。测试使用独立 `pf_preparation_*` 库并自动清理。
+
+调用准备切片当前工作区 imagesession 整包通过（38.849 秒），两个真实数据库故障子例实际执行；既有四状态 effect 复用与缺轮次证据的针对性组合通过（5.481 秒）。主代理完整 diff 自审确认 Provider 不在事务内，独立 markCandidateStarted 无残留，恢复负例仍明确模拟 candidate_saved 而非依赖准备阶段。`just docs-check` 与 diff 空白检查通过，未修改其他任务的账户、schema 或运行资源。
