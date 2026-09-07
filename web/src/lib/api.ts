@@ -81,7 +81,6 @@ import type {
   ProductImageAsset,
   ProductImageAssetListResponse,
   RuntimeConfig,
-  SettingsLockState,
   SettingsExportPayload,
   SettingsImportCommitResponse,
   SettingsImportPreviewResponse,
@@ -214,6 +213,25 @@ export const api = {
   destroySession(): Promise<{ ok: boolean }> {
     return request("/api/auth/session", { method: "DELETE" });
   },
+  requestRegistrationCode(email: string): Promise<{ challenge_id: string; retry_after_seconds: number }> {
+    return request("/api/auth/registration-code", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+  registerAccount(input: {
+    email: string;
+    challenge_id: string;
+    code: string;
+    password: string;
+    display_name?: string;
+    merchant_name: string;
+  }): Promise<{ ok: boolean; user_id: string; merchant_id: string }> {
+    return request("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
   setMerchantStatus(
     merchantId: string,
     status: "active" | "suspended",
@@ -304,9 +322,6 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
-  getSettingsLockState(): Promise<SettingsLockState> {
-    return request("/api/settings/lock-state");
-  },
   getRuntimeConfig(): Promise<RuntimeConfig> {
     return request("/api/settings/runtime");
   },
@@ -322,12 +337,6 @@ export const api = {
   },
   getGenerationQueueOverview(): Promise<GenerationQueueOverview> {
     return request("/api/generation-queue");
-  },
-  unlockSettings(token: string): Promise<SettingsLockState> {
-    return request("/api/settings/unlock", {
-      method: "POST",
-      body: JSON.stringify({ token }),
-    });
   },
   updateConfig(payload: ConfigUpdateRequest): Promise<ConfigResponse> {
     return request("/api/settings", {

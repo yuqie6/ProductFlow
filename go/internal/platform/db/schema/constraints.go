@@ -1881,7 +1881,8 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_run_events_run_sequence ON public.workflow_graph_run_events USING btree (graph_run_id, sequence);`,
 
-	// B0 identity: users / merchants / memberships / invites / auth_sessions
+	// Identity: users / merchants / memberships / registration challenges / auth_sessions
+	`DROP TABLE IF EXISTS public.merchant_invites;`,
 	`DO $c$ BEGIN
 ALTER TABLE users ADD CONSTRAINT uq_users_email UNIQUE (email);
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -1923,22 +1924,12 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE merchant_invites ADD CONSTRAINT fk_merchant_invites_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE;
+ALTER TABLE registration_challenges ADD CONSTRAINT ck_registration_challenges_failed_attempts CHECK (failed_attempts >= 0 AND failed_attempts <= 5);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE merchant_invites ADD CONSTRAINT fk_merchant_invites_invited_by FOREIGN KEY (invited_by) REFERENCES users(id) ON DELETE CASCADE;
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE merchant_invites ADD CONSTRAINT uq_merchant_invites_token_hash UNIQUE (token_hash);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE merchant_invites ADD CONSTRAINT ck_merchant_invites_role CHECK (role IN ('owner', 'editor', 'viewer'));
+ALTER TABLE registration_challenges ADD CONSTRAINT ck_registration_challenges_code_hash_nonempty CHECK (length(btrim(code_hash)) > 0);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -1949,7 +1940,8 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_memberships_user_status ON public.memberships USING btree (user_id, status);`,
 	`CREATE INDEX IF NOT EXISTS ix_memberships_merchant_role_status ON public.memberships USING btree (merchant_id, role, status);`,
-	`CREATE INDEX IF NOT EXISTS ix_merchant_invites_merchant_email ON public.merchant_invites USING btree (merchant_id, lower(email));`,
+	`CREATE INDEX IF NOT EXISTS ix_registration_challenges_email_created ON public.registration_challenges USING btree (email, created_at DESC);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_registration_challenges_active_email ON public.registration_challenges (email) WHERE consumed_at IS NULL;`,
 	`CREATE INDEX IF NOT EXISTS ix_auth_sessions_user_id ON public.auth_sessions USING btree (user_id);`,
 
 	// B1 root ownership: backfill sole merchant, NOT NULL, FK, indexes
@@ -2253,4 +2245,3 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_products_brand_id ON public.products USING btree (brand_id);`,
 }
-

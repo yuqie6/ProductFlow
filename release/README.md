@@ -47,13 +47,13 @@ cd productflow-<IMAGE_TAG>
 
 ```bash
 cp .env.example .env
-# 至少填写 ADMIN_ACCESS_KEY、SETTINGS_ACCESS_TOKEN、SESSION_SECRET、
+# 至少填写 ADMIN_ACCESS_KEY、SESSION_SECRET、
 # POSTGRES_PASSWORD、AGENT_SERVICE_INTERNAL_TOKEN（≥32 字符）。
 # BACKEND_CORS_ORIGINS 必须列出 Web 的精确 scheme/host/port；生产设
 # SESSION_COOKIE_SECURE=true。只有 API 前面确实有受控代理时才填写
 # TRUSTED_PROXY_CIDRS，API 不会采信其它来源的 X-Forwarded-For。
-# AUTH_RATE_LIMIT_* 是共享 Redis 上的登录/邀请准入预算，默认每 IP 15 分钟 100 次、
-# 每 IP+账号或邀请令牌摘要 10 次；Redis 不可用时凭据交换返回 503。
+# AUTH_RATE_LIMIT_* 是共享 Redis 上的登录/邮箱注册准入预算，默认每 IP 15 分钟 100 次、
+# 每 IP+邮箱 10 次；Redis 不可用时凭据交换返回 503。
 ```
 
 3. 取得镜像（三选一）：
@@ -84,7 +84,9 @@ docker compose --env-file images.env --env-file .env \
   node -e 'fetch("http://127.0.0.1:29284/healthz").then(r=>r.text()).then(console.log)'
 ```
 
-6. 用 `ADMIN_ACCESS_KEY` 登录；用 `SETTINGS_ACCESS_TOKEN` 解锁设置页。未配置 provider 时应仍可管理，生成入口表现为不可用（总纲「可配置」；完整缺凭据演练证据另记）。
+6. 空站点用 `ADMIN_ACCESS_KEY` 初始化管理员账号，之后用邮箱和密码登录；管理员直接进入设置页。在“邮件”中配置 SMTP 主机、端口、STARTTLS/TLS、用户名、密码和发件地址，也可通过 `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_ADDRESS`、`SMTP_FROM_NAME` 提供环境默认值。设置页保存的值覆盖环境默认，重置后恢复默认。初始化后登录页显示注册表单，SMTP 就绪后可发送验证码并注册自己的商家。SMTP 密码不回显、不进入配置导出，迁移实例后需独立配置。未配置 provider 时应仍可管理，生成入口表现为不可用（总纲「可配置」；完整缺凭据演练证据另记）。
+
+当前注册变更的 schema 会创建 `registration_challenges` 并删除退役的 `merchant_invites` 表，旧邀请不再可用；用户、商家和既有成员关系保留。实际发信域名与投递能力由部署者验证，配置字段完整不代表邮件已送达。
 
 停止栈且**保留**卷：`docker compose ... down`。清空演示数据才加 `-v`。不要对共享开发项目名 `productflow` 执行 `down`，除非该主机上没有其他人的开发栈。
 

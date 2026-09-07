@@ -2,7 +2,6 @@ package auth_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -34,16 +32,16 @@ func newAuthServer(t *testing.T) *authServer {
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
 	store := settings.NewStore(pool, config.Config{AdminAccessRequired: true})
+	if err := gdb.Exec(`
+		INSERT INTO app_settings (key, value, created_at, updated_at)
+		VALUES ('admin_access_required', 'true', NOW(), NOW())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+	`).Error; err != nil {
+		t.Fatal(err)
+	}
 	auth.MountTest(engine, gdb, store, auth.TestAdminKey)
 	settings.HTTP{
-		Store: store, DB: store, SettingsAccessToken: "settings-token",
-		OperatorOnly: auth.RequireOperatorIf(func(c *gin.Context) (bool, error) {
-			runtime, err := store.Runtime(c.Request.Context())
-			if err != nil {
-				return false, err
-			}
-			return runtime.AdminAccessRequired, nil
-		}),
+		Store: store, DB: store, OperatorOnly: auth.RequireOperator(),
 	}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
@@ -140,12 +138,15 @@ func TestSessionRevokeReturns401(t *testing.T) {
 	}
 }
 
-func TestInviteAcceptAndRole(t *testing.T) {
+func TestDirectMemberRole(t *testing.T) {
 	as := newAuthServer(t)
 	ownerCookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
 	state := as.do(t, http.MethodGet, "/api/auth/session", "", ownerCookies)
 	var stateBody struct {
 		Memberships []auth.MembershipView `json:"memberships"`
+		User        struct {
+			ID string `json:"id"`
+		} `json:"user"`
 	}
 	_ = json.NewDecoder(state.Body).Decode(&stateBody)
 	state.Body.Close()
@@ -153,24 +154,9 @@ func TestInviteAcceptAndRole(t *testing.T) {
 		t.Fatalf("memberships %#v", stateBody.Memberships)
 	}
 	merchantID := stateBody.Memberships[0].MerchantID
-	editorEmail := fmt.Sprintf("editor-%d@test.local", time.Now().UnixNano())
-	inviteResp := as.do(t, http.MethodPost, "/api/merchants/"+merchantID+"/invites",
-		`{"email":"`+editorEmail+`","role":"editor"}`, ownerCookies)
-	var invite auth.InviteResult
-	_ = json.NewDecoder(inviteResp.Body).Decode(&invite)
-	inviteResp.Body.Close()
-	if inviteResp.StatusCode != http.StatusOK || invite.Token == "" {
-		t.Fatalf("invite %d %#v", inviteResp.StatusCode, invite)
-	}
-	accept := as.do(t, http.MethodPost, "/api/auth/invites/accept",
-		`{"token":"`+invite.Token+`","password":"editor-password-ok","display_name":"编辑"}`, nil)
-	if accept.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(accept.Body)
-		accept.Body.Close()
-		t.Fatalf("accept %d %s", accept.StatusCode, body)
-	}
-	editorCookies := accept.Cookies()
-	accept.Body.Close()
+	editorEmail := "editor-" + time.Now().Format("150405.000000000") + "@test.local"
+	seedDirectMember(t, as.db, merchantID, editorEmail, "editor-password-ok", "编辑", auth.RoleEditor, false)
+	editorCookies := loginDirectMember(t, as, editorEmail, "editor-password-ok")
 	editorState := as.do(t, http.MethodGet, "/api/auth/session", "", editorCookies)
 	var editorBody struct {
 		Memberships []auth.MembershipView `json:"memberships"`
@@ -183,11 +169,10 @@ func TestInviteAcceptAndRole(t *testing.T) {
 	if editorBody.User.IsOperator || len(editorBody.Memberships) != 1 || editorBody.Memberships[0].Role != auth.RoleEditor {
 		t.Fatalf("editor %#v", editorBody)
 	}
-	deny := as.do(t, http.MethodPost, "/api/merchants/"+merchantID+"/invites",
-		fmt.Sprintf(`{"email":"x-%d@test.local","role":"viewer"}`, time.Now().UnixNano()), editorCookies)
+	deny := as.do(t, http.MethodDelete, "/api/merchants/"+merchantID+"/memberships/"+stateBody.User.ID, "", editorCookies)
 	deny.Body.Close()
 	if deny.StatusCode != http.StatusForbidden {
-		t.Fatalf("editor invite status %d", deny.StatusCode)
+		t.Fatalf("editor membership status %d", deny.StatusCode)
 	}
 }
 
@@ -202,31 +187,26 @@ func TestNonMemberForbidden(t *testing.T) {
 	state.Body.Close()
 	merchantID := stateBody.Memberships[0].MerchantID
 
-	outsiderEmail := fmt.Sprintf("outsider-%d@test.local", time.Now().UnixNano())
-	inviteResp := as.do(t, http.MethodPost, "/api/merchants/"+merchantID+"/invites",
-		`{"email":"`+outsiderEmail+`","role":"viewer"}`, ownerCookies)
-	var invite auth.InviteResult
-	_ = json.NewDecoder(inviteResp.Body).Decode(&invite)
-	inviteResp.Body.Close()
-	accept := as.do(t, http.MethodPost, "/api/auth/invites/accept",
-		`{"token":"`+invite.Token+`","password":"viewer-password-ok"}`, nil)
-	outsiderCookies := accept.Cookies()
-	var acceptBody struct {
-		UserID string `json:"user_id"`
-	}
-	_ = json.NewDecoder(accept.Body).Decode(&acceptBody)
-	accept.Body.Close()
+	outsiderEmail := "outsider-" + time.Now().Format("150405.000000000") + "@test.local"
+	outsider := seedDirectMember(t, as.db, merchantID, outsiderEmail, "viewer-password-ok", "外部成员", auth.RoleViewer, false)
+	outsiderCookies := loginDirectMember(t, as, outsiderEmail, "viewer-password-ok")
 
-	rev := as.do(t, http.MethodDelete, "/api/merchants/"+merchantID+"/memberships/"+acceptBody.UserID, "", ownerCookies)
+	rev := as.do(t, http.MethodDelete, "/api/merchants/"+merchantID+"/memberships/"+outsider.ID, "", ownerCookies)
 	rev.Body.Close()
 	if rev.StatusCode != http.StatusOK {
 		t.Fatalf("revoke %d", rev.StatusCode)
 	}
-	again := as.do(t, http.MethodPost, "/api/merchants/"+merchantID+"/invites",
-		fmt.Sprintf(`{"email":"y-%d@test.local","role":"viewer"}`, time.Now().UnixNano()), outsiderCookies)
+	again := as.do(t, http.MethodGet, "/api/merchants", "", outsiderCookies)
 	defer again.Body.Close()
-	if again.StatusCode != http.StatusForbidden {
-		t.Fatalf("revoked member status %d", again.StatusCode)
+	if again.StatusCode != http.StatusOK {
+		t.Fatalf("revoked member list status %d", again.StatusCode)
+	}
+	var listed struct {
+		Items []auth.MembershipView `json:"items"`
+	}
+	_ = json.NewDecoder(again.Body).Decode(&listed)
+	if len(listed.Items) != 0 {
+		t.Fatalf("revoked member still listed: %#v", listed.Items)
 	}
 }
 

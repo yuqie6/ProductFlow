@@ -4,13 +4,22 @@ This document is the canonical user-operations source. The in-product `/help` pa
 
 ## 1. First Use
 
-1. On an empty site, use `ADMIN_ACCESS_KEY` on the login page to initialize an account and the only development merchant, setting an email and password. Subsequent logins use that email and password.
-2. Open `/settings` and unlock it with `SETTINGS_ACCESS_TOKEN`.
+1. In the current development baseline, use `ADMIN_ACCESS_KEY` on an empty site to initialize an account and development merchant, setting an email and password. Subsequent logins use that email and password.
+2. After signing in, an Operator opens `/settings`; ordinary Users and anonymous requests are denied.
 3. Create provider profiles with Base URL, API key, capabilities, and default models.
 4. Bind profiles, interfaces, and models to `prompt`, `agent`, and `image`.
 5. Save and return to `/products`.
 
 Login and setup show a countdown when attempts are rate limited. Submission becomes available again after the cooldown, and form inputs are retained. A temporary service failure remains retryable and does not indicate a successful login.
+
+### 1.1 Public registration (shown after initialization)
+
+1. After deployer bootstrap, a signed-in Operator opens `/settings` and fills in registration SMTP: host, port, `starttls` or `tls`, username, password, sender address, and sender name. Ordinary Users and anonymous requests are denied, and the password is not echoed after save.
+2. After initialization, switch to the Register mode on the login page, enter an email, and request a verification code. The form remains visible when SMTP is not ready, while sending the code and submitting registration are disabled with an email-service notice.
+3. Enter the six-digit code, set a password of at least eight characters, and provide a merchant name before submitting.
+4. After verification, the system creates an ordinary account, that account's own merchant, an Owner membership, and trial quota, then signs in through the existing session. Email/password login remains available.
+
+A code is valid for 10 minutes, resends are limited to one per 60 seconds, and each challenge permits at most five failed attempts; resending invalidates the previous challenge. Existing membership management remains; direct association of additional existing users is deferred to a separate design.
 
 All three purposes are required by the core flow:
 
@@ -257,6 +266,10 @@ Settings also controls:
 
 Generation count belongs to the image plan or image-session candidate count and is not duplicated as an advanced image field.
 
+### 8.4 Registration SMTP
+
+The Operator manages registration SMTP in the existing settings page. The closed field set is `smtp_host`, `smtp_port`, `smtp_security` (`starttls` or `tls`), `smtp_username`, `smtp_password`, `smtp_from_address`, and `smtp_from_name`. The development stack reads startup defaults from `.env.dev` as `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_ADDRESS`, and `SMTP_FROM_NAME`; values saved in Settings override the same-name environment defaults, and restoring a default deletes the database override and returns to the current environment value. The password is secret, is not echoed after save, and is excluded from ordinary configuration exports and logs. The public registration form remains visible before SMTP is ready, while code delivery and registration submission stay disabled.
+
 ## 9. Global Agent Dock
 
 After login, the right-hand Global Agent Dock can:
@@ -311,7 +324,7 @@ Confirm the save finished, then check whether the current filters hide the sourc
 
 ### Settings Cannot Save
 
-Confirm the independent SETTINGS_ACCESS_TOKEN unlock and inspect provider capability, model, and request-field validation errors.
+Confirm that the current session belongs to a signed-in Operator, then inspect provider capability, model, and request-field validation errors.
 
 ### Are Secrets Written to Logs?
 

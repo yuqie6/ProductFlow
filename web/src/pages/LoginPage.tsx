@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, LayoutGrid } from "lucide-react";
+import { ArrowRight, LayoutGrid, Mail } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { api, ApiError } from "../lib/api";
@@ -15,7 +15,14 @@ export function LoginPage({ authenticated }: LoginPageProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [adminKey, setAdminKey] = useState("");
-  const [merchantName, setMerchantName] = useState("开发商家");
+  const [merchantName, setMerchantName] = useState("");
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [code, setCode] = useState("");
+  const [challenge, setChallenge] = useState<{ id: string; email: string } | null>(null);
+  const [sendRetryAt, setSendRetryAt] = useState(0);
+  const [sendSeconds, setSendSeconds] = useState(0);
+  const emailInput = useRef<HTMLInputElement>(null);
+  const formVersion = useRef(0);
   const [error, setError] = useState("");
   const [retryAt, setRetryAt] = useState(0);
   const [retrySeconds, setRetrySeconds] = useState(0);
@@ -27,15 +34,18 @@ export function LoginPage({ authenticated }: LoginPageProps) {
     queryFn: api.getSessionState,
   });
   const needsBootstrap = Boolean(sessionQuery.data?.needs_bootstrap);
+  const registrationAvailable = Boolean(sessionQuery.data?.registration_available) && !needsBootstrap;
+  const registering = mode === "register" && !needsBootstrap;
 
   useEffect(() => {
-    if (!retryAt) return;
+    if (!retryAt && !sendRetryAt) return;
     const timer = window.setInterval(() => {
       setRetrySeconds(Math.max(0, Math.ceil((retryAt - Date.now()) / 1000)));
-      if (Date.now() >= retryAt) window.clearInterval(timer);
+      setSendSeconds(Math.max(0, Math.ceil((sendRetryAt - Date.now()) / 1000)));
+      if (Date.now() >= Math.max(retryAt, sendRetryAt)) window.clearInterval(timer);
     }, 250);
     return () => window.clearInterval(timer);
-  }, [retryAt]);
+  }, [retryAt, sendRetryAt]);
 
   useEffect(() => {
     if (authenticated) {
@@ -44,7 +54,6 @@ export function LoginPage({ authenticated }: LoginPageProps) {
   }, [authenticated, navigate]);
 
   const finishLogin = async () => {
-    queryClient.removeQueries({ queryKey: ["settings-lock-state"] });
     queryClient.removeQueries({ queryKey: ["config"] });
     await queryClient.invalidateQueries({ queryKey: ["session"] });
     navigate("/products", { replace: true });
@@ -80,7 +89,33 @@ export function LoginPage({ authenticated }: LoginPageProps) {
     onError: handleLoginError,
   });
 
-  const pending = loginMutation.isPending || bootstrapMutation.isPending;
+  const registrationMutation = useMutation({
+    mutationFn: () => api.registerAccount({
+      email,
+      challenge_id: challenge?.id ?? "",
+      code,
+      password,
+      merchant_name: merchantName,
+    }),
+    onSuccess: finishLogin,
+    onError: handleLoginError,
+  });
+
+  const sendCodeMutation = useMutation({
+    mutationFn: (input: { email: string; version: number }) => api.requestRegistrationCode(input.email),
+    onSuccess: (result, input) => {
+      if (input.version !== formVersion.current) return;
+      setChallenge({ id: result.challenge_id, email: input.email });
+      setCode("");
+      setSendSeconds(result.retry_after_seconds);
+      setSendRetryAt(Date.now() + result.retry_after_seconds * 1000);
+    },
+    onError: (mutationError, input) => {
+      if (input.version === formVersion.current) handleLoginError(mutationError);
+    },
+  });
+
+  const pending = loginMutation.isPending || bootstrapMutation.isPending || registrationMutation.isPending;
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -90,6 +125,11 @@ export function LoginPage({ authenticated }: LoginPageProps) {
       bootstrapMutation.mutate();
       return;
     }
+    if (registering) {
+      if (!registrationAvailable || challenge?.email !== email.trim().toLowerCase() || sendCodeMutation.isPending) return;
+      registrationMutation.mutate();
+      return;
+    }
     loginMutation.mutate();
   };
 
@@ -97,74 +137,124 @@ export function LoginPage({ authenticated }: LoginPageProps) {
     <div className="relative flex min-h-screen flex-col items-center justify-center bg-zinc-50 dark:bg-[#060a12] dark:text-slate-100">
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#e4e4e7_1px,transparent_1px),linear-gradient(to_bottom,#e4e4e7_1px,transparent_1px)] bg-[size:4rem_4rem] opacity-50 [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)] dark:bg-[linear-gradient(to_right,rgba(71,85,105,0.34)_1px,transparent_1px),linear-gradient(to_bottom,rgb(71,85,105,0.34)_1px,transparent_1px)] dark:opacity-70" />
 
-      <div className="relative w-full max-w-sm px-6">
+      <div className="relative w-full max-w-sm px-6 py-8">
         <div className="mb-10">
           <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 shadow-sm shadow-zinc-900/20 dark:border dark:border-violet-400/35 dark:bg-violet-500/18 dark:shadow-violet-950/30">
             <LayoutGrid size={20} className="text-white" strokeWidth={2} />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">ProductFlow</h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-slate-400">
-            {needsBootstrap ? t("login.bootstrapSubtitle") : t("login.subtitle")}
+            {needsBootstrap ? t("login.bootstrapSubtitle") : registering ? t("login.registerSubtitle") : t("login.subtitle")}
           </p>
         </div>
 
+        {!needsBootstrap ? (
+          <div role="tablist" aria-label={t("login.accountAccess")} className="mb-6 grid grid-cols-2 border-b border-zinc-200 dark:border-slate-700">
+            {(["login", "register"] as const).map((value) => (
+              <button key={value} type="button" role="tab" aria-selected={mode === value} disabled={pending}
+                onClick={() => { formVersion.current += 1; setMode(value); setChallenge(null); setCode(""); setError(""); }}
+                className={`min-h-11 border-b-2 px-3 text-sm ${mode === value ? "border-zinc-900 text-zinc-900 dark:border-white dark:text-white" : "border-transparent text-zinc-500 dark:text-slate-400"}`}>
+                {t(value === "login" ? "login.submit" : "login.register")}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         <form onSubmit={handleSubmit} className="space-y-4">
+          {registering && !registrationAvailable ? (
+            <p role="status" className="text-sm text-amber-700 dark:text-amber-300">{t("login.registrationUnavailable")}</p>
+          ) : null}
           {needsBootstrap ? (
-            <>
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
+                <label htmlFor="auth-admin-key" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
                   {t("login.adminKey")}
                 </label>
                 <input
+                  id="auth-admin-key"
                   type="password"
                   value={adminKey}
                   onChange={(event) => setAdminKey(event.target.value)}
                   className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 transition-shadow placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/25"
                   placeholder={t("login.adminKeyPlaceholder")}
                   autoComplete="off"
+                  required
+                  disabled={pending}
                 />
               </div>
+          ) : null}
+          {needsBootstrap || registering ? (
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
+                <label htmlFor="auth-merchant-name" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
                   {t("login.merchantName")}
                 </label>
                 <input
+                  id="auth-merchant-name"
                   type="text"
                   value={merchantName}
                   onChange={(event) => setMerchantName(event.target.value)}
                   className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 transition-shadow placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/25"
                   placeholder={t("login.merchantNamePlaceholder")}
                   autoComplete="organization"
+                  required
+                  disabled={pending}
                 />
               </div>
-            </>
           ) : null}
 
           <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
+            <label htmlFor="auth-email" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
               {t("login.email")}
             </label>
             <input
+              id="auth-email"
+              ref={emailInput}
               type="email"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => { formVersion.current += 1; setEmail(event.target.value); setChallenge(null); setCode(""); }}
               className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 transition-shadow placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/25"
               placeholder={t("login.emailPlaceholder")}
               autoComplete="username"
+              required
+              disabled={pending}
             />
           </div>
 
+          {registering ? (
+            <div>
+              <label htmlFor="registration-code" className="mb-1.5 block text-xs font-medium text-zinc-500 dark:text-slate-400">{t("login.verificationCode")}</label>
+              <div className="flex min-w-0 gap-2">
+                <input id="registration-code" value={code} onChange={(event) => setCode(event.target.value)}
+                  inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required disabled={pending}
+                  className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100" />
+                <button type="button" disabled={!registrationAvailable || pending || sendCodeMutation.isPending || sendSeconds > 0 || retrySeconds > 0}
+                  onClick={() => {
+                    if (!registrationAvailable || !emailInput.current?.reportValidity() || Date.now() < Math.max(sendRetryAt, retryAt)) return;
+                    setError("");
+                    sendCodeMutation.mutate({ email: email.trim().toLowerCase(), version: formVersion.current });
+                  }}
+                  className="inline-flex min-h-11 max-w-[55%] items-center justify-center gap-2 rounded-md border border-zinc-300 px-3 text-xs text-zinc-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200">
+                  <Mail size={14} className="shrink-0" aria-hidden="true" />
+                  <span>{sendSeconds > 0 ? t("login.resendAfter", { seconds: sendSeconds }) : t("login.sendCode")}</span>
+                </button>
+              </div>
+              {challenge ? <p role="status" className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">{t("login.codeSent")}</p> : null}
+            </div>
+          ) : null}
+
           <div>
-            <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
+            <label htmlFor="auth-password" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
               {t("login.password")}
             </label>
             <input
+              id="auth-password"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 transition-shadow placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/25"
               placeholder={t("login.passwordPlaceholder")}
-              autoComplete={needsBootstrap ? "new-password" : "current-password"}
+              autoComplete={needsBootstrap || registering ? "new-password" : "current-password"}
+              required
+              disabled={pending}
             />
           </div>
 
@@ -177,10 +267,10 @@ export function LoginPage({ authenticated }: LoginPageProps) {
 
           <button
             type="submit"
-            disabled={pending || retrySeconds > 0}
+            disabled={pending || retrySeconds > 0 || (registering && (!registrationAvailable || !challenge || sendCodeMutation.isPending))}
             className="flex w-full items-center justify-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-zinc-900/20 transition-colors hover:bg-zinc-800 disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:to-violet-500 dark:shadow-violet-900/35 dark:ring-1 dark:ring-violet-300/35"
           >
-            {needsBootstrap ? t("login.bootstrapSubmit") : t("login.submit")}{" "}
+            {needsBootstrap ? t("login.bootstrapSubmit") : registering ? t("login.registerSubmit") : t("login.submit")}{" "}
             <ArrowRight size={14} className="ml-2 opacity-70" />
           </button>
         </form>

@@ -19,10 +19,9 @@ test.describe("live browser graph", () => {
   }) => {
     assertLiveBrowserGraphEnabled();
     const adminKey = requiredEnv("ADMIN_ACCESS_KEY");
-    const settingsToken = requiredEnv("SETTINGS_ACCESS_TOKEN");
     await lockLocale(page);
     await loginAsAdmin(page, adminKey);
-    await assertRealImageProviders(page.request, settingsToken);
+    await assertRealImageProviders(page.request);
 
     const productName = `e2e-live-graph ${new Date().toISOString().replaceAll(":", "").slice(0, 15)}`;
     await page.goto("/products/new");

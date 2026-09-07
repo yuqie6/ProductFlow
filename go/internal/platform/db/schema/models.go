@@ -1149,7 +1149,7 @@ func AllModels() []any {
 		&Users{},
 		&Merchants{},
 		&Memberships{},
-		&MerchantInvites{},
+		&RegistrationChallenges{},
 		&AuthSessions{},
 		&QuotaPriceVersions{},
 		&QuotaPriceEntries{},

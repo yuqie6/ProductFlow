@@ -54,13 +54,12 @@ test.describe("merchant image task loop gate", () => {
 
   test("create → edit → generate → adopt → export → Brand reuse clears identity", async ({ page }, info) => {
     await mkdir(EVIDENCE_ROOT, { recursive: true });
-    const settingsToken = requiredEnv("SETTINGS_ACCESS_TOKEN");
     const pathTable: Array<Record<string, string>> = [];
     const stamp = Date.now();
     const uniqueFactValue = `闭环规格-${stamp}`;
     const authoredGoal = `闭环改稿目标-${stamp}`;
 
-    await withMockDocumentProviders(page.request, settingsToken, async () => {
+    await withMockDocumentProviders(page.request, async () => {
       await page.setViewportSize({ width: 1440, height: 960 });
       let graph = await createWorkflow(page);
       const productId = workflowProductId(page);

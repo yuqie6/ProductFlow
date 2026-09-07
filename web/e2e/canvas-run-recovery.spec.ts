@@ -21,7 +21,7 @@ test.describe("canvas run recovery", () => {
   test.beforeEach(async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await assertMockImageProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"));
+    await assertMockImageProviders(page.request);
   });
 
   test("scene run submits only its images and preserves authored and unrelated nodes", async ({ page }) => {

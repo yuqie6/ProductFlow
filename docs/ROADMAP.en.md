@@ -4,9 +4,11 @@ Updated 2026-09-07. This is an English summary of the [authoritative product dir
 
 ## Product and Stage
 
-The intended product is a self-hostable, multi-merchant SaaS. The project owner will also operate an instance of the same product. Self-hosting describes deployment control; multiple merchants describe application isolation. The current single-administrator, single-merchant implementation is an unreleased development baseline with no commercial merchant users.
+The intended product is a self-hostable, multi-merchant SaaS. The project owner will also operate an instance of the same product. Self-hosting describes deployment control; multiple merchants describe application isolation. The unreleased development baseline starts with one administrator and one bootstrap development merchant; public email registration and Operator SMTP configuration are implemented and have passed real-browser and real SMTP/IMAP mail-receipt verification. Full multi-merchant isolation and workspace UX are not implemented.
 
 The primary job is a complete usable product-image delivery: organize supported facts, plan a set, generate, revise, select, export and reuse approved work for the next product. Agent, Graph, providers and self-evolution support this outcome.
+
+The account entry is public email-code registration after deployer bootstrap. The Operator configures `smtp_host`, `smtp_port`, `smtp_security` (`starttls` or `tls`), `smtp_username`, `smtp_password`, `smtp_from_address`, and `smtp_from_name` in the existing settings surface. The Register mode asks for an email, verification code, password, and merchant name; the optional API `display_name` defaults to the email prefix. A verified six-digit code creates an ordinary User, that user's own Merchant, an Owner membership, and trial quota; the code is valid for 10 minutes, resends wait 60 seconds, and each challenge allows five failed attempts. Existing password login remains. A real-browser flow has verified SMTP sending, IMAP receipt, registration into `/products`, an ordinary User session with its own Merchant and Owner membership, rejection of the old code replay with 410, and password login. This evidence covers the registration slice; whole-site publication and password recovery remain separate unfinished capabilities. Referrals and rebates are out of scope for this phase and remain a future decision.
 
 ## Competitive Direction
 
@@ -24,7 +26,7 @@ Isolation must cover HTTP/use cases, resource references, media variants, export
 
 The first supported topology is a single-host Compose deployment with PostgreSQL, Redis, local media and the current Go/Node/Web services. Providers are configured by the site Operator; deployment-level BYOK is supported by this design, while merchant-specific keys are a later extension.
 
-Usage facts, estimated provider cost and commercial credits/payments are separate records. Every billable entry needs merchant attribution, idempotent reservation and settlement, and explicit handling of unknown outcomes. Invite trials can use operator-assigned credits. Public paid operation additionally requires payments, refunds, reconciliation and actual operating decisions.
+Usage facts, estimated provider cost and commercial credits/payments are separate records. Every billable entry needs merchant attribution, idempotent reservation and settlement, and explicit handling of unknown outcomes. Public-registration trials can use the transaction-created trial quota. Public paid operation additionally requires payments, refunds, reconciliation and actual operating decisions.
 
 From the first stable release, installation, consistent backups, restoration and supported upgrades become product responsibilities. This does not introduce migration support for retired V1/v2 or historical experimental data. Self-hosted deployments do not send business telemetry to the project operator by default; external model calls still have explicit data destinations.
 
@@ -32,7 +34,7 @@ From the first stable release, installation, consistent backups, restoration and
 
 1. Freeze complete tenant coverage and implementation slices; deliver the outcome-view increment and an evidence-based installation/restoration gap inventory.
 2. Deliver an internal two-merchant build with complete identity, resource, media, event, asynchronous and Agent isolation, plus accountable usage and resource limits.
-3. Deliver invite-ready product workflows: complete image sets, controlled edits, selected delivery snapshots, basic precise text/layout and merchant-scoped visual reuse, with applicable quality and recovery evidence.
+3. Deliver public-registration trial workflows: complete image sets, controlled edits, selected delivery snapshots, basic precise text/layout and merchant-scoped visual reuse, with applicable quality and recovery evidence.
 4. Ship a stable self-hosted release with fixed artifacts, supported configuration and installation/restoration/upgrade evidence. The operated site uses the same artifacts.
 5. Add public paid operation based on actual trial feedback, pricing and payment decisions. Expand batch production, channels and specialist features only with supporting demand, quality and cost evidence.
 

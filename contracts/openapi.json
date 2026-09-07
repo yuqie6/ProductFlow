@@ -10871,68 +10871,6 @@
         }
       }
     },
-    "/api/settings/lock-state": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Get Settings Lock State Endpoint",
-        "operationId": "get_settings_lock_state_endpoint_api_settings_lock_state_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SettingsLockStateResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/settings/unlock": {
-      "post": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Unlock Settings Endpoint",
-        "operationId": "unlock_settings_endpoint_api_settings_unlock_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SettingsUnlockRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SettingsLockStateResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/settings": {
       "get": {
         "tags": [
@@ -23408,24 +23346,6 @@
         ],
         "title": "SettingsImportPreviewResponse"
       },
-      "SettingsLockStateResponse": {
-        "properties": {
-          "unlocked": {
-            "type": "boolean",
-            "title": "Unlocked"
-          },
-          "configured": {
-            "type": "boolean",
-            "title": "Configured"
-          }
-        },
-        "type": "object",
-        "required": [
-          "unlocked",
-          "configured"
-        ],
-        "title": "SettingsLockStateResponse"
-      },
       "SettingsProviderBindingExport": {
         "properties": {
           "purpose": {
@@ -23542,20 +23462,6 @@
           "provider_type"
         ],
         "title": "SettingsProviderProfileExport"
-      },
-      "SettingsUnlockRequest": {
-        "properties": {
-          "token": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Token"
-          }
-        },
-        "type": "object",
-        "required": [
-          "token"
-        ],
-        "title": "SettingsUnlockRequest"
       },
       "StartAgentTurnRequest": {
         "properties": {

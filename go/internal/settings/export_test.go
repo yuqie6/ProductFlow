@@ -20,6 +20,9 @@ func testImportRuntime() map[string]any {
 	}}
 	out := map[string]any{}
 	for _, def := range configDefinitions() {
+		if def.Secret {
+			continue
+		}
 		out[def.Key] = envDefault(dummy, def.Key)
 	}
 	return out
@@ -264,4 +267,27 @@ func TestPreviewImportRejectsMalformedJSONTypes(t *testing.T) {
 			requireErrContains(t, err, "请求体无效")
 		})
 	}
+}
+
+func TestImportOmitsSMTPPasswordAndRejectsSuppliedSecret(t *testing.T) {
+	t.Parallel()
+	store := &Store{}
+	doc := testImportDoc(nil, mockImportBindings(""))
+	preview, normalized, err := store.PreviewImport(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.RuntimeConfigCount != len(configDefinitions())-1 {
+		t.Fatalf("runtime count %d", preview.RuntimeConfigCount)
+	}
+	runtime, ok := normalized["runtime_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("runtime type %T", normalized["runtime_config"])
+	}
+	if _, ok := runtime["smtp_password"]; ok {
+		t.Fatal("normalized import contains SMTP password")
+	}
+	doc["runtime_config"].(map[string]any)["smtp_password"] = "secret"
+	_, _, err = store.PreviewImport(doc)
+	requireErrContains(t, err, "秘密配置项")
 }

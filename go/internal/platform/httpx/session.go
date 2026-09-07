@@ -8,8 +8,8 @@ import (
 	"github.com/gorilla/sessions"
 )
 
-// SessionCookieName 是管理员会话 cookie 名，HTTP 合同固定为 "session"。
-// 不要改成 token / jwt；设置页解锁用同一 cookie 里的 settings_unlocked 键，不是第二张 cookie。
+// SessionCookieName 是用户会话 cookie 名，HTTP 合同固定为 "session"。
+// 用户身份由会话里的 auth_session_id 引用数据库会话；不要改成 token / jwt。
 const SessionCookieName = "session"
 const sessionContextKey = "productflow.session"
 

@@ -27,7 +27,7 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [saas-workspace-context.md](saas-workspace-context.md) | 商家平台 | 实现 | 阻塞 | — | — |
+| [saas-workspace-context.md](saas-workspace-context.md) | 商家平台 | 实现 | 开放 | — | — |
 | [saas-account-team.md](saas-account-team.md) | 商家平台 | 实现 | 阻塞 | — | — |
 | [saas-preferences-settings.md](saas-preferences-settings.md) | 商家平台 | 实现 | 阻塞 | — | — |
 | [saas-ops-console.md](saas-ops-console.md) | 商家平台 | 实现 | 阻塞 | — | — |

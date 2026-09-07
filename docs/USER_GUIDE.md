@@ -4,13 +4,22 @@
 
 ## 1. 第一次使用
 
-1. 空站点在登录页使用 `ADMIN_ACCESS_KEY` 初始化账号与唯一开发商家，并设置邮箱和密码；之后使用该邮箱和密码登录。
-2. 进入 `/settings`，使用 `SETTINGS_ACCESS_TOKEN` 解锁。
+1. 当前开发基线的空站点在登录页使用 `ADMIN_ACCESS_KEY` 初始化账号与开发商家，并设置邮箱和密码；之后使用该邮箱和密码登录。
+2. 登录后由 Operator 进入 `/settings`；普通 User 与匿名访问会被拒绝。
 3. 创建供应商档案，填写 Base URL、API Key、能力和默认模型。
 4. 为 `prompt`、`agent`、`image` 三个用途选择档案、接口和模型。
 5. 保存后回到 `/products`。
 
 登录或初始化尝试过于频繁时，页面显示剩余等待秒数，冷却结束后可重新提交；输入内容保留。服务暂时不可用时可稍后重试，不会显示登录成功。
+
+### 1.1 公开注册（初始化完成后显示）
+
+1. 部署者完成 bootstrap 后，已登录的 Operator 在 `/settings` 填写注册邮件 SMTP：主机、端口、`starttls` 或 `tls`、用户名、密码、发件地址和发件人名称。普通 User 与匿名访问会被拒绝，保存后密码不会回显。
+2. 初始化完成后，在登录页切换到「注册」；填写邮箱并请求验证码。SMTP 未就绪时注册表单仍会显示，但发送验证码和提交按钮不可用，页面会提示邮件服务尚未就绪。
+3. 输入收到的六位验证码，设置至少 8 个字符的密码和商家名称，然后提交注册。
+4. 验证成功后，系统创建普通账号、该账号自己的商家、Owner 成员关系和试用额度，并沿现有会话登录。邮箱和密码登录继续可用。
+
+验证码有效 10 分钟，重发间隔 60 秒，每个验证码 challenge 最多 5 次错误验证；重发会使旧 challenge 失效。已有成员管理继续保留，新增成员的直接已有用户关联另行设计。
 
 三个用途都直接参与核心流程：
 
@@ -271,6 +280,10 @@ API Key 保存后不回显。更新档案时留空不会把已保存 secret 返�
 
 图片生成数量由图片计划或会话候选数设置，不在高级图片字段中重复配置。
 
+### 8.4 注册邮件 SMTP
+
+注册 SMTP 由 Operator 在现有设置页管理，字段闭集为：`smtp_host`、`smtp_port`、`smtp_security`（`starttls` 或 `tls`）、`smtp_username`、`smtp_password`、`smtp_from_address`、`smtp_from_name`。开发栈直接从 `.env.dev` 的 `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_ADDRESS`、`SMTP_FROM_NAME` 读取启动默认；设置页保存的数据库值覆盖同名环境默认，恢复默认会删除数据库覆盖并回到当前环境值。`smtp_password` 是 secret，保存后不回显，也不进入普通配置导出或日志。SMTP 未就绪时公开注册表单仍显示，但不能发送验证码或提交注册。
+
 ## 9. 全局 Agent Dock
 
 登录后，页面右侧提供 Global Agent Dock。它可以：
@@ -333,7 +346,7 @@ Agent 可以提出素材整理 Draft。确认前不会改名称、文件夹、�
 
 ### 设置保存失败
 
-确认已经用独立 SETTINGS_ACCESS_TOKEN 解锁，并检查 provider 能力、模型和请求字段校验错误。
+确认当前会话是已登录 Operator，并检查 provider 能力、模型和请求字段校验错误。
 
 ### 日志是否保存完整 secret
 

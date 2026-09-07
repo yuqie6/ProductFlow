@@ -22,39 +22,15 @@ import (
 )
 
 func registerOpsSettings(engine *gin.Engine, store *settings.Store) {
-	settings.HTTP{
-		Store: store, DB: store, SettingsAccessToken: "settings-token",
-		OperatorOnly: auth.RequireOperatorIf(func(c *gin.Context) (bool, error) {
-			runtime, err := store.Runtime(c.Request.Context())
-			if err != nil {
-				return false, err
-			}
-			return runtime.AdminAccessRequired, nil
-		}),
-	}.Register(engine)
+	settings.HTTP{Store: store, DB: store, OperatorOnly: auth.RequireOperator()}.Register(engine)
 }
 
-func inviteEditor(t *testing.T, as *authServer, ownerCookies []*http.Cookie, merchantID string) []*http.Cookie {
+func editorMember(t *testing.T, as *authServer, ownerCookies []*http.Cookie, merchantID string) []*http.Cookie {
 	t.Helper()
 	email := fmt.Sprintf("editor-ops-%d@test.local", time.Now().UnixNano())
-	inviteResp := as.do(t, http.MethodPost, "/api/merchants/"+merchantID+"/invites",
-		`{"email":"`+email+`","role":"editor"}`, ownerCookies)
-	var invite auth.InviteResult
-	_ = json.NewDecoder(inviteResp.Body).Decode(&invite)
-	inviteResp.Body.Close()
-	if inviteResp.StatusCode != http.StatusOK || invite.Token == "" {
-		t.Fatalf("invite %d %#v", inviteResp.StatusCode, invite)
-	}
-	accept := as.do(t, http.MethodPost, "/api/auth/invites/accept",
-		`{"token":"`+invite.Token+`","password":"editor-password-ok","display_name":"编辑"}`, nil)
-	if accept.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(accept.Body)
-		accept.Body.Close()
-		t.Fatalf("accept %d %s", accept.StatusCode, body)
-	}
-	cookies := accept.Cookies()
-	accept.Body.Close()
-	return cookies
+	_ = ownerCookies
+	seedDirectMember(t, as.db, merchantID, email, "editor-password-ok", "编辑", auth.RoleEditor, false)
+	return loginDirectMember(t, as, email, "editor-password-ok")
 }
 
 func TestMerchantRoleForbiddenOnSettingsAndQueue(t *testing.T) {
@@ -67,11 +43,10 @@ func TestMerchantRoleForbiddenOnSettingsAndQueue(t *testing.T) {
 	_ = json.NewDecoder(state.Body).Decode(&stateBody)
 	state.Body.Close()
 	merchantID := stateBody.Memberships[0].MerchantID
-	editorCookies := inviteEditor(t, as, ownerCookies, merchantID)
+	editorCookies := editorMember(t, as, ownerCookies, merchantID)
 
 	for _, path := range []string{
-		"/api/settings/runtime",
-		"/api/settings/lock-state",
+		"/api/settings",
 		"/api/generation-queue",
 		"/api/ops/support-contract",
 	} {
@@ -82,24 +57,71 @@ func TestMerchantRoleForbiddenOnSettingsAndQueue(t *testing.T) {
 			t.Fatalf("%s status %d body %s", path, resp.StatusCode, body)
 		}
 	}
-	unlock := as.do(t, http.MethodPost, "/api/settings/unlock", `{"token":"settings-token"}`, editorCookies)
-	unlock.Body.Close()
-	if unlock.StatusCode != http.StatusForbidden {
-		t.Fatalf("editor unlock %d", unlock.StatusCode)
+	removed := as.do(t, http.MethodGet, "/api/settings/lock-state", "", editorCookies)
+	removed.Body.Close()
+	if removed.StatusCode != http.StatusNotFound {
+		t.Fatalf("retired lock-state route %d", removed.StatusCode)
+	}
+}
+
+func TestSettingsOperatorGuardIgnoresAdminAccessRequired(t *testing.T) {
+	as := newAuthServer(t)
+	opCookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
+	t.Cleanup(func() {
+		_ = as.db.Exec(`
+			INSERT INTO app_settings (key, value, created_at, updated_at)
+			VALUES ('admin_access_required', 'true', NOW(), NOW())
+			ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+		`).Error
+	})
+	state := as.do(t, http.MethodGet, "/api/auth/session", "", opCookies)
+	var stateBody struct {
+		Memberships []auth.MembershipView `json:"memberships"`
+	}
+	if err := json.NewDecoder(state.Body).Decode(&stateBody); err != nil {
+		state.Body.Close()
+		t.Fatal(err)
+	}
+	state.Body.Close()
+	if len(stateBody.Memberships) != 1 {
+		t.Fatalf("memberships %#v", stateBody.Memberships)
+	}
+	editorCookies := editorMember(t, as, opCookies, stateBody.Memberships[0].MerchantID)
+	if err := as.db.Exec(`
+		INSERT INTO app_settings (key, value, created_at, updated_at)
+		VALUES ('admin_access_required', 'false', NOW(), NOW())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+	`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	opConfig := as.do(t, http.MethodGet, "/api/settings", "", opCookies)
+	opConfig.Body.Close()
+	if opConfig.StatusCode != http.StatusOK {
+		t.Fatalf("operator config %d", opConfig.StatusCode)
+	}
+
+	runtime := as.do(t, http.MethodGet, "/api/settings/runtime", "", editorCookies)
+	runtime.Body.Close()
+	if runtime.StatusCode != http.StatusOK {
+		t.Fatalf("ordinary runtime %d", runtime.StatusCode)
+	}
+	ordinaryConfig := as.do(t, http.MethodGet, "/api/settings", "", editorCookies)
+	ordinaryConfig.Body.Close()
+	if ordinaryConfig.StatusCode != http.StatusForbidden {
+		t.Fatalf("ordinary config %d", ordinaryConfig.StatusCode)
+	}
+
+	anonymousConfig := as.do(t, http.MethodGet, "/api/settings", "", nil)
+	anonymousConfig.Body.Close()
+	if anonymousConfig.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous config %d", anonymousConfig.StatusCode)
 	}
 }
 
 func TestOperatorSettingsExportHasNoMerchantSecrets(t *testing.T) {
 	as := newAuthServer(t)
 	opCookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
-	unlock := as.do(t, http.MethodPost, "/api/settings/unlock", `{"token":"settings-token"}`, opCookies)
-	if unlock.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(unlock.Body)
-		unlock.Body.Close()
-		t.Fatalf("unlock %d %s", unlock.StatusCode, raw)
-	}
-	opCookies = mergeCookies(opCookies, unlock.Cookies())
-	unlock.Body.Close()
 	exportResp := as.do(t, http.MethodGet, "/api/settings/export", "", opCookies)
 	defer exportResp.Body.Close()
 	raw, _ := io.ReadAll(exportResp.Body)
@@ -122,24 +144,6 @@ func TestOperatorSettingsExportHasNoMerchantSecrets(t *testing.T) {
 	}
 }
 
-func mergeCookies(existing, next []*http.Cookie) []*http.Cookie {
-	out := append([]*http.Cookie{}, existing...)
-	for _, cookie := range next {
-		replaced := false
-		for i, cur := range out {
-			if cur.Name == cookie.Name {
-				out[i] = cookie
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			out = append(out, cookie)
-		}
-	}
-	return out
-}
-
 func TestOperatorSuspendBlocksMerchantWrites(t *testing.T) {
 	pool, gdb := testdb.Open(t)
 	engine := httpx.NewEngine(nil)
@@ -153,6 +157,13 @@ func TestOperatorSuspendBlocksMerchantWrites(t *testing.T) {
 		UploadMaxBatchBytes:      50 * 1024 * 1024,
 		UploadMaxReferenceImages: 6,
 	})
+	if err := gdb.Exec(`
+		INSERT INTO app_settings (key, value, created_at, updated_at)
+		VALUES ('admin_access_required', 'true', NOW(), NOW())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+	`).Error; err != nil {
+		t.Fatal(err)
+	}
 	auth.MountTest(engine, gdb, store, auth.TestAdminKey)
 	registerOpsSettings(engine, store)
 	product.HTTP{
@@ -174,7 +185,7 @@ func TestOperatorSuspendBlocksMerchantWrites(t *testing.T) {
 	if stateBody.Memberships[0].MerchantStatus != auth.MerchantStatusActive {
 		t.Fatalf("merchant_status %#v", stateBody.Memberships[0])
 	}
-	editorCookies := inviteEditor(t, as, opCookies, merchantID)
+	editorCookies := editorMember(t, as, opCookies, merchantID)
 
 	now := time.Now().UTC()
 	productID := fmt.Sprintf("ops-product-%d", now.UnixNano())
@@ -211,12 +222,10 @@ func TestOperatorSuspendBlocksMerchantWrites(t *testing.T) {
 		t.Fatalf("detail %s", body)
 	}
 
-	inviteAsEditor := as.do(t, http.MethodPost, "/api/merchants/"+merchantID+"/invites",
-		fmt.Sprintf(`{"email":"after-suspend-ed-%d@test.local","role":"viewer"}`, time.Now().UnixNano()),
-		editorCookies)
-	inviteAsEditor.Body.Close()
-	if inviteAsEditor.StatusCode != http.StatusForbidden {
-		t.Fatalf("editor invite after suspend %d", inviteAsEditor.StatusCode)
+	memberAsEditor := as.do(t, http.MethodPost, "/api/merchants/"+merchantID+"/memberships/unknown/restore", "", editorCookies)
+	memberAsEditor.Body.Close()
+	if memberAsEditor.StatusCode != http.StatusForbidden {
+		t.Fatalf("editor membership after suspend %d", memberAsEditor.StatusCode)
 	}
 
 	listOK := as.do(t, http.MethodGet, "/api/v2/products", "", editorCookies)
@@ -275,7 +284,7 @@ func TestSupportContractDraftOpOnly(t *testing.T) {
 	}
 	_ = json.NewDecoder(state.Body).Decode(&stateBody)
 	state.Body.Close()
-	editorCookies := inviteEditor(t, as, opCookies, stateBody.Memberships[0].MerchantID)
+	editorCookies := editorMember(t, as, opCookies, stateBody.Memberships[0].MerchantID)
 	deny := as.do(t, http.MethodGet, "/api/ops/support-contract", "", editorCookies)
 	deny.Body.Close()
 	if deny.StatusCode != http.StatusForbidden {
@@ -293,7 +302,7 @@ func TestMerchantRoleCannotSetStatus(t *testing.T) {
 	_ = json.NewDecoder(state.Body).Decode(&stateBody)
 	state.Body.Close()
 	merchantID := stateBody.Memberships[0].MerchantID
-	editorCookies := inviteEditor(t, as, opCookies, merchantID)
+	editorCookies := editorMember(t, as, opCookies, merchantID)
 	resp := as.do(t, http.MethodPatch, "/api/merchants/"+merchantID+"/status",
 		`{"status":"suspended"}`, editorCookies)
 	resp.Body.Close()

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -25,6 +26,7 @@ import (
 type HTTP struct {
 	AdminAccessKey string                 // 仅空实例 bootstrap；正式登录不用它
 	Store          settings.RuntimeReader // Runtime.AdminAccessRequired
+	Mailer         Mailer                 // SMTP-backed public registration
 	DB             *gorm.DB
 	Service        Service
 	// AttemptLimiter is shared by all API instances. Production injects the
@@ -36,13 +38,21 @@ type HTTP struct {
 }
 
 func (h *HTTP) svc() Service {
-	if h.Service.DB != nil {
-		return h.Service
+	svc := h.Service
+	if svc.DB == nil {
+		svc.DB = h.DB
 	}
-	return Service{DB: h.DB}
+	return svc
 }
 
-// Register 挂上会话、引导、商家与邀请路由。
+// Mailer is the narrow settings boundary required by public registration.
+// It deliberately keeps SMTP configuration and transport out of auth.
+type Mailer interface {
+	RegistrationAvailable(context.Context) (bool, error)
+	SendVerificationCode(context.Context, string, string) error
+}
+
+// Register 挂上会话、引导、公开注册与商家路由。
 func (h HTTP) Register(engine *gin.Engine) {
 	svc := h.svc()
 	h.Service = svc
@@ -51,7 +61,8 @@ func (h HTTP) Register(engine *gin.Engine) {
 	group.GET("/session", h.state)
 	group.DELETE("/session", h.destroy)
 	group.POST("/bootstrap", h.bootstrap)
-	group.POST("/invites/accept", h.acceptInvite)
+	group.POST("/registration-code", h.registrationCode)
+	group.POST("/register", h.register)
 
 	merchants := engine.Group("/api/merchants")
 	merchants.Use(func(c *gin.Context) {
@@ -71,8 +82,6 @@ func (h HTTP) Register(engine *gin.Engine) {
 	merchants.GET("", h.listMerchants)
 	merchants.POST("", h.createMerchant)
 	merchants.PATCH("/:merchant_id/status", h.setMerchantStatus)
-	merchants.POST("/:merchant_id/invites", h.createInvite)
-	merchants.DELETE("/:merchant_id/invites/:invite_id", h.revokeInvite)
 	merchants.DELETE("/:merchant_id/memberships/:user_id", h.revokeMembership)
 	merchants.POST("/:merchant_id/memberships/:user_id/restore", h.restoreMembership)
 
@@ -107,19 +116,21 @@ type bootstrapRequest struct {
 	MerchantName string `json:"merchant_name"`
 }
 
-type acceptInviteRequest struct {
-	Token       string `json:"token"`
-	Password    string `json:"password"`
-	DisplayName string `json:"display_name"`
-}
-
 type merchantCreateRequest struct {
 	Name string `json:"name"`
 }
 
-type inviteCreateRequest struct {
+type registrationCodeRequest struct {
 	Email string `json:"email"`
-	Role  string `json:"role"`
+}
+
+type registerRequest struct {
+	Email        string `json:"email"`
+	ChallengeID  string `json:"challenge_id"`
+	Code         string `json:"code"`
+	Password     string `json:"password"`
+	DisplayName  string `json:"display_name"`
+	MerchantName string `json:"merchant_name"`
 }
 
 func (h HTTP) create(c *gin.Context) {
@@ -223,6 +234,13 @@ func (h HTTP) state(c *gin.Context) {
 		"access_required": runtime.AdminAccessRequired,
 		"needs_bootstrap": needsBootstrap,
 	}
+	registrationAvailable, err := h.registrationAvailable(c.Request.Context())
+	if err != nil {
+		// Registration readiness is an optional capability projection. A
+		// settings/SMTP read failure must not invalidate an existing session.
+		registrationAvailable = false
+	}
+	body["registration_available"] = registrationAvailable
 	if principal != nil {
 		body["user"] = gin.H{
 			"id":           principal.UserID,
@@ -240,27 +258,104 @@ func (h HTTP) state(c *gin.Context) {
 	c.JSON(http.StatusOK, body)
 }
 
-func (h HTTP) destroy(c *gin.Context) {
-	sessionID := httpx.SessionString(c, sessionCookieSessionKey)
-	_ = h.svc().RevokeSession(c.Request.Context(), sessionID)
-	_ = httpx.ClearSession(c)
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+func (h HTTP) registrationAvailable(ctx context.Context) (bool, error) {
+	if h.Mailer == nil {
+		return false, nil
+	}
+	available, err := h.Mailer.RegistrationAvailable(ctx)
+	if err != nil || !available {
+		return false, err
+	}
+	svc := h.svc()
+	if svc.DB == nil {
+		return false, nil
+	}
+	users, err := svc.UserCount(ctx)
+	if err != nil {
+		return false, err
+	}
+	return users > 0, nil
 }
 
-func (h HTTP) acceptInvite(c *gin.Context) {
-	var payload acceptInviteRequest
+func (h HTTP) registrationCode(c *gin.Context) {
+	if PrincipalFrom(c) != nil {
+		httpx.AbortDetail(c, http.StatusConflict, "当前已登录，请先退出当前账号")
+		return
+	}
+	available, err := h.registrationAvailable(c.Request.Context())
+	if err != nil {
+		httpx.AbortDetail(c, http.StatusServiceUnavailable, "注册服务暂时不可用，请稍后再试")
+		return
+	}
+	if !available {
+		httpx.AbortDetail(c, http.StatusServiceUnavailable, "注册服务暂未开放")
+		return
+	}
+	var payload registrationCodeRequest
 	if err := bindJSONStrict(c, &payload); err != nil {
 		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
 		return
 	}
-	if !h.admitCredential(c, hashToken(strings.TrimSpace(payload.Token))) {
+	email, err := normalizeEmail(payload.Email)
+	if err != nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	currentUserID := ""
-	if current := PrincipalFrom(c); current != nil {
-		currentUserID = current.UserID
+	if !h.admitCredential(c, email) {
+		return
 	}
-	principal, sessionID, err := h.svc().AcceptInvite(c.Request.Context(), payload.Token, payload.Password, payload.DisplayName, currentUserID)
+	issue, err := h.svc().CreateRegistrationChallenge(c.Request.Context(), email)
+	if err != nil {
+		var retry registrationRetryError
+		if errors.As(err, &retry) {
+			writeRegistrationRetry(c, retry.RetryAfter)
+			return
+		}
+		httpx.AbortErr(c, err)
+		return
+	}
+	if err := h.Mailer.SendVerificationCode(c.Request.Context(), email, issue.Code); err != nil {
+		_ = h.svc().InvalidateRegistrationChallenge(c.Request.Context(), issue.ID)
+		httpx.AbortDetail(c, http.StatusServiceUnavailable, "验证码发送失败，请稍后再试")
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"challenge_id":        issue.ID,
+		"retry_after_seconds": int(registrationResendInterval / time.Second),
+	})
+}
+
+func (h HTTP) register(c *gin.Context) {
+	if PrincipalFrom(c) != nil {
+		httpx.AbortDetail(c, http.StatusConflict, "当前已登录，请先退出当前账号")
+		return
+	}
+	available, err := h.registrationAvailable(c.Request.Context())
+	if err != nil {
+		httpx.AbortDetail(c, http.StatusServiceUnavailable, "注册服务暂时不可用，请稍后再试")
+		return
+	}
+	if !available {
+		httpx.AbortDetail(c, http.StatusServiceUnavailable, "注册服务暂未开放")
+		return
+	}
+	var payload registerRequest
+	if err := bindJSONStrict(c, &payload); err != nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	email, err := normalizeEmail(payload.Email)
+	if err != nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !h.admitCredential(c, email) {
+		return
+	}
+	principal, sessionID, merchantID, err := h.svc().Register(
+		c.Request.Context(), email, payload.ChallengeID, payload.Code, payload.Password,
+		payload.DisplayName, payload.MerchantName, "",
+	)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
@@ -269,7 +364,23 @@ func (h HTTP) acceptInvite(c *gin.Context) {
 		httpx.AbortErr(c, apperr.Internal("写入会话失败"))
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "user_id": principal.UserID})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "user_id": principal.UserID, "merchant_id": merchantID})
+}
+
+func writeRegistrationRetry(c *gin.Context, after time.Duration) {
+	seconds := int((after + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	c.Header("Retry-After", strconv.Itoa(seconds))
+	httpx.WriteDetail(c, http.StatusTooManyRequests, "验证码发送过于频繁，请稍后再试")
+}
+
+func (h HTTP) destroy(c *gin.Context) {
+	sessionID := httpx.SessionString(c, sessionCookieSessionKey)
+	_ = h.svc().RevokeSession(c.Request.Context(), sessionID)
+	_ = httpx.ClearSession(c)
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h HTTP) listMerchants(c *gin.Context) {
@@ -336,38 +447,6 @@ func (h HTTP) setMerchantStatus(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"id": merchant.ID, "name": merchant.Name, "status": merchant.Status})
-}
-
-func (h HTTP) createInvite(c *gin.Context) {
-	actor, ok := ActorFrom(c)
-	if !ok {
-		httpx.Unauthorized(c, "请先登录")
-		return
-	}
-	var payload inviteCreateRequest
-	if err := bindJSONStrict(c, &payload); err != nil {
-		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
-		return
-	}
-	result, err := h.svc().CreateInvite(c.Request.Context(), actor, c.Param("merchant_id"), payload.Email, payload.Role)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, result)
-}
-
-func (h HTTP) revokeInvite(c *gin.Context) {
-	actor, ok := ActorFrom(c)
-	if !ok {
-		httpx.Unauthorized(c, "请先登录")
-		return
-	}
-	if err := h.svc().RevokeInvite(c.Request.Context(), actor, c.Param("merchant_id"), c.Param("invite_id")); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h HTTP) revokeMembership(c *gin.Context) {

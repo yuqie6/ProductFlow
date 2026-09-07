@@ -17,10 +17,9 @@ test("Agent approval card submits one real WorkflowRun with generated images", a
   test.skip(process.env[SWITCH] !== "1", `set ${SWITCH}=1, start just dev with real Agent/providers, then run just web-e2e-live-agent-workflow`);
   test.setTimeout(20 * 60 * 1000);
   const adminKey = requiredEnv("ADMIN_ACCESS_KEY");
-  const settingsToken = requiredEnv("SETTINGS_ACCESS_TOKEN");
   await lockLocale(page);
   await loginAsAdmin(page, adminKey);
-  await assertRealImageProviders(page.request, settingsToken);
+  await assertRealImageProviders(page.request);
 
   await page.goto("/products/new");
   await expect(page.locator("[data-image-type='detail']")).toBeVisible();

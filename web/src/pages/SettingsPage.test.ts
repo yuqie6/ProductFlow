@@ -54,6 +54,16 @@ function configResponse(items: ConfigItem[]): ConfigResponse {
   return { items };
 }
 
+it("groups SMTP fields separately from other security settings", () => {
+  const config = configResponse([
+    configItem({ key: "smtp_host", value: "mail.example.com", category: "安全与运维" }),
+    configItem({ key: "smtp_password", value: "", secret: true, has_value: true, category: "安全与运维" }),
+  ]);
+  expect(itemsForSection(config, "mail").map((item) => item.key)).toEqual(["smtp_host", "smtp_password"]);
+  expect(itemsForSection(config, "security")).toEqual([]);
+  expect(settingsSectionFromSearchParam("mail")).toBe("mail");
+});
+
 function providerProfile(overrides: Partial<ProviderProfile> = {}): ProviderProfile {
   return {
     id: overrides.id ?? "profile-1",

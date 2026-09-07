@@ -2,7 +2,7 @@
 
 ## 1. System Boundary
 
-ProductFlow is a single-administrator, single-merchant workspace with seven runtime units:
+The current ProductFlow development baseline starts with one administrator and one bootstrap development merchant; public registration can create an ordinary User and that user's own Merchant. Full multi-merchant isolation and workspace UX are not implemented. The system has seven runtime units:
 
 1. React/Vite Web.
 2. Go business API.
@@ -18,7 +18,9 @@ This document describes the current implementation only. Module ownership comes 
 
 ## 2. Backend Layers
 
-PostgreSQL User/AuthSession records and the existing `session` cookie establish account identity. An invitation grants merchant membership; an existing account must supply its correct password or a matching valid session. `go/internal/auth` uses atomic Redis fixed windows for login, bootstrap and invitation acceptance: by default 100 attempts per IP and 10 per IP/account or invitation-digest pair in 15 minutes. Credential exchanges return 503 when Redis is unavailable; authenticated reads continue to use PostgreSQL sessions. Limits and namespaces are configured only through environment variables.
+PostgreSQL User/AuthSession records and the existing `session` cookie establish account identity. Login and bootstrap use the atomic Redis fixed-window limiter in `go/internal/auth`: by default 100 attempts per IP and 10 per IP/account in 15 minutes. Credential exchanges return 503 when Redis is unavailable; authenticated reads continue to use PostgreSQL sessions. Limits and namespaces are configured only through environment variables.
+
+Public email registration is implemented. After deployer bootstrap, the Operator configures `smtp_host`, `smtp_port`, `smtp_security` (`starttls`/`tls`), `smtp_username`, `smtp_password` (secret), `smtp_from_address`, and `smtp_from_name` in the existing `/settings`. The development stack reads startup defaults from `.env.dev` as `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_ADDRESS`, and `SMTP_FROM_NAME`; corresponding `app_settings` rows override those defaults, and restoring a default deletes the database override and returns to the current environment value. `POST /api/auth/registration-code` sends a six-digit code; a challenge is valid for 10 minutes, allows one resend every 60 seconds, and permits at most five failed attempts. `POST /api/auth/register` verifies the challenge, creates an ordinary User, that user's own Merchant, an Owner membership, and trial quota, then signs in through the existing cookie. Registration is closed before initialization, and email/password login remains. A real-browser flow verified SMTP sending, IMAP receipt, registration into `/products`, an ordinary User session with its own Merchant and Owner membership, a 410 response for replaying the old code, and successful password login. This evidence covers the registration slice and does not establish whole-site publication or password recovery. Invitation endpoints, tokens, schema, and readers/writers are retired without compatibility routes.
 
 `go/cmd/productflow-api/register.go` mounts `httpx.BrowserStateProtection` before registering all API routes. Browser POST/PUT/PATCH/DELETE requests, including JSON and multipart, must match an exact origin from `BACKEND_CORS_ORIGINS`. Referer is checked when Origin is absent; missing or untrusted sources return 403. The request Host does not establish trust. Internal calls must pass the configured token check and retain route-specific service authorization. `TRUSTED_PROXY_CIDRS` is empty by default, so untrusted forwarding headers do not change the rate-limit IP. API route contract tests and auth/httpx tests own this coverage.
 
@@ -71,6 +73,8 @@ ImageSession, Delivery and LocalEdit recovery use `FOR UPDATE SKIP LOCKED` durin
 - `/help`
 
 Page code lives in `web/src/pages/`. Shared visual components live in `web/src/components/`. HTTP, DTOs, i18n, and browser preferences live in `web/src/lib/`.
+
+The public registration page and its settings projection are part of the current-pages contract: the entry is Register mode on `/login`, shown after initialization, with code delivery and submission disabled while SMTP is unavailable. The full Web suite (730 tests across 103 files) has passing lint and build checks plus 35 passing browser cases; this evidence does not establish whole-site publication.
 
 The product workbench lives in `pages/workbench/` and is split by duty:
 
@@ -226,15 +230,16 @@ Runtime image-tool settings are filtered through the allowed-field contract befo
 
 ## 10. Configuration and Security
 
-Environment variables hold infrastructure and secrets required before database access:
+Environment variables hold infrastructure, registration SMTP defaults and secrets required before database access:
 
 - database, Redis, and storage
-- admin, session, and settings tokens
+- administrator bootstrap and session authentication
 - Agent service address and internal token
+- Registration SMTP defaults: `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_SECURITY` (default `starttls`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_ADDRESS`, and `SMTP_FROM_NAME`; the development environment reads them directly from `.env.dev`
 - optional `METRICS_BEARER_TOKEN`; API and dispatcher `/metrics` are not registered when it is absent; `DISPATCHER_METRICS_ADDR` enables the standalone dispatcher scrape endpoint
 - upload, logging, and worker base settings
 
-Provider profiles, purpose bindings, and business runtime settings are stored through `/settings`. The page requires an administrator session and independent `SETTINGS_ACCESS_TOKEN`.
+Provider profiles, purpose bindings, and business runtime settings are stored through `/settings`. Access is authorized by the logged-in Operator identity; ordinary Users and anonymous requests are denied. Registration SMTP belongs to the existing Operator settings surface: database values override same-name environment defaults, and restoring a default deletes the `app_settings` override and returns to the environment value. Its password is read and written as a secret and is never echoed, exported, or written to ordinary logs.
 
 Uploads are checked for MIME, actual image format, byte size, pixel count, and count before persistence. Download endpoints locate storage through database assets and never accept arbitrary file paths.
 

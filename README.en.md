@@ -10,7 +10,7 @@
   <a href="https://draw.devbin.de"><strong>Live Demo</strong></a>
 </p>
 
-ProductFlow is an open-source product-visual workspace for a single merchant. A user uploads real product references, chooses the required image types and quantities, and works with a workflow Agent to clarify price, style, text language, copy requirements, and other missing information. The confirmed result becomes an editable, executable image-production workflow.
+ProductFlow is an open-source product-visual workspace with data isolated by merchant. A user uploads real product references, chooses the required image types and quantities, and works with a workflow Agent to clarify price, style, text language, copy requirements, and other missing information. The confirmed result becomes an editable, executable image-production workflow.
 
 The public instance is a personal live demo. There is no formal commercial release or commercial merchant user base yet. The current implementation has one administrator and one merchant; the development mainline may still require recreating the database and storage.
 
@@ -53,7 +53,7 @@ The intended product is a self-hostable, multi-merchant SaaS, also operated by t
 
 ## Current Scope
 
-- Single administrator and single merchant.
+- Deployment bootstrap creates the operator and initial merchant. SMTP email verification lets users register their own merchant; complete workspace and operations interfaces remain under development.
 - No multi-tenancy, team permissions, billing, hosted accounts, automatic publishing, ad delivery, or video generation.
 - Public demo data and local development databases may be recreated during breaking updates.
 - Empty and existing databases run `just go-migrate` / `productflow-migrate`. The main repository does not backfill or keep compatibility layers for old data.
@@ -119,7 +119,6 @@ cp .env.example .env
 Replace at least:
 
 - `ADMIN_ACCESS_KEY`
-- `SETTINGS_ACCESS_TOKEN`
 - `SESSION_SECRET`
 - `POSTGRES_PASSWORD`
 - `AGENT_SERVICE_INTERNAL_TOKEN`
@@ -138,7 +137,7 @@ Default endpoints:
 - Backend health: `http://127.0.0.1:29280/healthz`
 - Web proxy health: `http://127.0.0.1:29281/api/healthz`
 
-Log in with `ADMIN_ACCESS_KEY`, unlock settings with `SETTINGS_ACCESS_TOKEN`, and configure the `prompt`, `agent`, and `image` bindings.
+Initialize the operator account with `ADMIN_ACCESS_KEY` on an empty instance, then sign in with email and password. The operator can access settings directly and configure the `prompt`, `agent`, and `image` bindings.
 
 ### 3. Data and Logs
 
@@ -173,7 +172,7 @@ cp .env.dev.example .env.dev
 cp web/.env.example web/.env
 ```
 
-Keep the PostgreSQL password consistent between `.env` and `.env.dev`. Use separate random values for the admin login, settings unlock, and internal Agent service token.
+Keep the PostgreSQL password consistent between `.env` and `.env.dev`. Use separate random values for the bootstrap key, session secret, and internal Agent service token.
 
 ### 3. Install and Migrate
 

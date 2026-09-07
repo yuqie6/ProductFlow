@@ -5,6 +5,19 @@ import { api } from "./api";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("credential exchange errors", () => {
+  it("sends registration proofs in the body and preserves server challenge metadata", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ challenge_id: "challenge", retry_after_seconds: 60 })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api.requestRegistrationCode("member@example.com")).resolves.toEqual({ challenge_id: "challenge", retry_after_seconds: 60 });
+    expect(fetchMock.mock.calls[0][0]).toContain("/api/auth/registration-code");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ email: "member@example.com" });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
+    const proof = { email: "member@example.com", challenge_id: "challenge", code: "123456", password: "password", merchant_name: "Merchant" };
+    await api.registerAccount(proof);
+    expect(fetchMock.mock.calls[1][0]).toContain("/api/auth/register");
+    expect(fetchMock.mock.calls[1][0]).not.toContain("123456");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual(proof);
+  });
   it.each(["login", "bootstrap"])("preserves the %s cooldown and error detail", async (entry) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(
       JSON.stringify({ detail: "Too many attempts" }),

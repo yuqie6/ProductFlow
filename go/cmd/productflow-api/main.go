@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/agent"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/brand"
@@ -37,6 +36,7 @@ import (
 	"github.com/yuqie6/productflow/internal/settings"
 	"github.com/yuqie6/productflow/internal/visualsystem"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -102,12 +102,17 @@ func main() {
 	authHTTP := auth.HTTP{
 		AdminAccessKey:    cfg.AdminAccessKey,
 		Store:             settingsStore,
+		Mailer:            settingsStore,
 		DB:                gdb,
 		Service:           auth.Service{DB: gdb},
 		AttemptLimiter:    attemptLimiter,
 		TrustedProxyCIDRs: cfg.TrustedProxyCIDRs,
 	}
 	trialUnits := cfg.QuotaTrialUnits
+	authHTTP.Service.EnsureRegistrationQuota = func(ctx context.Context, registrationDB *gorm.DB, merchantID string) error {
+		_, err := (&quota.Service{DB: registrationDB, TrialUnits: &trialUnits}).EnsureAccount(ctx, merchantID)
+		return err
+	}
 	authHTTP.EnsureMerchantQuota = func(ctx context.Context, merchantID string) error {
 		_, err := (&quota.Service{DB: gdb, TrialUnits: &trialUnits}).EnsureAccount(ctx, merchantID)
 		return err
@@ -116,19 +121,11 @@ func main() {
 	engine.Use(authHTTP.LoadPrincipal())
 	engine.Use(authHTTP.AttachWorkingMerchant())
 	engine.Use(authHTTP.RejectSuspendedMerchantWrites())
-	operatorOnly := auth.RequireOperatorIf(func(c *gin.Context) (bool, error) {
-		runtime, err := settingsStore.Runtime(c.Request.Context())
-		if err != nil {
-			return false, err
-		}
-		return runtime.AdminAccessRequired, nil
-	})
 	registerAPI(engine, apiHandlers{
 		AllowedOrigins: cfg.AllowedOrigins,
 		Auth:           authHTTP,
 		Settings: settings.HTTP{
-			Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken,
-			OperatorOnly: operatorOnly,
+			Store: settingsStore, DB: settingsStore, OperatorOnly: auth.RequireOperator(),
 		},
 		Quota: quota.HTTP{DB: gdb, Auth: authHTTP, TrialUnits: &trialUnits},
 		Product: product.HTTP{

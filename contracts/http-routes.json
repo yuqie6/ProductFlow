@@ -21,8 +21,13 @@
   },
   {
     "method": "POST",
-    "path": "/api/auth/invites/accept",
-    "name": "accept_merchant_invite"
+    "path": "/api/auth/registration-code",
+    "name": "request_registration_code"
+  },
+  {
+    "method": "POST",
+    "path": "/api/auth/register",
+    "name": "register_account"
   },
   {
     "method": "GET",
@@ -33,16 +38,6 @@
     "method": "POST",
     "path": "/api/merchants",
     "name": "create_merchant"
-  },
-  {
-    "method": "POST",
-    "path": "/api/merchants/{merchant_id}/invites",
-    "name": "create_merchant_invite"
-  },
-  {
-    "method": "DELETE",
-    "path": "/api/merchants/{merchant_id}/invites/{invite_id}",
-    "name": "revoke_merchant_invite"
   },
   {
     "method": "DELETE",
@@ -535,11 +530,6 @@
     "name": "preview_settings_import_endpoint"
   },
   {
-    "method": "GET",
-    "path": "/api/settings/lock-state",
-    "name": "get_settings_lock_state_endpoint"
-  },
-  {
     "method": "PATCH",
     "path": "/api/settings/provider-bindings/{purpose}",
     "name": "update_provider_binding_endpoint"
@@ -568,11 +558,6 @@
     "method": "GET",
     "path": "/api/settings/runtime",
     "name": "get_runtime_config_endpoint"
-  },
-  {
-    "method": "POST",
-    "path": "/api/settings/unlock",
-    "name": "unlock_settings_endpoint"
   },
   {
     "method": "GET",

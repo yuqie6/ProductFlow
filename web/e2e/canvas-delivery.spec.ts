@@ -14,7 +14,7 @@ test.describe("canvas delivery", () => {
   test.beforeEach(async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await assertMockImageProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"));
+    await assertMockImageProviders(page.request);
   });
 
   test("delivery presets preserve the original and download verified image and manifest bytes", async ({ page }) => {

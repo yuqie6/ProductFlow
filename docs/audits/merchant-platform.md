@@ -6,7 +6,7 @@
 
 | 本组拥有的结果 | 覆盖范围 | 交接 |
 |---|---|---|
-| 操作者身份可靠 | User、会话、邀请、恢复、Membership、角色、撤销 | 前后端共同交付；不复用 lease owner 充当用户 |
+| 操作者身份可靠 | User、会话、公开注册、恢复、Membership、角色、撤销 | 前后端共同交付；不复用 lease owner 充当用户 |
 | 所有商家资源隔离 | 商品、事实、Graph、素材、配方、Session、任务、下载、事件与缓存 | 一项隔离切片负责完整必要链路，不逐模块转单 |
 | 受理后的任务归属稳定 | 入队、重试、取消、Agent 合同、内部回调与确认 | 复用平台可靠性的 lease/outbox/fencing，不建第二套执行器 |
 | 商家权益与消费可解释 | 额度授权、价格版本、预留/结算/核对、运营调账 | 平台可靠性提供持久调用事实和执行约束；两组不得各造一本余额账 |
@@ -19,27 +19,27 @@
 - MP-03：根记录、子资源引用、媒体/缩略图/交付包、SSE、缓存、后台作业与 Go→Pi 工具范围保持同一商家。UUID 不作为授权依据。
 - MP-04：任务受理时固定发起者、商家与操作授权快照，执行时检查相应商家运行策略；切换商家不改变原任务归属。成员撤销停止其读取、订阅和新动作，后续确认重新鉴权。
 - MP-05：每个可消费入口有同一用量归属和幂等合同；预留、实际尝试、未知、释放、结算和人工调整可追踪。未知用量不是零消费，网络超时不自动授权重跑。
-- MP-06：首版为共享 PostgreSQL、显式归属、邀请制和实例级 provider 凭据。商家 BYOK、跨商家分享、公共注册和自动收款按独立就绪条件扩展。
+- MP-06：首版为共享 PostgreSQL、显式归属、bootstrap 后的公开邮箱注册和实例级 provider 凭据。商家 BYOK、跨商家分享和自动收款按独立就绪条件扩展；推荐和返利本阶段不实现，未来另行决定。
 - MP-07：完整隔离门未过前不能对互不信任的商家开放。分批代码提交不构成第二商家可用的发布声明。
 
 <a id="saas-platform-design"></a>
 
-## 邀请试用版 SaaS 平台设计
+## 公开注册试用版 SaaS 平台设计
 
-本节为目标合同，尚未整体实现；不回写历史 MP-A/MP-B 验收。本次源码观察为 `0dff28fa`，主线移动后执行者仍核相关链路。页面与完整流程见 [ROADMAP §15](../ROADMAP.md#15-邀请试用版-saas-设计交接)。设计与实现按现有任务协议交接，具体 task 状态只在看板维护。
+本节为目标合同，尚未整体实现；不回写历史 MP-A/MP-B 验收。公开注册切片已实现，并已有真实浏览器、SMTP/IMAP 收取及 Web 证据；整体 SaaS 和外部发布仍按单独授权与完整合同处理。页面与完整流程见 [ROADMAP §15](../ROADMAP.md#15-公开注册试用版-saas-设计交接)。具体 task 状态只在看板维护。历史邀请设计仅作档案，不是当前入口。
 
 ### 身份与范围不变量
 
 | ID | 目标合同 | 当前基础与必要增量 |
 |---|---|---|
-| SP-01 | User 会话证明本人；邀请只授权加入指定商家，不证明已有账号身份 | 复用 Users/AuthSessions/Invite hash；修复 AcceptInvite 已有账号空密码可换 session 的分支 |
+| SP-01 | User 会话证明本人；公开注册先验证邮箱，再创建普通账号与其自有商家 | 复用 Users/AuthSessions；注册 challenge、密码和创建事务已实现，并有浏览器、SMTP/IMAP 收取与注册会话证据 |
 | SP-02 | 工作商家是每标签页的明确选择，每请求服务端验证；无成员的 Operator 可管理站点 | 复用 header 和 merchant context；补 sessionStorage 选择、原生媒体/SSE query 与非商家路由分离 |
 | SP-03 | 成员/角色 mutation 的授权、最后 Owner 检查和变更在同一商家事务中串行 | 扩展现有 Membership；所有相关 writer 统一锁序，不用各自 actor→target 锁造成互锁 |
 | SP-04 | 个人、商家、实例配置分别拥有字段，不使用统一的任意 JSON 配置入口 | 个人偏好新增强类型存储；商家资料与现有 app_settings 分离 |
 | SP-05 | Operator 读取运营元数据不等于取得商家业务身份；支持访问必须有用途、期限和审计 | support.go 当前 501，仅草案；运营列表不得临时塞一个 merchant context 绕过支持授权 |
 | SP-06 | 商家消费仍由唯一 quota account/hold/event 解释，界面不能改变扣费事实 | 复用已交付 Reserve/Settle/Release/unknown、price；补分页读取和操作后回读 |
 | SP-07 | 新消费受商家状态和当前权限约束，已发出的调用据事实结算；停用不隐式退款 | 沿现有 queue/worker merchant snapshot 逐入口验证；未完成的跨执行器行为单独交付 |
-| SP-08 | 任何新商家开放必须满足完整试用合同；内部双商夹具和身份门通过不自动解除限制 | 保留 CreateMerchant 唯一开发商家限制，产品开通流程由后续完整交付替换 |
+| SP-08 | 任何新商家开放必须满足完整试用合同；内部双商夹具和身份门通过不自动解除限制 | bootstrap 后公开注册创建普通 User、自有 Merchant、Owner Membership 和试用额度；SMTP 与注册事务已有回归证据，外部发布仍需单独授权 |
 
 ### 权限矩阵
 
@@ -50,7 +50,7 @@
 | 本人资料/偏好/密码/会话 | 本人 | 本人 | 本人 | 本人 |
 | 本商商品、素材与生产 | 读写 | 读写 | 只读和允许下载 | 拒绝 |
 | 商家名称/时区 | 读写 | 只读 | 只读 | 运营元数据只读 |
-| 团队邮箱、邀请、角色、移除/恢复 | 读写 | 拒绝 | 拒绝 | 不隐式代管；账号恢复另走运营入口 |
+| 团队成员、角色、移除/恢复 | 读写 | 拒绝 | 拒绝 | 不隐式代管；账号恢复另走运营入口 |
 | 余额、预估单价 | 只读 | 只读 | 只读 | 运营只读 |
 | 商家完整消费流水 | 只读 | 拒绝 | 拒绝 | 运营只读 |
 | 调账、unknown 裁定、商家启停 | 拒绝 | 拒绝 | 拒绝 | 再认证、原因与审计 |
@@ -69,15 +69,15 @@
 
 ### 账号、团队与恢复
 
-首版以邀请为用户创建入口。新账号持有效邀请设密码；已有账号用正确密码或同一用户有效会话证明身份。不同用户会话不被静默替换。邀请失败不消费 token，重复成功不提升角色；新 user 同邮箱并发创建依唯一约束和事务结果收敛。
+首版以 bootstrap 后的公开邮箱验证码注册为用户创建入口。注册前必须完成部署者初始化；用户请求验证码、在有效 challenge 内设置密码，成功后原子创建普通 User、该用户自己的 Merchant、Owner Membership 和试用额度。六位验证码有效 10 分钟，重发间隔 60 秒，每个 challenge 最多 5 次错误验证，重发使旧 challenge 失效；验证前使用统一凭据预算。已有邮箱和密码登录保留，不同用户会话不被静默替换。SMTP 或注册事务失败不能假报成功，同邮箱并发注册依唯一约束和事务结果收敛。
 
-团队初始管理范围为分页成员列表、邀请列表、创建/撤销邀请、成员角色修改、移除/恢复。Owner 可增加 Owner；最后一位不能被移除或降级。统一 Merchant 根锁负责商家成员不变量；同时涉及 User 的操作用 User→Merchant→Membership/Invite 顺序，补查现有所有相关 reader/writer。恢复已撤销 Membership 不等于撤销账号停用。
+团队初始管理范围为分页成员列表、成员角色修改、移除/恢复。Owner 可增加 Owner；最后一位不能被移除或降级。统一 Merchant 根锁负责商家成员不变量；同时涉及 User 的操作使用 User→Merchant→Membership 顺序，补查现有所有相关 reader/writer。新增成员的直接已有用户关联另行设计，不以邀请、短期 token 或人工转发作为替代入口。恢复已撤销 Membership 不等于撤销账号停用。
 
-本人可改显示名、密码并撤销会话，邮箱首版只读。改密码/恢复与 Login 统一 User 行串行化凭据版本观察，不能在撤销事务后用旧密码创建有效 session。改密码和恢复成功撤销全部旧会话、清 cookie、回登录，不自动签入。邀请 token 保留 7 天；恢复 token 独立用途、30 分钟、一次性，原始值只在签发时返回并由人工可信渠道交付。
+本人可改显示名、密码并撤销会话，邮箱首版只读。改密码与 Login 统一 User 行串行化凭据版本观察，不能在撤销事务后用旧密码创建有效 session；成功后撤销全部旧会话、清 cookie、回登录，不自动签入。账号密码恢复、修改邮箱和相关邮件流程尚未实现；未来恢复使用与注册用途分离的 SMTP 短期凭据，成功后撤销全部旧会话，不授予 Membership 或 Operator。不能把该未来合同写成已交付能力。旧邀请接口、token、schema 和 reader/writer 退役，不保留兼容入口。
 
-Operator 再认证有效期 10 分钟，绑定本人 session，由服务端记录；不是前端布尔值。恢复非 Operator 账号必须记录原因，不能签发另一个 Operator 的恢复凭据。唯一 Operator 无法登录属于部署者恢复流程，首版产品 API 不增设后门；需要对应部署任务时单独设计离线受控命令。
+Operator 再认证有效期 10 分钟，绑定本人 session，由服务端记录；不是前端布尔值。未来恢复非 Operator 账号必须记录原因，不能签发另一个 Operator 的恢复凭据；该能力当前未实现，也不以 Operator 手工链接作为默认产品流程。唯一 Operator 无法登录属于部署者恢复流程，首版产品 API 不增设后门；需要对应部署任务时单独设计离线受控命令。
 
-邀请/恢复页面从 fragment 取令牌后移出地址栏，仅内存持有，通过请求 body 交换；不进入日志、浏览器持久缓存或第三方脚本。首版无自动邮件，丢失令牌只能撤销/重签。技术依据复核于 2026-09-07：[OWASP 账号恢复](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html)、[会话管理](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)；期限与人工交付方式为本项目决策。
+验证码只通过请求 body 交换，原始密码、验证码和 SMTP secret 不进入日志、URL、持久浏览器存储或普通导出。SMTP 未就绪时邮件交换与注册提交不可用，登录页注册模式仍可显示；真实 SMTP/IMAP 收取与注册流程已经验证，外部发布仍按部署授权处理。技术依据复核于 2026-09-07：[OWASP 账号恢复](https://cheatsheetseries.owasp.org/cheatsheets/Forgot_Password_Cheat_Sheet.html)、[会话管理](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)。
 
 ### 配置字段与生效时机
 
@@ -87,9 +87,11 @@ Operator 再认证有效期 10 分钟，绑定本人 session，由服务端记�
 | Merchant | name、time_zone | Owner 修改；时区默认 UTC，用 IANA 名称；成员只读资料 | 日期显示/筛选；不改持久 UTC 或已确认的生成输入 |
 | Brand/视觉方案 | 现有 Brand 与 visual_system | 沿已交付选择/继承合同 | 品牌风格不能携带旧商品身份，不重造配置层 |
 | Product/图节点 | facts、语言、规格和已有覆盖 | 沿现有 Graph/DeliverySpec 合同 | 影响被用户确认的后续操作；实例/个人偏好不能静默改运行 snapshot |
-| Instance | app_settings、provider、容量 | Operator；秘密受现有密钥合同约束 | 按原配置读者生效，不复制为每商家一份 provider |
+| Instance | app_settings、provider、容量、注册 SMTP 字段 | 已登录 Operator；普通 User 与匿名请求拒绝；SMTP password 按 secret 处理，不回显/导出 | 按原配置读者生效；登录页注册模式在初始化后可见，SMTP 未就绪时只禁用邮件交换和注册提交，不复制为每商家一份 provider |
 
 个人偏好与商家资料用强类型 PATCH、expected_revision 和有界字段；过期返回 409，前端保留草稿供比较。缺偏好行返回默认，不在 GET 落库；首次并发创建按 revision=0 和唯一约束收敛。新增“默认图种/尺寸/输出语言”等生产设置必须追到实际创建/运行读者后另行设计，不仅增加表单和 JSON。
+
+注册 SMTP 字段闭集为 `smtp_host`、`smtp_port`、`smtp_security`（`starttls`/`tls`）、`smtp_username`、`smtp_password`、`smtp_from_address`、`smtp_from_name`。开发栈从 `.env.dev` 的 `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_ADDRESS`、`SMTP_FROM_NAME` 读取启动默认；设置页保存的数据库值覆盖同名环境默认，恢复默认删除数据库覆盖并回到当前环境值。公开注册的邮件交换与提交由 `registration_available` 控制，只在 bootstrap 完成且 SMTP 可用时为 true；登录页注册模式在初始化完成后仍可显示，SMTP 未就绪时只禁用上述交换与提交。Operator 设置与注册读取共享同一数据库权威。
 
 ### 运营、消费与审计
 
@@ -108,22 +110,22 @@ Operator 再认证有效期 10 分钟，绑定本人 session，由服务端记�
 | 结果 | 已定设计 | 必须先有的输入 |
 |---|---|---|
 | 受审计支持读取 | Operator 10 分钟再认证；指定 merchant、reason、只读资源范围；支持会话最长 30 分钟、可提前结束。所有读取先校验授权并记录审计；不伪造 Membership，不允许生成/修改/导出整商数据。未明确允许的媒体/对话拒绝 | 统一审计、运营页和逐资源读取矩阵；不是给所有业务路由统一跳过鉴权 |
-| 第二商家开通 | 邀请开通是显式 Operator 操作，绑定初始 Owner 邮箱与创建幂等键；商家待接收邀请时不可生产，首次接受与有效 Owner/试用额度建账一致提交。名称不唯一，不能按名称去重；不得自动给 Operator 生产 Owner | 账号邀请安全、完整成员流程、额度原子建账及 schema 状态设计；必须处理撤销/过期后重新邀请，不靠预先 active 的无主商家 |
+| 后续商家开通 | 公开注册在 bootstrap 后验证邮箱，原子创建普通 User、自有 Merchant、Owner Membership 与试用额度；未验证或 SMTP 未就绪时不创建任何业务对象。名称不唯一，不能按名称去重；不得自动给 Operator 生产 Owner | 注册 challenge、SMTP 可用性、完整事务和额度原子建账；公开外部发布仍需单独授权，不通过手工邀请替代 |
 | 商家停用完整执行语义 | 禁止新消费；尚未发出的 provider 尝试停止；已发出调用据事实落成功/unknown 并结算；保留交付与支持处理入口 | 所有消费执行器与授权快照枚举；测试停用与 admission 并发，不用只关前端按钮验收 |
 | 商家首页/运营概览 | 有界投影与统一 metric 口径；只读数据，点击待办返回原业务对象；运营聚合不暴露商家内容 | 工作区选择、消费/任务明细、时区、已可用 API；原型与指标表由体验组拥有 |
 
 首批实施包：[身份入口](tasks/archive/saas-auth-entry-security.md)、[工作商家](tasks/saas-workspace-context.md)、[账户团队](tasks/saas-account-team.md)、[偏好设置](tasks/saas-preferences-settings.md)、[运营额度](tasks/saas-ops-console.md)。独立 [容量基线](tasks/saas-multimerchant-capacity-baseline.md) 属平台可靠性。共享 auth/schema/Web 壳层默认串行；只有文件、输入和资源均独立才并行。详细步骤由开发者按真实调用链安排，不为每个 endpoint 单独建任务。
 
-2026-09-07 身份入口合同已实现并通过回归：已有账号邀请要求身份证明，凭据入口共享 Redis 原子预算，浏览器写入校验来源，登录显示冷却。Web 728 测试及 17 浏览器用例通过；全部后端包已有通过结果，其中 Agent/额度在独立新测试库补跑通过，原复用库全量运行的失败保留于任务证据。SP-01 对应缺陷已修复；工作商家选择、账户团队及真实第二商家开放尚未交付，不重签 R1 或 S2。
+2026-09-07 身份入口合同历史快照（旧邀请流，保留原证据，不代表当前入口）：已有账号邀请要求身份证明，凭据入口共享 Redis 原子预算，浏览器写入校验来源，登录显示冷却。Web 728 测试及 17 浏览器用例通过；全部后端包已有通过结果，其中 Agent/额度在独立新测试库补跑通过，原复用库全量运行的失败保留于任务证据。SP-01 对应缺陷已修复；工作商家选择、账户团队及真实第二商家开放尚未交付，不重签 R1 或 S2。
 
 ## 组内序列
 
 1. [merchant-isolation-contract](tasks/archive/merchant-isolation-contract.md)：逐入口、表/根资源、worker、媒体和 Agent 工具建立覆盖清单，固定所有权、角色矩阵和可分别验证的实施批次。**本任务已交付覆盖矩阵与批次（见下文）；不宣称隔离已实现。**
-2. [身份骨架 B0](tasks/archive/merchant-identity-skeleton.md) 已交付。[根归属 B1](tasks/archive/merchant-root-ownership.md) **已交付**（根表 `merchant_id`、回填、查询过滤、跨商 404）。[商品链 B2](tasks/archive/merchant-product-chain.md) **已交付**（子链读写/下载隔离）。[Graph+配方 B3](tasks/archive/merchant-graph-recipe.md) **已交付**（changeset/run/SSE/recipe apply）。[会话生图 B5](tasks/archive/merchant-image-session.md) **已交付**。[图库绑定 B4](tasks/archive/merchant-library-binding.md) **已交付**（from-product/session、workflow sync）。[交付与局部编辑 B6](tasks/archive/merchant-delivery-localedit.md) **已交付**。[Agent 工具链 B7](tasks/archive/merchant-agent-tools.md) **已交付**。[队列与前端 B8](tasks/archive/merchant-queue-frontend.md) **已交付**。[运营面 B9](tasks/archive/merchant-ops-surface.md) **已交付**。[双商隔离门 B10](tasks/archive/merchant-isolation-gate.md) **自动化证据通过**；总纲 **R1 已通过**（见 [merchant-r1-close-ruling](tasks/archive/merchant-r1-close-ruling.md)）。**运营邀请第二商另决**；未放开产品 `CreateMerchant`。
+2. [身份骨架 B0](tasks/archive/merchant-identity-skeleton.md) 已交付。[根归属 B1](tasks/archive/merchant-root-ownership.md) **已交付**（根表 `merchant_id`、回填、查询过滤、跨商 404）。[商品链 B2](tasks/archive/merchant-product-chain.md) **已交付**（子链读写/下载隔离）。[Graph+配方 B3](tasks/archive/merchant-graph-recipe.md) **已交付**（changeset/run/SSE/recipe apply）。[会话生图 B5](tasks/archive/merchant-image-session.md) **已交付**。[图库绑定 B4](tasks/archive/merchant-library-binding.md) **已交付**（from-product/session、workflow sync）。[交付与局部编辑 B6](tasks/archive/merchant-delivery-localedit.md) **已交付**。[Agent 工具链 B7](tasks/archive/merchant-agent-tools.md) **已交付**。[队列与前端 B8](tasks/archive/merchant-queue-frontend.md) **已交付**。[运营面 B9](tasks/archive/merchant-ops-surface.md) **已交付**。[双商隔离门 B10](tasks/archive/merchant-isolation-gate.md) **自动化证据通过**；总纲 **R1 已通过**（见 [merchant-r1-close-ruling](tasks/archive/merchant-r1-close-ruling.md)）。**运营邀请第二商另决（历史基线，邀请流已退役）**；公开注册切片另行验收，未放开产品 `CreateMerchant`。
 3. 在相同身份合同上交付商家额度与 Operator 运营控制，复用平台提供的固定消费事实；缺字段或原子预留入口时将其纳入完整因果切片。
 4. 双商家正反用例、成员撤销和混合负载验收；把受影响身份/授权合同交给 Agent 质量独立固定题目，自进化消费已固定输入。
 
-现阶段：B10/MP-B 与总纲 **R1 已裁定通过**（夹具双商口径）；**在运营明确邀请前仍不得对互不信任的第二商家开放产品注册**（`CreateMerchant` 保持 409）。[总纲 R2/R5 对照刷新](tasks/archive/roadmap-r2-r5-refresh.md) 已归档（两门仍未通过）。[新商家额度引导](tasks/archive/merchant-mp-c-bootstrap-quota.md) 已交付（`QUOTA_TRIAL_UNITS`；≠R5）。[入口单价展示 B0](tasks/archive/merchant-mp-c-price-display-b0.md) 已交付图会话 Generate 前读 `GET …/quota/price` 展示预估扣减（缺失/无效禁用；≠R5）。[工作台 Graph 确认单价](tasks/archive/merchant-mp-c-price-display-workbench.md) 已接 Agent 工作流执行确认面（`graph.image_generation`；≠R5）。[unknown 到期](tasks/archive/merchant-mp-c-unknown-expiry-b0.md) 已交付（Op `holds/resolve` + TTL 全额 Settle；≠R5）。
+现阶段：B10/MP-B 与总纲 **R1 已裁定通过**（夹具双商口径）；冻结基线历史口径为 **在运营明确邀请前仍不得对互不信任的第二商家开放产品注册**（`CreateMerchant` 保持 409，旧邀请流已退役）。当前公开注册切片已由 SMTP、注册事务及浏览器/SMTP/IMAP 证据验证，外部发布仍需单独授权，不把历史 409 改写成已开放。[总纲 R2/R5 对照刷新](tasks/archive/roadmap-r2-r5-refresh.md) 已归档（两门仍未通过）。[新商家额度引导](tasks/archive/merchant-mp-c-bootstrap-quota.md) 已交付（`QUOTA_TRIAL_UNITS`；≠R5）。[入口单价展示 B0](tasks/archive/merchant-mp-c-price-display-b0.md) 已交付图会话 Generate 前读 `GET …/quota/price` 展示预估扣减（缺失/无效禁用；≠R5）。[工作台 Graph 确认单价](tasks/archive/merchant-mp-c-price-display-workbench.md) 已接 Agent 工作流执行确认面（`graph.image_generation`；≠R5）。[unknown 到期](tasks/archive/merchant-mp-c-unknown-expiry-b0.md) 已交付（Op `holds/resolve` + TTL 全额 Settle；≠R5）。
 
 ## 验收与现状
 
@@ -241,8 +243,8 @@ Operator 再认证有效期 10 分钟，绑定本人 session，由服务端记�
 | ID | 入口 | 角色 | 根所有权 | 子引用 | 队列/effect | 读写 owner | 前端 | 测试计划 |
 |---|---|---|---|---|---|---|---|---|
 | A1 | `POST/GET/DELETE /api/auth/session` | 过渡：现 admin；目标 User 登录/退出 | User 会话 | — | — | `go/internal/auth/http.go` | `["session"]` | B0：密码会话；撤销后 401；禁止残留 admin 布尔回退 |
-| A2 | User/Merchant/Membership CRUD（待建） | Op 建商；Own 邀/撤；被邀者接受 | merchants、memberships | 最后 Owner 保护 | — | 新 `auth`/`membership` 包 | 商家切换器 query | B0/B1：并发撤 Owner、邀请过期 |
-| A3 | `GET/PATCH /api/settings*`、unlock、export/import、provider-* | 仅 Op | 实例 | — | — | `settings/http.go` | `["config"]` `["provider-config"]` `["settings-lock-state"]` `["runtime-config"]` | **B9**：商家角色 403；导出无商家密钥明文 |
+| A2 | User/Merchant/Membership CRUD（部分待建） | bootstrap/公开注册建商；Owner 管理既有成员；新增成员关联另行设计 | merchants、memberships | 最后 Owner 保护 | — | 新 `auth`/`membership` 包 | 商家切换器 query | 注册事务、并发撤 Owner、成员变更 |
+| A3 | `GET/PATCH /api/settings*`、export/import、provider-* | 仅已登录 Operator | 实例 | — | — | `settings/http.go` | `["config"]` `["provider-config"]` `["runtime-config"]` | **B9**：商家角色、普通 User 与匿名请求拒绝；导出无商家密钥明文 |
 | A4 | `GET /api/generation-queue` | 仅 Op；合同固定只读聚合（计数，无商家/任务明细） | 实例队列视图 | — | 读各 Actor 状态 | `settings/http.go` | api.getGenerationQueue | **B9**：商家角色 403；无他商任务细节 |
 | A5 | `GET /api/v3/node-catalog`、`image-generation-options`、`delivery-presets` | 已认证成员只读 | 实例目录 | — | — | graph/delivery | `["graph-node-catalog"]` `["image-generation-options"]` `["delivery-presets"]` | 无商家数据；未登录 401 |
 | A6 | `GET /healthz`、`/healthz/ready` | Sys | 实例 | — | — | `platform/httpx/health.go` | — | 无业务体 |
@@ -361,11 +363,11 @@ Operator 再认证有效期 10 分钟，绑定本人 session，由服务端记�
 
 ## 实施批次（User/Membership → 完整隔离）
 
-**总约束（每批）：** 中间版本不得创建或邀请第二互不信任商家上线；不得保留「共享 admin cookie 可访问全部业务」作为正式回退；每批合并后仍可单商家开发使用。第二商家仅在 **B10（MP-B）** 通过后由运营开放。
+**总约束（每批）：** 中间版本不得开放第二个互不信任商家的公开注册试用；不得保留「共享 admin cookie 可访问全部业务」作为正式回退；每批合并后仍可单商家开发使用。公开注册仍须经过 SMTP、账号事务和外部发布授权门。
 
 | 批次 | 名称 | 精确范围 | 正测 | 反测 | 暴露限制 |
 |---|---|---|---|---|---|
-| **B0** | 身份骨架 | User、Merchant、Membership、邀请/密码会话；替换 `auth` 布尔登录为 User 会话；Operator 引导建**唯一**开发商家；schema 新表。**已交付**（2026-09-07，见任务证据） | 登录、邀请、角色读 Membership | 无效会话；非成员；最后 Owner 移除 | 仅 1 个商家；业务表尚未强制 merchant 过滤时可暂限 Op 工具创建商 |
+| **B0** | 身份骨架 | User、Merchant、Membership、邀请/密码会话；替换 `auth` 布尔登录为 User 会话；Operator 引导建**唯一**开发商家；schema 新表。**已交付**（2026-09-07，见任务证据；邀请分支已退役，仅作历史证据） | 登录、邀请、角色读 Membership | 无效会话；非成员；最后 Owner 移除 | 仅 1 个商家；业务表尚未强制 merchant 过滤时可暂限 Op 工具创建商 |
 | **B1** | 根归属迁移 | products、image_sessions、media_library_*、workflow_recipes、visual_systems、agent_sessions/tasks/conversations 写 `merchant_id`；回填到 B0 商家；查询/唯一键含商家；**不**改 admin 回退。**已交付**（2026-09-07，跨商统一 404） | 本商 CRUD | 裸 UUID 他商（夹具） | 仍单商；迁移夹具可有第二商数据但 UI/API 不开放注册第二商 |
 | **B2** | 商品链 | 矩阵 B\*：事实、图库、封面、直链下载/ZIP、workspace intake、from-recipe。**已交付**（2026-09-07，见 [merchant-product-chain](tasks/archive/merchant-product-chain.md)） | 本商读写下载 | 交叉 id、ZIP 混装 → 404 | 单商 |
 | **B3** | Graph+配方 | 矩阵 C\*、D\*：changeset、run、SSE、recipe apply。**已交付**（2026-09-07，见 [merchant-graph-recipe](tasks/archive/merchant-graph-recipe.md)） | 本商 run/SSE/apply | 交叉 workflow/recipe/run；SSE 游标 → 404 | 单商 |
@@ -418,7 +420,7 @@ Operator 再认证有效期 10 分钟，绑定本人 session，由服务端记�
 ## 验收缺口（R1 通过后的残余，不阻塞 R1）
 
 - MP-C **B0–B4 + 价格目录骨架 + 图会话入口单价展示 + 工作台 Graph 确认单价 + unknown 到期策略**已交付；**总纲 R5 裁定未通过**（2026-09-07，[merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）。已接：图会话 `Generate`、Graph `callImageProvider`、Agent `before_model_request`、商家/Op 余额 HTTP、**localedit `Executor.Execute`（Edit 前 Reserve）**、**source-note `POST /api/v2/product-source-notes/generate`（`product/quota_wire.go`）**、**价格版本表 + 种子默认 `pv-placeholder-v0` + Reserve 版本校验 + Op/商家只读价格 HTTP**、**新商家试用额度种子（`QUOTA_TRIAL_UNITS`，默认 100；bootstrap/create/activate → `EnsureAccount`；lazy `ensureAndLockAccount`；≠支付）**（[bootstrap-quota](tasks/archive/merchant-mp-c-bootstrap-quota.md)）、**文/图生图 Generate 前读 `GET /api/merchants/:id/quota/price` 展示 `image_session.generate` 预估扣减；缺失/无效禁用**（[price-display-b0](tasks/archive/merchant-mp-c-price-display-b0.md)）、**工作台 Agent 工作流执行确认读同 API 展示 `graph.image_generation`；缺失/无效禁用确认**（[price-display-workbench](tasks/archive/merchant-mp-c-price-display-workbench.md)）、**unknown 到期/Op 裁定（`QUOTA_UNKNOWN_HOLD_TTL` 默认 72h 全额 Settle；`POST /api/ops/merchants/:id/quota/holds/resolve`；dispatcher `quota_unknown`；禁止超时 Release；[unknown-expiry-b0](tasks/archive/merchant-mp-c-unknown-expiry-b0.md)）**。**阻塞缺口**：其它未枚举收费入口的入口展示（画布直接跑图、localedit、source-note、Agent model 等）。MP-D 仅 A8 合同草案（≠完整运营产品化）。**≠宣称 R5 通过**；**≠真实支付/法币**。
-- **运营尚未邀请第二互不信任商家**；产品 `CreateMerchant` 仍 409；邀请属运营另决，不由 R1/B10 自动开启。
+- **冻结基线尚未邀请第二互不信任商家**；产品 `CreateMerchant` 仍 409；该邀请口径仅作历史记录。当前公开注册由 SMTP 和注册事务保障，外部开放仍需单独授权。
 - 额度公平调度、混合负载经营验收、真实支付仍属后续（≠本 R1/R5 条文通过条件中的已交付子集）。
 - **Brand B1（商品选定 + 继承合并）**：`products.brand_id` 与 `ResolveInheritance` 品牌层 style/colors 合并见 [merchant-brand-product-select-b1](tasks/archive/merchant-brand-product-select-b1.md)；**≠宣称 R2/R3**；≠完整多品牌 UI。
 

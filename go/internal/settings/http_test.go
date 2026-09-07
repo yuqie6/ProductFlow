@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
@@ -40,16 +39,7 @@ func newSettingsServer(t *testing.T) *settingsServer {
 		UploadMaxReferenceImages: 6,
 	})
 	auth.MountTest(engine, gdb, store, auth.TestAdminKey)
-	settings.HTTP{
-		Store: store, DB: store, SettingsAccessToken: "settings-token",
-		OperatorOnly: auth.RequireOperatorIf(func(c *gin.Context) (bool, error) {
-			runtime, err := store.Runtime(c.Request.Context())
-			if err != nil {
-				return false, err
-			}
-			return runtime.AdminAccessRequired, nil
-		}),
-	}.Register(engine)
+	settings.HTTP{Store: store, DB: store, OperatorOnly: auth.RequireOperator()}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	ss := &settingsServer{store: store, srv: srv, client: &http.Client{}}
@@ -94,23 +84,8 @@ func (ss *settingsServer) do(t *testing.T, method, path string, body io.Reader) 
 	return resp
 }
 
-func TestSettingsUnlockAndConfig(t *testing.T) {
+func TestSettingsOperatorConfig(t *testing.T) {
 	ss := newSettingsServer(t)
-	locked := ss.do(t, http.MethodGet, "/api/settings", nil)
-	locked.Body.Close()
-	if locked.StatusCode != http.StatusForbidden {
-		t.Fatalf("locked %d", locked.StatusCode)
-	}
-	bad := ss.do(t, http.MethodPost, "/api/settings/unlock", strings.NewReader(`{"token":"nope"}`))
-	bad.Body.Close()
-	if bad.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("bad token %d", bad.StatusCode)
-	}
-	ok := ss.do(t, http.MethodPost, "/api/settings/unlock", strings.NewReader(`{"token":"settings-token"}`))
-	ok.Body.Close()
-	if ok.StatusCode != http.StatusOK {
-		t.Fatalf("unlock %d", ok.StatusCode)
-	}
 	cfg := ss.do(t, http.MethodGet, "/api/settings", nil)
 	defer cfg.Body.Close()
 	if cfg.StatusCode != http.StatusOK {
@@ -124,6 +99,13 @@ func TestSettingsUnlockAndConfig(t *testing.T) {
 	if len(view.Items) == 0 {
 		t.Fatal("empty config")
 	}
+	for _, path := range []string{"/api/settings/lock-state", "/api/settings/unlock"} {
+		removed := ss.do(t, http.MethodGet, path, nil)
+		removed.Body.Close()
+		if removed.StatusCode != http.StatusNotFound {
+			t.Fatalf("retired route %s status %d", path, removed.StatusCode)
+		}
+	}
 	queue := ss.do(t, http.MethodGet, "/api/generation-queue", nil)
 	defer queue.Body.Close()
 	if queue.StatusCode != http.StatusOK {
@@ -134,8 +116,6 @@ func TestSettingsUnlockAndConfig(t *testing.T) {
 
 func TestProviderProfileAndBinding(t *testing.T) {
 	ss := newSettingsServer(t)
-	unlock := ss.do(t, http.MethodPost, "/api/settings/unlock", strings.NewReader(`{"token":"settings-token"}`))
-	unlock.Body.Close()
 	name := "go-test-openai-" + t.Name()
 	body, _ := json.Marshal(map[string]any{
 		"name": name, "provider_type": "openai_compatible", "api_key": "sk-test",
@@ -200,8 +180,6 @@ func TestProviderProfileAndBinding(t *testing.T) {
 
 func TestSettingsUnknownJSON(t *testing.T) {
 	ss := newSettingsServer(t)
-	unlock := ss.do(t, http.MethodPost, "/api/settings/unlock", strings.NewReader(`{"token":"settings-token"}`))
-	unlock.Body.Close()
 	resp := ss.do(t, http.MethodPatch, "/api/settings", strings.NewReader(`{"values":{},"nope":1}`))
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
@@ -211,8 +189,6 @@ func TestSettingsUnknownJSON(t *testing.T) {
 
 func TestUpdateProfilePersistsNameAndEnabled(t *testing.T) {
 	ss := newSettingsServer(t)
-	unlock := ss.do(t, http.MethodPost, "/api/settings/unlock", strings.NewReader(`{"token":"settings-token"}`))
-	unlock.Body.Close()
 	name := "go-test-update-" + t.Name()
 	body, _ := json.Marshal(map[string]any{
 		"name": name, "provider_type": "openai_compatible", "api_key": "sk-test",

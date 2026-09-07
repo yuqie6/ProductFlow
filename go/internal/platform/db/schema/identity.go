@@ -41,21 +41,19 @@ type Memberships struct {
 
 func (Memberships) TableName() string { return "memberships" }
 
-// MerchantInvites 对应表 merchant_invites。邀请制开通；token 只存哈希。
-type MerchantInvites struct {
-	ID         string     `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID string     `gorm:"column:merchant_id;type:varchar(36);not null"`
-	Email      string     `gorm:"column:email;type:varchar(320);not null"`
-	Role       string     `gorm:"column:role;type:varchar(32);not null"`
-	TokenHash  string     `gorm:"column:token_hash;type:varchar(64);not null"`
-	InvitedBy  string     `gorm:"column:invited_by;type:varchar(36);not null"`
-	ExpiresAt  time.Time  `gorm:"column:expires_at;type:timestamptz;not null"`
-	AcceptedAt *time.Time `gorm:"column:accepted_at;type:timestamptz"`
-	RevokedAt  *time.Time `gorm:"column:revoked_at;type:timestamptz"`
-	CreatedAt  time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
+// RegistrationChallenges 对应表 registration_challenges；验证码只存 bcrypt 哈希。
+type RegistrationChallenges struct {
+	ID                string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	Email             string     `gorm:"column:email;type:varchar(320);not null"`
+	CodeHash          string     `gorm:"column:code_hash;type:varchar(255);not null"`
+	FailedAttempts    int        `gorm:"column:failed_attempts;type:integer;not null;default:0"`
+	ResendAvailableAt time.Time  `gorm:"column:resend_available_at;type:timestamptz;not null"`
+	ExpiresAt         time.Time  `gorm:"column:expires_at;type:timestamptz;not null"`
+	ConsumedAt        *time.Time `gorm:"column:consumed_at;type:timestamptz"`
+	CreatedAt         time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
 }
 
-func (MerchantInvites) TableName() string { return "merchant_invites" }
+func (RegistrationChallenges) TableName() string { return "registration_challenges" }
 
 // AuthSessions 对应表 auth_sessions。可撤销密码会话；cookie 只存 session id。
 type AuthSessions struct {

@@ -12,7 +12,7 @@
 
 ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户上传真实商品参考图、选择所需图片类型和数量，工作流 Agent 通过对话补齐价格、风格、文字语种、文案要求等信息，再生成可编辑、可运行的图片生产工作流。
 
-当前公网实例是个人项目的 live demo，项目尚未正式商用发布，也没有真实商户用户。当前实现采用单管理员、单商家数据模型，研发主线仍可能需要重建数据库和 storage。
+当前公网实例是个人项目的 live demo，项目尚未正式商用发布，也没有真实商户用户。主线使用 User/Merchant/Membership 隔离数据；部署初始化后，可配置 SMTP 开启邮箱验证码注册并创建各自商家。完整多商家工作区与运营体验仍在开发，主线变更不代表公网实例已升级。研发主线仍可能需要重建数据库和 storage。
 
 目标产品是可自托管的多商家 SaaS，项目方也会部署同一产品经营站点。多商家隔离、额度、交付体验和稳定安装/恢复/升级已纳入 [正式版路线图](docs/ROADMAP.md)，尚未实现的目标不代表当前可用能力。
 
@@ -53,7 +53,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 
 ## 当前边界
 
-- 单管理员、单商家实例。
+- Operator 管理实例配置；邮箱验证注册创建普通账号及自己的商家，完整多商家切换与团队界面仍待交付。
 - 不提供多租户、团队权限、支付、托管账号、自动上架、广告投放或视频生成。
 - 公网体验站数据和本地开发库都可以在破坏性更新时重建。
 - 空库和已有库都跑 `just go-migrate` / `productflow-migrate`。主仓库不为旧数据写回填或兼容层。
@@ -127,7 +127,6 @@ cp .env.example .env
 至少修改：
 
 - `ADMIN_ACCESS_KEY`
-- `SETTINGS_ACCESS_TOKEN`
 - `SESSION_SECRET`
 - `POSTGRES_PASSWORD`
 - `AGENT_SERVICE_INTERNAL_TOKEN`
@@ -154,7 +153,7 @@ Compose 包含 PostgreSQL、Redis、Go API / worker / dispatcher、Agent service
 - Backend health：`http://127.0.0.1:29280/healthz`
 - Web proxy health：`http://127.0.0.1:29281/api/healthz`
 
-启动后使用 `ADMIN_ACCESS_KEY` 登录，再用 `SETTINGS_ACCESS_TOKEN` 解锁设置页并配置 `prompt`、`agent`、`image` 用途。
+空实例使用 `ADMIN_ACCESS_KEY` 初始化管理员账号，之后用邮箱和密码登录。管理员可直接进入设置页，配置 `prompt`、`agent`、`image` 用途。
 
 #### 3. 数据与日志
 

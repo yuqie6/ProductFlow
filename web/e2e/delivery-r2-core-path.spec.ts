@@ -47,10 +47,9 @@ test.describe("delivery R2 core path gate", () => {
 
   test("create → results → adopt → export → rerun preserves → recipe clears identity", async ({ page }, info) => {
     await mkdir(EVIDENCE_ROOT, { recursive: true });
-    const settingsToken = requiredEnv("SETTINGS_ACCESS_TOKEN");
     const pathTable: Array<Record<string, string>> = [];
 
-    await withMockDocumentProviders(page.request, settingsToken, async () => {
+    await withMockDocumentProviders(page.request, async () => {
       await page.setViewportSize({ width: 1440, height: 960 });
       let graph = await createWorkflow(page);
       const productId = workflowProductId(page);
@@ -290,7 +289,7 @@ test.describe("delivery R2 core path gate", () => {
   });
 
   test("mobile create and results controls remain reachable", async ({ page }) => {
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto("/products/new");
       await expect(page.locator("#agent-product-name")).toBeVisible();

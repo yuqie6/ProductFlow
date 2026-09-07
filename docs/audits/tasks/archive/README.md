@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [smtp-public-registration.md](smtp-public-registration.md) | 完成 | SMTP 环境默认与公开验证码注册；退役邀请和设置二次解锁；整仓 Go 保留已复现的基线失败 |
 | [saas-auth-entry-security.md](saas-auth-entry-security.md) | 完成 | 邀请身份证明、Redis 原子准入、来源校验和登录冷却；多商家体验待交付 |
 | [delivery-inspector-confirm-facts-null.md](delivery-inspector-confirm-facts-null.md) | 完成 | 确认事实 impact-preview null.length 兜底；≠R2 |
 | [merchant-mp-c-price-display-workbench.md](merchant-mp-c-price-display-workbench.md) | 完成 | 工作台 Agent 确认展示 graph.image_generation；≠R5 |

@@ -62,7 +62,7 @@ export async function loginAsAdmin(page: Page, adminKey: string): Promise<void> 
   const keyInput = page.getByPlaceholder("请输入管理员密钥");
   if (await keyInput.isVisible()) {
     await keyInput.fill(adminKey);
-    const merchant = page.getByPlaceholder("开发商家");
+    const merchant = page.locator("#auth-merchant-name");
     if (await merchant.isVisible()) {
       await merchant.fill("开发商家");
     }
@@ -73,13 +73,7 @@ export async function loginAsAdmin(page: Page, adminKey: string): Promise<void> 
   await page.waitForURL("**/products");
 }
 
-export async function assertRealImageProviders(request: APIRequestContext, settingsToken: string): Promise<void> {
-  const unlock = await request.post("/api/settings/unlock", {
-    data: { token: settingsToken },
-  });
-  if (!unlock.ok()) {
-    throw new Error(`settings unlock failed: ${unlock.status()} ${await unlock.text()}`);
-  }
+export async function assertRealImageProviders(request: APIRequestContext): Promise<void> {
   const response = await request.get("/api/settings/provider-config");
   if (!response.ok()) {
     throw new Error(`provider-config failed: ${response.status()} ${await response.text()}`);
@@ -115,15 +109,6 @@ interface ProviderBindingSnapshot {
   config: Record<string, unknown>;
 }
 
-async function unlockSettings(request: APIRequestContext, settingsToken: string): Promise<void> {
-  const unlock = await request.post("/api/settings/unlock", {
-    data: { token: settingsToken },
-  });
-  if (!unlock.ok()) {
-    throw new Error(`settings unlock failed: ${unlock.status()} ${await unlock.text()}`);
-  }
-}
-
 async function loadProviderBindings(request: APIRequestContext): Promise<ProviderBindingSnapshot[]> {
   const response = await request.get("/api/settings/provider-config");
   if (!response.ok()) {
@@ -154,10 +139,8 @@ async function patchProviderBinding(
 /** 文稿 mock 门禁临时切 prompt/image 为 mock，函数返回后恢复原绑定。不改 agent。 */
 export async function withMockDocumentProviders(
   request: APIRequestContext,
-  settingsToken: string,
   run: () => Promise<void>,
 ): Promise<void> {
-  await unlockSettings(request, settingsToken);
   const bindings = await loadProviderBindings(request);
   const prompt = bindings.find((binding) => binding.purpose === "prompt");
   const image = bindings.find((binding) => binding.purpose === "image");
@@ -179,14 +162,12 @@ export async function withMockDocumentProviders(
     });
     await run();
   } finally {
-    await unlockSettings(request, settingsToken);
     await patchProviderBinding(request, "prompt", prompt);
     await patchProviderBinding(request, "image", image);
   }
 }
 
-export async function assertMockImageProviders(request: APIRequestContext, settingsToken: string): Promise<void> {
-  await unlockSettings(request, settingsToken);
+export async function assertMockImageProviders(request: APIRequestContext): Promise<void> {
   const bindings = await loadProviderBindings(request);
   const prompt = bindings.find((binding) => binding.purpose === "prompt");
   const image = bindings.find((binding) => binding.purpose === "image");

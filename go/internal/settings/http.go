@@ -2,38 +2,30 @@ package settings
 
 import (
 	"bytes"
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 )
 
-// LockState 是设置页锁状态的 HTTP 投影，不是管理员 session。
-// Unlocked 表示 cookie 里 settings_unlocked=true；Configured 表示进程配了 SETTINGS_ACCESS_TOKEN。
-// 管理员登录成功不等于设置页已解锁；写配置必须先 POST /unlock。
-type LockState struct {
-	Unlocked   bool `json:"unlocked"`   // cookie 里 settings_unlocked=true
-	Configured bool `json:"configured"` // 进程配了 SETTINGS_ACCESS_TOKEN
-}
-
 // HTTP 是设置页与生成队列的 Gin 处理器集合。
 // 设置路由前缀 /api/settings；生成队列单独挂 GET /api/generation-queue。
-// 读 lock-state/unlock/runtime 不要求设置页解锁；其余读写要 requireUnlocked。
-// OperatorOnly（若注入）在门禁开启时限制为站点 Operator（矩阵 A3/A4）。
+// runtime 和生成队列保留 AdminAccessRequired 业务门禁；配置、provider 和导入导出
+// 路由必须由调用方注入 OperatorOnly，生产入口使用固定 auth.RequireOperator。
 type HTTP struct {
-	Store               RuntimeReader // RequireAdmin 读 AdminAccessRequired
-	DB                  *Store        // 设置读写；导出/供应商档案走这里
-	SettingsAccessToken string        // 与 POST /unlock 比较；空则 Configured=false
-	OperatorOnly        gin.HandlerFunc
+	Store        RuntimeReader // RequireAdmin 读 AdminAccessRequired
+	DB           *Store        // 设置读写；导出/供应商档案走这里
+	OperatorOnly gin.HandlerFunc
 }
 
-// Register 挂上 /api/settings；写操作要求设置页已解锁；可选 OperatorOnly。
+// Register 挂上 /api/settings 和生成队列。
 func (h HTTP) Register(engine *gin.Engine) {
+	if h.OperatorOnly == nil {
+		panic("settings: OperatorOnly must be configured")
+	}
 	admin := httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
 		runtime, err := h.Store.Runtime(c.Request.Context())
 		if err != nil {
@@ -41,78 +33,28 @@ func (h HTTP) Register(engine *gin.Engine) {
 		}
 		return runtime.AdminAccessRequired, nil
 	})
+	runtimeGroup := engine.Group("/api/settings")
+	runtimeGroup.Use(admin)
+	runtimeGroup.GET("/runtime", h.runtime)
+
 	group := engine.Group("/api/settings")
 	group.Use(admin)
-	if h.OperatorOnly != nil {
-		group.Use(h.OperatorOnly)
-	}
-	group.GET("/lock-state", h.lockState)
-	group.POST("/unlock", h.unlock)
-	group.GET("/runtime", h.runtime)
-	group.GET("/provider-config", h.requireUnlocked, h.providerConfig)
-	group.GET("/export", h.requireUnlocked, h.export)
-	group.POST("/import/preview", h.requireUnlocked, h.importPreview)
-	group.POST("/import", h.requireUnlocked, h.importCommit)
-	group.POST("/provider-profiles", h.requireUnlocked, h.createProfile)
-	group.PATCH("/provider-profiles/:profile_id", h.requireUnlocked, h.updateProfile)
-	group.DELETE("/provider-profiles/:profile_id", h.requireUnlocked, h.archiveProfile)
-	group.PATCH("/provider-bindings/:purpose", h.requireUnlocked, h.updateBinding)
-	group.GET("", h.requireUnlocked, h.getConfig)
-	group.PATCH("", h.requireUnlocked, h.patchConfig)
+	group.Use(h.OperatorOnly)
+	group.GET("/provider-config", h.providerConfig)
+	group.GET("/export", h.export)
+	group.POST("/import/preview", h.importPreview)
+	group.POST("/import", h.importCommit)
+	group.POST("/provider-profiles", h.createProfile)
+	group.PATCH("/provider-profiles/:profile_id", h.updateProfile)
+	group.DELETE("/provider-profiles/:profile_id", h.archiveProfile)
+	group.PATCH("/provider-bindings/:purpose", h.updateBinding)
+	group.GET("", h.getConfig)
+	group.PATCH("", h.patchConfig)
 
 	queue := engine.Group("/api")
 	queue.Use(admin)
-	if h.OperatorOnly != nil {
-		queue.Use(h.OperatorOnly)
-	}
+	queue.Use(h.OperatorOnly)
 	queue.GET("/generation-queue", h.generationQueue)
-}
-
-// requireUnlocked 是设置写路由中间件：未配令牌 503；cookie 未解锁 403。
-func (h HTTP) requireUnlocked(c *gin.Context) {
-	if strings.TrimSpace(h.SettingsAccessToken) == "" {
-		httpx.AbortDetail(c, http.StatusServiceUnavailable, "设置解锁令牌未配置，请联系管理员")
-		return
-	}
-	if !httpx.SessionBool(c, "settings_unlocked") {
-		httpx.AbortDetail(c, http.StatusForbidden, "请先解锁系统配置")
-		return
-	}
-}
-
-// lockState 是 GET /api/settings/lock-state：200 返回 LockState。
-func (h HTTP) lockState(c *gin.Context) {
-	configured := strings.TrimSpace(h.SettingsAccessToken) != ""
-	c.JSON(http.StatusOK, LockState{
-		Unlocked:   configured && httpx.SessionBool(c, "settings_unlocked"),
-		Configured: configured,
-	})
-}
-
-// unlock 是 POST /api/settings/unlock：200 返回已解锁 LockState。
-func (h HTTP) unlock(c *gin.Context) {
-	expected := strings.TrimSpace(h.SettingsAccessToken)
-	if expected == "" {
-		httpx.AbortDetail(c, http.StatusServiceUnavailable, "设置解锁令牌未配置，请联系管理员")
-		return
-	}
-	var payload struct {
-		Token string `json:"token"`
-	}
-	if err := bindJSONStrict(c, &payload); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	if payload.Token == "" {
-		httpx.AbortErr(c, apperr.Validation("请求体无效"))
-		return
-	}
-	if !secretEqual(payload.Token, expected) {
-		httpx.AbortDetail(c, http.StatusUnauthorized, "设置解锁令牌不正确")
-		return
-	}
-	_ = httpx.SetSessionValue(c, "settings_unlocked", true)
-	c.JSON(http.StatusOK, LockState{Unlocked: true, Configured: true})
 }
 
 // runtime 是 GET /api/settings/runtime：200 返回 Runtime 投影。
@@ -395,11 +337,4 @@ func readObject(c *gin.Context) (map[string]any, error) {
 		return nil, apperr.Validation("配置文件格式不正确")
 	}
 	return doc, nil
-}
-
-func secretEqual(provided, expected string) bool {
-	if len(provided) != len(expected) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
 }

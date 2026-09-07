@@ -44,6 +44,7 @@ export interface SessionState {
   authenticated: boolean;
   access_required: boolean;
   needs_bootstrap?: boolean;
+  registration_available?: boolean;
   user?: {
     id: string;
     email: string;
@@ -1557,11 +1558,6 @@ export interface GenerationQueueOverview {
 export interface ConfigUpdateRequest {
   values?: Record<string, string | number | boolean | string[] | null>;
   reset_keys?: string[];
-}
-
-export interface SettingsLockState {
-  unlocked: boolean;
-  configured: boolean;
 }
 
 export type ProviderCapability =

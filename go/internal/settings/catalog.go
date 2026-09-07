@@ -73,7 +73,14 @@ func configDefinitions() []configDefinition {
 		{Key: "generation_max_concurrent_tasks", Label: "全局生成并发上限", Category: "生成队列", InputType: "number", Description: "全局资源保护阈值；工作流和文/图生图达到上限时会提示稍后重试。", Minimum: intPtr(1), Maximum: intPtr(20)},
 		{Key: "image_session_stale_running_after_minutes", Label: "文/图生图进度闲置恢复阈值（分钟）", Category: "生成队列", InputType: "number", Description: "dispatcher 按最近 progress heartbeat（没有则 started_at）判断 running 是否闲置；默认 90 分钟后重排队或标 unknown。asynq 任务墙钟到期时 worker 会直接写 unknown，不等待该阈值。进程崩溃无法写库时，页面保持 running 的上限约为本值加恢复扫描间隔。", Minimum: intPtr(1), Maximum: intPtr(24 * 60)},
 		{Key: "workflow_image_generation_provider_timeout_seconds", Label: "工作流生图 Provider 超时（秒）", Category: "生成队列", InputType: "number", Description: "工作流 AI 生图节点单次 provider 调用的项目级超时上界；超时后会安全失败并释放生成队列容量。", Minimum: intPtr(1), Maximum: intPtr(24 * 60 * 60)},
-		{Key: "admin_access_required", Label: "要求登录访问密钥", Category: "安全与运维", InputType: "boolean", Description: "默认开启，普通工作台和私有 API 需要 ADMIN_ACCESS_KEY 登录；关闭后仍需 SETTINGS_ACCESS_TOKEN 才能查看和修改系统配置。"},
+		{Key: "smtp_host", Label: "SMTP 主机", Category: "安全与运维", InputType: "text", Description: "注册验证码邮件的 SMTP 主机；留空时公开注册不可用。"},
+		{Key: "smtp_port", Label: "SMTP 端口", Category: "安全与运维", InputType: "number", Description: "SMTP 服务端口。", Minimum: intPtr(1), Maximum: intPtr(65535)},
+		{Key: "smtp_security", Label: "SMTP 连接加密", Category: "安全与运维", InputType: "select", Description: "仅支持带 TLS 的连接。", Options: []configOption{{Value: "starttls", Label: "STARTTLS"}, {Value: "tls", Label: "TLS"}}},
+		{Key: "smtp_username", Label: "SMTP 用户名", Category: "安全与运维", InputType: "text", Description: "可选；填写时必须同时填写 SMTP 密码。"},
+		{Key: "smtp_password", Label: "SMTP 密码", Category: "安全与运维", InputType: "password", Description: "可选；不会回显或进入设置导出。", Secret: true},
+		{Key: "smtp_from_address", Label: "SMTP 发件邮箱", Category: "安全与运维", InputType: "text", Description: "验证码邮件的发件地址；留空时公开注册不可用。"},
+		{Key: "smtp_from_name", Label: "SMTP 发件人名称", Category: "安全与运维", InputType: "text", Description: "可选；不能包含换行。"},
+		{Key: "admin_access_required", Label: "要求登录访问", Category: "安全与运维", InputType: "boolean", Description: "默认开启，普通工作台和私有 API 需要账号登录；关闭后仍需站点 Operator 身份才能查看和修改系统配置。"},
 		{Key: "deletion_enabled", Label: "启用业务删除", Category: "安全与运维", InputType: "boolean", Description: "默认关闭，用于体验站禁止整条商品和文/图生图会话被删除，保留溯源证据。"},
 	}
 }
@@ -167,6 +174,26 @@ func envDefault(s *Store, key string) string {
 			return "true"
 		}
 		return "false"
+	case "smtp_port":
+		if s.env.SMTPPort != 0 {
+			return strconv.Itoa(s.env.SMTPPort)
+		}
+		return strconv.Itoa(defaultSMTPPort)
+	case "smtp_security":
+		if strings.TrimSpace(s.env.SMTPSecurity) != "" {
+			return strings.TrimSpace(s.env.SMTPSecurity)
+		}
+		return defaultSMTPSecurity
+	case "smtp_host":
+		return s.env.SMTPHost
+	case "smtp_username":
+		return s.env.SMTPUsername
+	case "smtp_password":
+		return s.env.SMTPPassword
+	case "smtp_from_address":
+		return s.env.SMTPFromAddress
+	case "smtp_from_name":
+		return s.env.SMTPFromName
 	default:
 		return ""
 	}

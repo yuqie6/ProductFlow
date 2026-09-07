@@ -1,10 +1,7 @@
 package auth
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"fmt"
 	"net/mail"
 	"strings"
@@ -31,7 +28,6 @@ const (
 	sessionCookieUserKey    = "user_id"
 	sessionCookieSessionKey = "auth_session_id"
 	sessionTTL              = 14 * 24 * time.Hour
-	inviteTTL               = 7 * 24 * time.Hour
 	minPasswordRunes        = 8
 	maxPasswordBytes        = 72 // bcrypt's documented input limit
 	bcryptCostDefault       = bcrypt.DefaultCost
@@ -77,31 +73,9 @@ func checkPassword(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 
-func hashToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
-func newOpaqueToken() (string, error) {
-	var buf [32]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(buf[:]), nil
-}
-
 func secretEqual(provided, expected string) bool {
 	if len(provided) != len(expected) {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
-}
-
-func validRole(role string) bool {
-	switch role {
-	case RoleOwner, RoleEditor, RoleViewer:
-		return true
-	default:
-		return false
-	}
 }

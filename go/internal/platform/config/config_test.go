@@ -123,3 +123,43 @@ func TestValidConfiguredOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadSMTPEnvironmentOverlayPreservesPasswordWhitespace(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://fake:fake@127.0.0.1:15432/fake")
+	t.Setenv("SESSION_SECRET", "fake-session-secret-for-smtp")
+	t.Setenv("AUTH_RATE_LIMIT_NAMESPACE", "productflow:test:smtp")
+	t.Setenv("BACKEND_CORS_ORIGINS", "")
+	t.Setenv("TRUSTED_PROXY_CIDRS", "")
+	t.Setenv("STORAGE_ROOT", t.TempDir())
+	t.Setenv("LOG_DIR", t.TempDir())
+	t.Setenv("SMTP_HOST", " smtp.test.invalid ")
+	t.Setenv("SMTP_PORT", "465")
+	t.Setenv("SMTP_SECURITY", " tls ")
+	t.Setenv("SMTP_USERNAME", " sender@test.invalid ")
+	t.Setenv("SMTP_PASSWORD", "  fixed fake smtp secret  ")
+	t.Setenv("SMTP_FROM_ADDRESS", " sender@test.invalid ")
+	t.Setenv("SMTP_FROM_NAME", " ProductFlow ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SMTPHost != "smtp.test.invalid" {
+		t.Fatalf("SMTPHost=%q", cfg.SMTPHost)
+	}
+	if cfg.SMTPPort != 465 {
+		t.Fatalf("SMTPPort=%d", cfg.SMTPPort)
+	}
+	if cfg.SMTPSecurity != "tls" {
+		t.Fatalf("SMTPSecurity=%q", cfg.SMTPSecurity)
+	}
+	if cfg.SMTPUsername != "sender@test.invalid" {
+		t.Fatalf("SMTPUsername=%q", cfg.SMTPUsername)
+	}
+	if cfg.SMTPPassword != "  fixed fake smtp secret  " {
+		t.Fatalf("SMTPPassword=%q", cfg.SMTPPassword)
+	}
+	if cfg.SMTPFromAddress != "sender@test.invalid" || cfg.SMTPFromName != "ProductFlow" {
+		t.Fatalf("SMTP from fields=%q/%q", cfg.SMTPFromAddress, cfg.SMTPFromName)
+	}
+}

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/config"
@@ -36,16 +35,16 @@ func TestMerchantIsolationGateB10(t *testing.T) {
 		UploadMaxBatchBytes:      50 * 1024 * 1024,
 		UploadMaxReferenceImages: 6,
 	})
+	if err := gdb.Exec(`
+		INSERT INTO app_settings (key, value, created_at, updated_at)
+		VALUES ('admin_access_required', 'true', NOW(), NOW())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+	`).Error; err != nil {
+		t.Fatal(err)
+	}
 	auth.MountTest(engine, gdb, store, auth.TestAdminKey)
 	settings.HTTP{
-		Store: store, DB: store, SettingsAccessToken: "settings-token",
-		OperatorOnly: auth.RequireOperatorIf(func(c *gin.Context) (bool, error) {
-			runtime, err := store.Runtime(c.Request.Context())
-			if err != nil {
-				return false, err
-			}
-			return runtime.AdminAccessRequired, nil
-		}),
+		Store: store, DB: store, OperatorOnly: auth.RequireOperator(),
 	}.Register(engine)
 	product.HTTP{Service: product.Service{DB: gdb}, Settings: store}.Register(engine)
 	srv := httptest.NewServer(engine)
@@ -157,7 +156,7 @@ func TestMerchantIsolationGateB10(t *testing.T) {
 			t.Fatalf("op support-contract %d", ok.StatusCode)
 		}
 		// 反：商家 B 角色碰 settings / ops
-		deny := do(http.MethodGet, "/api/settings/runtime", "", dual.CookiesB, nil)
+		deny := do(http.MethodGet, "/api/settings", "", dual.CookiesB, nil)
 		deny.Body.Close()
 		if deny.StatusCode != http.StatusForbidden {
 			t.Fatalf("B settings want 403 got %d", deny.StatusCode)

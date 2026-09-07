@@ -164,7 +164,7 @@ test.describe("canvas document mock provider", () => {
   test("rewrite stages a candidate and section apply keeps unselected fields", async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
     const productID = await createWorkbench(page);
     const prompt = await authorPrompt(page, productID);
     await page.reload();
@@ -210,7 +210,7 @@ test.describe("canvas document mock provider", () => {
   test("complete and replace stage candidates without writing live config", async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
     const productID = await createWorkbench(page);
     const prompt = await authorPrompt(page, productID);
     await page.reload();
@@ -254,7 +254,7 @@ test.describe("canvas document mock provider", () => {
   test("mid-run inspector typing keeps live authored copy after graph adopt", async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
       const productID = await createWorkbench(page);
       const graph = await currentGraph(page, productID);
       const prompt = graph.nodes.find((node) => node.node_type === "image_prompt");
@@ -305,7 +305,7 @@ test.describe("canvas document mock provider", () => {
   test("mid-run undo keeps reverted live copy after graph adopt", async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
       const productID = await createWorkbench(page);
       const graph = await currentGraph(page, productID);
       const prompt = graph.nodes.find((node) => node.node_type === "image_prompt");
@@ -348,7 +348,7 @@ test.describe("canvas document mock provider", () => {
   test("document save 409 shows revision conflict and does not replay", async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
       const productID = await createWorkbench(page);
       const graph = await currentGraph(page, productID);
       const prompt = graph.nodes.find((node) => node.node_type === "image_prompt");
@@ -409,7 +409,7 @@ test.describe("canvas document mock provider", () => {
   test("inspector run-this-node keeps authored live copy", async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
       const productID = await createWorkbench(page);
       const authored = await authorPrompt(page, productID);
       const graph = await currentGraph(page, productID);
@@ -433,7 +433,7 @@ test.describe("canvas document mock provider", () => {
   test("inspector run-to-here keeps authored prompt live copy", async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
       const productID = await createWorkbench(page);
       const authored = await authorPrompt(page, productID);
       const graph = await currentGraph(page, productID);
@@ -460,7 +460,7 @@ test.describe("canvas document mock provider", () => {
   test("mid-run cancel keeps authored live copy", async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
       const productID = await createWorkbench(page);
       const authored = await authorPrompt(page, productID);
       const graph = await currentGraph(page, productID);

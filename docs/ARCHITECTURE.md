@@ -2,7 +2,7 @@
 
 ## 1. 系统边界
 
-ProductFlow 是单管理员、单商家工作区，由七个运行单元组成：
+ProductFlow 当前开发基线从一个管理员和一个 bootstrap 开发商家开始，公开注册可创建普通 User 及其自有 Merchant；完整多商家隔离与工作区 UX 尚未实现。系统由七个运行单元组成：
 
 1. React/Vite Web。
 2. Go 业务 API。
@@ -18,7 +18,9 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 
 ## 2. 后端分层
 
-账号身份由 PostgreSQL User/AuthSession 与现有 `session` cookie 证明；邀请仅授权加入商家，已有账号接受邀请须提供正确密码或匹配的有效会话。`go/internal/auth` 对登录、初始化和邀请接受使用 Redis 原子固定窗口限流，默认每 IP 15 分钟 100 次、每 IP 与账号或邀请摘要组合 10 次。Redis 不可用时凭据交换返回 503，已登录读取继续使用 PostgreSQL 会话；预算与命名空间仅由环境变量配置。
+账号身份由 PostgreSQL User/AuthSession 与现有 `session` cookie 证明。登录和初始化使用 `go/internal/auth` 的 Redis 原子固定窗口限流，默认每 IP 15 分钟 100 次、每 IP 与账号 10 次。Redis 不可用时凭据交换返回 503，已登录读取继续使用 PostgreSQL 会话；预算与命名空间仅由环境变量配置。
+
+公开邮箱注册已实现：部署者完成 bootstrap 后，Operator 在现有 `/settings` 配置 `smtp_host`、`smtp_port`、`smtp_security`（`starttls`/`tls`）、`smtp_username`、`smtp_password`（secret）、`smtp_from_address` 和 `smtp_from_name`。开发栈从 `.env.dev` 的 `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_ADDRESS`、`SMTP_FROM_NAME` 读取启动默认；对应 `app_settings` 行覆盖环境默认，恢复默认删除数据库覆盖并回到当前环境默认。`POST /api/auth/registration-code` 发送六位验证码，challenge 有效 10 分钟、重发间隔 60 秒且最多 5 次错误验证；`POST /api/auth/register` 验证后创建普通 User、该用户自己的 Merchant、Owner Membership 和试用额度，并沿现有 cookie 登录。初始化完成前关闭注册，邮箱密码登录保留。真实浏览器已验证 SMTP 发信、IMAP 收取、注册进入 `/products`、普通 User 自有 Merchant/Owner session、旧验证码重放返回 410 和密码登录成功。该证据只覆盖注册切片，不宣称整站发布或密码恢复；邀请接口、token、schema 和 reader/writer 退役，不保留兼容入口。
 
 `go/cmd/productflow-api/register.go` 在全部 API 注册前挂载 `httpx.BrowserStateProtection`。浏览器 POST/PUT/PATCH/DELETE（含 JSON 和 multipart）按 `BACKEND_CORS_ORIGINS` 精确校验 Origin，缺失时检查 Referer，缺来源或不匹配返回 403；请求 Host 不构成信任来源。内部调用须通过配置令牌校验，并继续接受具体路由的服务鉴权。`TRUSTED_PROXY_CIDRS` 默认空，未经信任的转发头不影响限流 IP。入口覆盖证据由 API 路由合同测试及 auth/httpx 测试维护。
 
@@ -72,6 +74,8 @@ ImageSession、Delivery、LocalEdit 恢复在发现候选时用 `FOR UPDATE SKIP
 - `/help`
 
 页面级代码位于 `web/src/pages/`。共享视觉组件位于 `web/src/components/`，HTTP client、DTO、i18n 和浏览器偏好位于 `web/src/lib/`。
+
+公开注册页面及其设置投影已加入当前页面能力清单：入口是 `/login` 的注册模式，初始化完成后显示；SMTP 未就绪时只禁用发码和提交。整套 Web suite（103 个文件、730 项测试）的 lint、build 与 35 个浏览器用例已通过；这些结果不等于整站发布。
 
 商品工作台位于 `pages/workbench/`，按职责分成三组：
 
@@ -238,15 +242,16 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 
 ## 10. 配置与安全
 
-环境变量只保存启动前必需的基础设施和 secret：
+环境变量保存启动前必需的基础设施、注册 SMTP 默认值和 secret：
 
 - database、Redis、storage
-- admin/session/settings token
+- 管理员 bootstrap 与会话认证
 - Agent service 地址和内部 token
+- 注册 SMTP 默认值：`SMTP_HOST`、`SMTP_PORT`（默认 587）、`SMTP_SECURITY`（默认 `starttls`）、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_ADDRESS`、`SMTP_FROM_NAME`；开发环境直接从 `.env.dev` 提供
 - 可选的 `METRICS_BEARER_TOKEN`；未配置时 API 与 dispatcher 都不注册 `/metrics`；dispatcher 可用 `DISPATCHER_METRICS_ADDR` 暴露独立抓取端口
 - 上传限制、日志和 worker 基础参数
 
-Provider profile、purpose binding 和业务运行时设置由 `/settings` 写入数据库。设置页需要管理员 session 和独立 `SETTINGS_ACCESS_TOKEN`。
+Provider profile、purpose binding 和业务运行时设置由 `/settings` 写入数据库。设置页只按已登录 Operator 身份授权，普通 User 与匿名请求拒绝。注册 SMTP 也属于现有 Operator 设置：数据库值覆盖同名环境默认，恢复默认删除对应 `app_settings` 行并回到环境值；`smtp_password` 只按 secret 读取和写入，不能回显、导出或写入普通日志。
 
 上传在持久化前校验 MIME、真实图片格式、字节数、像素数和数量。下载接口按数据库资产定位 storage，不接受任意文件路径。
 

@@ -73,6 +73,9 @@ test("bootstrap obeys the same cooldown", async ({ page }) => {
   });
   await page.goto("/login");
   await page.locator('input[type="email"]').fill("new@example.com");
+  await page.locator('input[autocomplete="organization"]').fill("Test merchant");
+  await page.locator('input[type="password"]').first().fill("test-admin-key");
+  await page.locator('input[type="password"]').last().fill("test-password");
   const submit = page.locator('button[type="submit"]');
   await submit.click();
   await expect(submit).toBeDisabled();

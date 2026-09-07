@@ -77,3 +77,98 @@ func TestPublicValueImageToolIgnoresUnknownStoredFields(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestSMTPConfigCatalogAndDefaults(t *testing.T) {
+	t.Parallel()
+	wantKeys := []string{
+		"smtp_host", "smtp_port", "smtp_security", "smtp_username",
+		"smtp_password", "smtp_from_address", "smtp_from_name",
+	}
+	defs := configDefinitions()
+	byKey := map[string]configDefinition{}
+	for _, def := range defs {
+		byKey[def.Key] = def
+	}
+	for _, key := range wantKeys {
+		def, ok := byKey[key]
+		if !ok {
+			t.Fatalf("missing %s", key)
+		}
+		if def.Category != "安全与运维" {
+			t.Fatalf("%s category %q", key, def.Category)
+		}
+	}
+	if def := byKey["smtp_password"]; !def.Secret || def.InputType != "password" {
+		t.Fatalf("password definition %+v", def)
+	}
+	if def := byKey["smtp_port"]; def.Minimum == nil || *def.Minimum != 1 || def.Maximum == nil || *def.Maximum != 65535 {
+		t.Fatalf("port bounds %+v", def)
+	}
+	dummy := &Store{}
+	if got := envDefault(dummy, "smtp_port"); got != "587" {
+		t.Fatalf("port default %q", got)
+	}
+	if got := envDefault(dummy, "smtp_security"); got != "starttls" {
+		t.Fatalf("security default %q", got)
+	}
+}
+
+func TestNormalizeSMTPConfigValueRejectsMalformedInputs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		key   string
+		value any
+		want  string
+	}{
+		{name: "port zero", key: "smtp_port", value: 0, want: "1 到 65535"},
+		{name: "port too high", key: "smtp_port", value: 65536, want: "1 到 65535"},
+		{name: "port fraction", key: "smtp_port", value: 587.5, want: "1 到 65535"},
+		{name: "security", key: "smtp_security", value: "plain", want: "starttls 或 tls"},
+		{name: "host injection", key: "smtp_host", value: "smtp.example\r\nX: y", want: "不能包含"},
+		{name: "name injection", key: "smtp_from_name", value: "Sender\nBcc: x", want: "不能包含"},
+		{name: "address injection", key: "smtp_from_address", value: "a@example.com\r\nBcc: x", want: "不能包含"},
+		{name: "address syntax", key: "smtp_from_address", value: "not-an-address", want: "邮箱地址格式无效"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			def, ok := definitionByKey(tc.key)
+			if !ok {
+				t.Fatal("missing definition")
+			}
+			_, err := normalizeSMTPConfigValue(def, tc.value)
+			requireErrContains(t, err, tc.want)
+		})
+	}
+}
+
+func TestSMTPReadinessAllowsPartialConfigWithoutMalformedValues(t *testing.T) {
+	t.Parallel()
+	if err := validateMergedSMTP(map[string]string{"smtp_host": "smtp.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateMergedSMTP(map[string]string{"smtp_from_address": "a@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if (smtpConfig{host: "smtp.example.com", port: 587, security: "starttls", fromAddress: "a@example.com"}).ready() != true {
+		t.Fatal("complete no-auth configuration should be ready")
+	}
+	if (smtpConfig{host: "smtp.example.com", port: 587, security: "starttls", username: "user", fromAddress: "a@example.com"}).ready() {
+		t.Fatal("partial credentials should not be ready")
+	}
+}
+
+func TestNormalizeSMTPPasswordPreservesSignificantSpaces(t *testing.T) {
+	t.Parallel()
+	def, ok := definitionByKey("smtp_password")
+	if !ok {
+		t.Fatal("missing password definition")
+	}
+	got, err := normalizeSMTPConfigValue(def, "  secret with spaces  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "  secret with spaces  " {
+		t.Fatalf("password was changed to %q", got)
+	}
+}

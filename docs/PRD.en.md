@@ -2,11 +2,21 @@
 
 ## 1. Product Position
 
-ProductFlow currently implements a product-visual production workspace for a single merchant. The user supplies real product references and delivery goals. A workflow Agent clarifies product facts, visual-system rules, and per-image prompts, then creates an editable, executable, reusable image-production workflow.
+ProductFlow currently implements a product-visual production workspace plus User/Merchant identity and merchant ownership foundations. The user supplies real product references and delivery goals. A workflow Agent clarifies product facts, visual-system rules, and per-image prompts, then creates an editable, executable, reusable image-production workflow.
 
-The project has no formal commercial release or commercial merchant users yet. The development mainline accepts breaking changes and may require recreating the database and storage. It maintains one schema-v3 graph, API, and execution model. Tenancy, billing and supported long-term upgrades are not implemented capabilities.
+The project has no formal commercial release or commercial merchant users yet. The development mainline accepts breaking changes and may require recreating the database and storage. It maintains one schema-v3 graph, API, and execution model. The current development bootstrap still creates the only development merchant; public registration is implemented and has passed real-browser and real SMTP/IMAP mail-receipt verification. Full tenancy, billing and supported long-term upgrades are not implemented capabilities.
 
-The intended product is a self-hostable, multi-merchant SaaS, also operated by the project owner as a service using the same product. The [release roadmap](ROADMAP.en.md) owns planned isolation, experience, competitive and deployment requirements. The current single-merchant boundary is not the final product scope; this PRD describes connected capabilities only.
+The intended product is a self-hostable, multi-merchant SaaS, also operated by the project owner as a service using the same product. Full multi-merchant isolation, workspace switching, and operations UX are not implemented; the [release roadmap](ROADMAP.en.md) owns the planned isolation, experience, competitive and deployment requirements. This PRD describes connected capabilities only.
+
+### 1.1 Account entry
+
+After the deployer completes `ADMIN_ACCESS_KEY` bootstrap, the site Operator configures registration SMTP in the existing `/settings`. The Register mode asks a public user for an email, verification code, password, and merchant name; successful verification creates an ordinary `User`, that user's own `Merchant`, an Owner membership, and trial quota. The API's `display_name` field is optional and defaults to the email prefix. SMTP uses the closed field set `smtp_host`, `smtp_port`, `smtp_security` (`starttls` or `tls`), `smtp_username`, `smtp_password` (secret), `smtp_from_address`, and `smtp_from_name`.
+
+The development stack reads startup defaults from `.env.dev` as `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_ADDRESS`, and `SMTP_FROM_NAME`. Values saved through Settings are database overrides; restoring a default deletes that database override and returns to the current environment default. `smtp_password` is never echoed, exported in ordinary settings, or logged.
+
+The user entry is the Register mode on the existing `/login` page; no separate `/register` route is added.
+
+The code is a random six-digit value valid for 10 minutes, with a 60-second resend interval and at most five failed attempts per challenge; resending invalidates the previous challenge. Existing email/password login remains. A real-browser flow has verified successful code delivery, SMTP send and IMAP receipt, registration into `/products`, an ordinary User session with its own Merchant and Owner membership, a 410 response for replaying the old code, and successful password login. This evidence covers the registration slice and does not establish whole-site publication or password recovery. Referrals and rebates are out of scope for this phase and remain a future decision. Existing merchant membership management remains; direct association of additional existing users is deferred to a separate design.
 
 ## 2. Target Users
 
@@ -99,6 +109,8 @@ The intended product is a self-hostable, multi-merchant SaaS, also operated by t
 - `/settings`: provider and runtime settings.
 - `/help`: in-product help; a projection of `USER_GUIDE.en.md` page operations.
 
+The public registration page and its SMTP settings projection are part of the current-pages contract: the entry is Register mode on `/login`, shown after initialization, with code delivery and submission disabled while SMTP is unavailable.
+
 ## 6. Product Contracts
 
 - Agent conversation can start after a product name and births a live graph. One to six media-verified references and image types are submitted in that conversation, or optionally on the create form first. Direct create still requires them on the form and writes no conversation. The Agent and user review whether product identity is sufficiently represented; the backend does not claim to prove image authenticity automatically.
@@ -115,7 +127,7 @@ The intended product is a self-hostable, multi-merchant SaaS, also operated by t
 
 ## 7. Non-Goals
 
-- Multi-tenancy, team roles, billing, and usage settlement.
+- Full multi-tenancy, expanded team roles, billing, and usage settlement.
 - Automatic publishing to ecommerce or ad platforms.
 - Automatically classifying and deleting images the user dislikes.
 - Loading an entire product library into Agent context.

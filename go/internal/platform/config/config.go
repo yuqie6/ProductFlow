@@ -14,7 +14,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Config 是进程启动 overlay。改供应商/模型不要改这里，去 PostgreSQL；密钥字段永远只来自 env。
+// Config 是进程启动 overlay。改供应商/模型不要改这里，去 PostgreSQL；基础设施密钥只来自 env，SMTP 字段作为 settings 的启动默认值。
 type Config struct {
 	AppHost                           string   // env APP_HOST
 	AppPort                           int      // env APP_PORT
@@ -36,7 +36,13 @@ type Config struct {
 	AuthRateLimitWindowSeconds        int      // env AUTH_RATE_LIMIT_WINDOW_SECONDS
 	AuthRateLimitIPMax                int      // env AUTH_RATE_LIMIT_IP_MAX
 	AuthRateLimitSubjectMax           int      // env AUTH_RATE_LIMIT_SUBJECT_MAX
-	SettingsAccessToken               string   // env SETTINGS_ACCESS_TOKEN，设置页解锁密钥，env-only
+	SMTPHost                          string   // env SMTP_HOST；启动默认，运行时可被 settings.Store 覆盖
+	SMTPPort                          int      // env SMTP_PORT；默认 587，运行时可被 settings.Store 覆盖
+	SMTPSecurity                      string   // env SMTP_SECURITY；默认 starttls，运行时可被 settings.Store 覆盖
+	SMTPUsername                      string   // env SMTP_USERNAME；运行时可被 settings.Store 覆盖
+	SMTPPassword                      string   // env SMTP_PASSWORD；保留原始空格，运行时可被 settings.Store 覆盖
+	SMTPFromAddress                   string   // env SMTP_FROM_ADDRESS；运行时可被 settings.Store 覆盖
+	SMTPFromName                      string   // env SMTP_FROM_NAME；运行时可被 settings.Store 覆盖
 	AdminAccessRequired               bool     // env 默认值；运行时 app_settings 可覆盖
 	DeletionEnabled                   bool     // env DELETION_ENABLED；运行时 app_settings 可覆盖
 	UploadMaxImageBytes               int      // env UPLOAD_MAX_IMAGE_BYTES，字节；运行时可被 app_settings 覆盖
@@ -71,6 +77,8 @@ func Load() (Config, error) {
 	v.SetDefault("LOG_BACKUP_COUNT", 5)
 	v.SetDefault("LOG_RETENTION_DAYS", 14)
 	v.SetDefault("STORAGE_ROOT", "./storage-dev")
+	v.SetDefault("SMTP_PORT", 587)
+	v.SetDefault("SMTP_SECURITY", "starttls")
 	v.SetDefault("ADMIN_ACCESS_REQUIRED", true)
 	v.SetDefault("AUTH_RATE_LIMIT_NAMESPACE", "productflow:auth:attempt")
 	v.SetDefault("AUTH_RATE_LIMIT_WINDOW_SECONDS", 15*60)
@@ -129,7 +137,13 @@ func Load() (Config, error) {
 		AuthRateLimitWindowSeconds:        v.GetInt("AUTH_RATE_LIMIT_WINDOW_SECONDS"),
 		AuthRateLimitIPMax:                v.GetInt("AUTH_RATE_LIMIT_IP_MAX"),
 		AuthRateLimitSubjectMax:           v.GetInt("AUTH_RATE_LIMIT_SUBJECT_MAX"),
-		SettingsAccessToken:               strings.TrimSpace(v.GetString("SETTINGS_ACCESS_TOKEN")),
+		SMTPHost:                          strings.TrimSpace(v.GetString("SMTP_HOST")),
+		SMTPPort:                          v.GetInt("SMTP_PORT"),
+		SMTPSecurity:                      strings.TrimSpace(v.GetString("SMTP_SECURITY")),
+		SMTPUsername:                      strings.TrimSpace(v.GetString("SMTP_USERNAME")),
+		SMTPPassword:                      v.GetString("SMTP_PASSWORD"),
+		SMTPFromAddress:                   strings.TrimSpace(v.GetString("SMTP_FROM_ADDRESS")),
+		SMTPFromName:                      strings.TrimSpace(v.GetString("SMTP_FROM_NAME")),
 		AdminAccessRequired:               v.GetBool("ADMIN_ACCESS_REQUIRED"),
 		DeletionEnabled:                   v.GetBool("DELETION_ENABLED"),
 		UploadMaxImageBytes:               v.GetInt("UPLOAD_MAX_IMAGE_BYTES"),

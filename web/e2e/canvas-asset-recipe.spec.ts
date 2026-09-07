@@ -13,7 +13,7 @@ test.describe("canvas asset and recipe identity", () => {
   test.beforeEach(async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await assertMockImageProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"));
+    await assertMockImageProviders(page.request);
   });
 
   test("pin preserves the chosen asset after another generation and a gallery drop adds a reference", async ({ page }) => {

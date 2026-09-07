@@ -54,6 +54,9 @@ func (s *Store) Export(ctx context.Context) (SettingsExport, error) {
 	}
 	runtime := map[string]any{}
 	for _, item := range view.Items {
+		if item.Secret {
+			continue
+		}
 		runtime[item.Key] = item.Value
 	}
 	profiles, err := s.listProfiles(ctx)
@@ -250,6 +253,12 @@ func normalizeImportRuntime(raw any) (map[string]string, error) {
 	missing := []string{}
 	defs := map[string]struct{}{}
 	for _, def := range configDefinitions() {
+		if def.Secret {
+			if _, present := runtime[def.Key]; present {
+				return nil, apperr.Validation("配置文件不能包含秘密配置项: " + def.Key)
+			}
+			continue
+		}
 		defs[def.Key] = struct{}{}
 		if _, ok := runtime[def.Key]; !ok {
 			missing = append(missing, def.Key)

@@ -137,7 +137,7 @@ func TestSealedHTTPRoutesAreRegistered(t *testing.T) {
 	fake := contractSettings{}
 	registerAPI(engine, apiHandlers{
 		Auth:         auth.HTTP{Store: fake},
-		Settings:     settings.HTTP{Store: fake},
+		Settings:     settings.HTTP{Store: fake, OperatorOnly: auth.RequireOperator()},
 		Product:      product.HTTP{Settings: fake},
 		Library:      library.HTTP{Settings: fake},
 		Graph:        graph.HTTP{Settings: fake},
@@ -239,7 +239,7 @@ func TestSealedAdminAndInternalRoutesReturnContractUnauthorized(t *testing.T) {
 	registerAPI(engine, apiHandlers{
 		Auth:           auth.HTTP{AdminAccessKey: "contract-admin-key", Store: fake},
 		AllowedOrigins: []string{"http://web.test"},
-		Settings:       settings.HTTP{Store: fake, SettingsAccessToken: "contract-settings-token"},
+		Settings:       settings.HTTP{Store: fake, OperatorOnly: auth.RequireOperator()},
 		Product:        product.HTTP{Settings: fake},
 		Library:        library.HTTP{Settings: fake},
 		Graph:          graph.HTTP{Settings: fake},

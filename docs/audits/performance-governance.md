@@ -14,7 +14,7 @@
 4. 正常交互与后台恢复可以共存；锁、连接、扫描、响应体和媒体内存的成本与实际工作量相称。
 5. 发布判断绑定代码版本、配置、数据形状和有效证据；能说明哪些已验证，哪些仍不确定。
 
-当前实现是单管理员、单商家工作区；2026-09-07 用户明确最终目标为可自托管多商家 SaaS。身份、隔离与商业额度由 [商家平台](merchant-platform.md) 负责；本组增加发行、安装、备份恢复、稳定版升级、调用消费事实及多商家资源限制职责。它们是正式版必要增量，不能继续以 live demo 边界无限后置；实现仍须按 [总纲](../ROADMAP.md) 的固定合同拆分，不零散添加 tenant 字段。
+当前部署从单管理员、单开发商家 bootstrap 开始，公开注册已可创建普通 User 的自有 Merchant；完整多商家 SaaS 仍是目标。身份、隔离与商业额度由 [商家平台](merchant-platform.md) 负责；本组增加发行、安装、备份恢复、稳定版升级、调用消费事实及多商家资源限制职责。它们是正式版必要增量，不能继续以 live demo 边界无限后置；实现仍须按 [总纲](../ROADMAP.md) 的固定合同拆分，不零散添加 tenant 字段。
 
 组内 [发行基线调查](tasks/archive/release-readiness-baseline.md) 已在源码只读基线 `d6709c4a` 上给出运行单元、持久面、差距分类与演练合同（见 [自托管发行与恢复基线](#self-host-release-baseline)）。备份必须含数据库、媒体、必要 Pi 数据及可解密/可启动配置；首个稳定版起提供明确升级路径，不恢复 retired V1/v2。真实安装/恢复/升级路径与演练证据已有 B1–B5 及 B6 汇总；干净候选重跑见 [release-r6-clean-candidate-gate](tasks/archive/release-r6-clean-candidate-gate.md)（G-07 在 `e8cb494d`+最窄修补上 PASS，修补已入库于 `67b0f309`）。[release-r6-pin-and-formal-d4](tasks/archive/release-r6-pin-and-formal-d4.md) 已产出 pin `0.0.0-67b0f3092158`（≡G-07 交付 SHA）并对 `0.0.0-5ed2b916b569`→该 pin 跑通正式 D4（非等价 retag）。[release-r6-resource-budget](tasks/archive/release-r6-resource-budget.md) 已在隔离项目对该 pin 采证空闲/轻负载容器足迹与部署规模对应表（观测依据建议 ≥2 vCPU / ≥4 GiB；**非 SLA**）。维护者裁定见 [release-r6-close-ruling](tasks/archive/release-r6-close-ruling.md)：**总纲 R6 通过**（残余满载/多商/staging 等为非宣称，≠SLA/≠R1–R5）。商业定价、余额与支持裁定归商家平台，实际调用事实、重复执行、unknown、原子预留执行正确性与公平资源调度由本组承担必要实现，一条完整交易链只建一套账本。
 
@@ -225,8 +225,8 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 |---|---|---|---|
 | `POSTGRES_PASSWORD` | `.env`（env-only） | PG 与 `DATABASE_URL` | Compose 强制；样例见 `.env.example` |
 | `DATABASE_URL` / `REDIS_URL` | env | 库与 broker | Go 启动后不从库改写这两项 |
-| `ADMIN_ACCESS_KEY` | env-only | 管理员登录 | 当前无 User/Membership |
-| `SETTINGS_ACCESS_TOKEN` | env-only | 解锁设置页 | |
+| `ADMIN_ACCESS_KEY` | env-only | 部署者 bootstrap 与 Operator 登录 | 公开注册创建普通 User、Merchant 与 Membership |
+| `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_ADDRESS`、`SMTP_FROM_NAME` | `.env.dev` 默认；`app_settings` 可覆盖 | 公开邮箱注册邮件 | 设置页恢复默认删除数据库覆盖并回到环境值；密码不回显、导出或写日志 |
 | `SESSION_SECRET` | env-only | 会话 cookie | 更换会使既有会话失效 |
 | `AGENT_SERVICE_INTERNAL_TOKEN` | env-only，≥32 字符 | API↔Agent | Agent `config.ts` 硬校验长度 |
 | `METRICS_BEARER_TOKEN` 等 | env，可空 | `/metrics` | 空则不注册或不开 metrics 服 |
@@ -300,7 +300,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 
 **缺验证（机制或文档有，无隔离证据）**
 
-- 空主机等价 D1 主路径已由 B6 在 pin `0.0.0-5ed2b916b569` 采证（登录/设置解锁/`provider_profiles=0`/重启；**浏览器缺 provider UI 仍未采证**）；D3 隔离恢复主路径已由 B4 采证（在途 lease/unknown 仍缺夹具）；迁移失败停机与回退的合同/脚本已由 B5 交付；正式 D4（`0.0.0-5ed2b916b569`→`0.0.0-67b0f3092158`）已采证；干净候选 G-07 PASS 且 pin `0.0.0-67b0f3092158` 已对齐；默认单副本空闲/轻负载资源足迹已由 [release-r6-resource-budget](tasks/archive/release-r6-resource-budget.md) 采证（**非 SLA**；满载/多商未测）；重启后 unknown 作业；staging 双副本共享卷一致性；**总纲 R6 已通过**（[close-ruling](tasks/archive/release-r6-close-ruling.md)）；残余：满载/多商容量、registry.npmjs TLS 默认全量 build 备注、registry push、在途 lease 夹具等（不阻塞 R6）。
+- 空主机等价 D1 主路径已由 B6 在 pin `0.0.0-5ed2b916b569` 采证（登录/设置读写/`provider_profiles=0`/重启；**浏览器缺 provider UI 仍未采证**）；D3 隔离恢复主路径已由 B4 采证（在途 lease/unknown 仍缺夹具）；迁移失败停机与回退的合同/脚本已由 B5 交付；正式 D4（`0.0.0-5ed2b916b569`→`0.0.0-67b0f3092158`）已采证；干净候选 G-07 PASS 且 pin `0.0.0-67b0f3092158` 已对齐；默认单副本空闲/轻负载资源足迹已由 [release-r6-resource-budget](tasks/archive/release-r6-resource-budget.md) 采证（**非 SLA**；满载/多商未测）；重启后 unknown 作业；staging 双副本共享卷一致性；**总纲 R6 已通过**（[close-ruling](tasks/archive/release-r6-close-ruling.md)）；残余：满载/多商容量、registry.npmjs TLS 默认全量 build 备注、registry push、在途 lease 夹具等（不阻塞 R6）。
 
 **需 Operator 决策**
 

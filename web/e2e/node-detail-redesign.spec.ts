@@ -8,7 +8,7 @@ test.describe("node detail redesign", () => {
   test("section generation, node image history and export preserve independent content", async ({ page }, info) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
       const graph = await createWorkflow(page);
       const plan = graph.nodes.find((node) => node.node_type === "image_prompt")!;
       await applyWorkflowFixture(page, [{ op: "update_node_config", node_ref: plan.id, config: { ...plan.config,
@@ -170,7 +170,7 @@ test.describe("node detail redesign", () => {
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await withMockDocumentProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"), async () => {
+    await withMockDocumentProviders(page.request, async () => {
       const graph = await createWorkflow(page);
       const images = graph.nodes.filter((node) => node.node_type === "image_generation");
       const second = images[1];

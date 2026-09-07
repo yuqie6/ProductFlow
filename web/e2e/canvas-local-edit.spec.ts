@@ -17,7 +17,7 @@ test.describe("canvas local edit", () => {
   test.beforeEach(async ({ page }) => {
     await lockLocale(page);
     await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
-    await assertMockImageProviders(page.request, requiredEnv("SETTINGS_ACCESS_TOKEN"));
+    await assertMockImageProviders(page.request);
   });
 
   test("inspector local edit creates a lineage asset, adopts, and reverts", async ({ page }) => {

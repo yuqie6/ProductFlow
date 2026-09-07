@@ -203,6 +203,9 @@ func normalizeConfigValue(key string, value any) (string, error) {
 	if !ok {
 		return "", apperr.Validation("未知配置项: " + key)
 	}
+	if isSMTPConfigKey(key) {
+		return normalizeSMTPConfigValue(def, value)
+	}
 	switch def.InputType {
 	case "boolean":
 		switch typed := value.(type) {
@@ -268,6 +271,9 @@ func normalizeConfigValue(key string, value any) (string, error) {
 func validateMerged(merged map[string]string) error {
 	if mime, ok := merged["upload_allowed_image_mime_types"]; ok && strings.TrimSpace(mime) == "" {
 		return apperr.Validation("允许图片 MIME 不能为空")
+	}
+	if err := validateMergedSMTP(merged); err != nil {
+		return err
 	}
 	return nil
 }

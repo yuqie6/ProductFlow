@@ -35,6 +35,41 @@ func TestApplyExistingHeadKeepsSchema(t *testing.T) {
 	}
 }
 
+func TestApplyRetiresInviteTableAndCreatesRegistrationChallenges(t *testing.T) {
+	pool := testdb.Pool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	gdb, err := db.OpenGorm(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS merchant_invites (id varchar(36) PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'registration_challenges'
+	`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("registration_challenges missing: n=%d err=%v", n, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'merchant_invites'
+	`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("merchant_invites still present: n=%d err=%v", n, err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM pg_indexes
+		WHERE schemaname = 'public' AND indexname = 'uq_registration_challenges_active_email'
+	`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("active email unique index missing: n=%d err=%v", n, err)
+	}
+}
+
 func TestApplyTwiceDoesNotDeleteRows(t *testing.T) {
 	head := testdb.Pool(t)
 	raw := os.Getenv("DATABASE_URL")
