@@ -43,17 +43,26 @@ func (s Service) reserveGenerationQuota(ctx context.Context, merchantID, taskID 
 }
 
 func (e Executor) settleGenerationQuota(ctx context.Context, merchantID, taskID string) error {
-	key := mustActiveQuotaKey(ctx, e.DB, merchantID, taskID)
+	key, err := activeQuotaKey(ctx, e.DB, merchantID, taskID)
+	if err != nil {
+		return err
+	}
 	return finalizeQuotaIgnoreMissing(e.quota().Settle(ctx, merchantID, key, imageSessionQuotaUnits))
 }
 
 func (e Executor) markGenerationQuotaUnknown(ctx context.Context, merchantID, taskID string) error {
-	key := mustActiveQuotaKey(ctx, e.DB, merchantID, taskID)
+	key, err := activeQuotaKey(ctx, e.DB, merchantID, taskID)
+	if err != nil {
+		return err
+	}
 	return finalizeQuotaIgnoreMissing(e.quota().MarkUnknown(ctx, merchantID, key))
 }
 
 func (e Executor) releaseGenerationQuota(ctx context.Context, merchantID, taskID string) error {
-	key := mustActiveQuotaKey(ctx, e.DB, merchantID, taskID)
+	key, err := activeQuotaKey(ctx, e.DB, merchantID, taskID)
+	if err != nil {
+		return err
+	}
 	return finalizeQuotaIgnoreMissing(e.quota().Release(ctx, merchantID, key))
 }
 
@@ -66,14 +75,6 @@ func finalizeQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) 
 		return nil
 	}
 	return err
-}
-
-func mustActiveQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID string) string {
-	key, err := activeQuotaKey(ctx, db, merchantID, taskID)
-	if err != nil || key == "" {
-		return generationQuotaKey(taskID, 0)
-	}
-	return key
 }
 
 func activeQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID string) (string, error) {
@@ -94,7 +95,7 @@ func activeQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID string)
 		return generationQuotaKey(taskID, 0), nil
 	}
 	if err != nil {
-		return "", apperr.Internal("读取额度预留失败")
+		return "", fmt.Errorf("读取额度预留失败: %w", err)
 	}
 	return row.IdempotencyKey, nil
 }

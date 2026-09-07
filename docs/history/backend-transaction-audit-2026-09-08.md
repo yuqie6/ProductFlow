@@ -40,7 +40,8 @@
 | Graph 图像/文稿 Provider 错误只留下统一 unknown 文案，原失败原因丢失 | 两种调用入口使用既有节点错误解释规则，将原因送入 markUnknownCommitted/markNodeUnknown | 原代码两个入口均复现原因丢失；修复后 run/node/effect 仍 unknown，节点与 effect 原因含调用失败细节，额度故障回滚语义不变 | `4216e3b0` |
 | 真实图像适配器和文稿 JSON 解码将原错误替换为无原因 unknown，导致 Graph 终态仍丢失证据 | providers 保留 Graph 分类和底层错误链；Graph 避免重复未知提示 | 四种适配错误和 JSON SyntaxError 原代码均复现；真实适配器经 Graph 执行后数据库保留 trace，重复投递不再调用 Provider | `d1e194c2` |
 | Graph effect 只记执行身份元数据，无法核对调用时的 typed request 与参考图字节 | callProvider/callImageProvider 持有同一个请求并直接传 Provider 方法；原 effect 记录完整请求字段、参考图元数据与 SHA-256 | Provider 内读取真实数据库，记录与收到的请求一致；256 KiB 参考图只存摘要，超限请求不写 intent/不占额度/不调用 Provider | `2610f2b0` |
-| 局部编辑成功结算容忍缺失 hold，可提交未结算资产及 succeeded | settleEditQuota 对唯一付费成功路径返回原额度错误；取消和未调用释放不扩改 | 原代码真实数据库复现缺 hold 仍成功；修复后资产/任务/attempt 回滚，补足原 attempt 预留后成功结算 | 随本次提交 |
+| 局部编辑成功结算容忍缺失 hold，可提交未结算资产及 succeeded | settleEditQuota 对唯一付费成功路径返回原额度错误；取消和未调用释放不扩改 | 原代码真实数据库复现缺 hold 仍成功；修复后资产/任务/attempt 回滚，补足原 attempt 预留后成功结算 | `5deb31e2` |
+| 连续生图活跃 hold 查询失败退回初始键，原数据库错误丢失甚至被后续 NotFound 容忍吞掉 | 三种 finalizer 直接消费 activeQuotaKey 的错误，删除 mustActiveQuotaKey，保留底层数据库 cause | 独立 PostgreSQL 关系不可用时三条入口透传 SQLSTATE 42P01；真实预留与余额不变 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -173,3 +174,8 @@ Graph 停滞跟进：当前调用链保持文稿采用先 run 后 graph，尚未
 局部编辑成功 hold 切片由本任务主代理负责，范围为 `localedit/quota_wire.go` 与 [成功预留合同回归](../../go/internal/localedit/quota_wire_test.go)。当前唯一成功入口 persistResult 必经付费 Edit，没有 Graph 本地主体合成例外；取消/失败前未 Reserve 的合法路径不受此次改动影响。真实 PostgreSQL 原代码复现缺失 hold 的持久化返回 nil；修复后返回 NotFound，商品资产数不变、任务保持 running 且无 result_asset_id、attempt 保持 pending。为同一 attempt 补充预留后调用相同成功边界可完成结算。该负例验证持久化不变量，不声称已复现生产数据丢失。
 
 局部编辑成功 hold 切片当前工作区 localedit 整包通过（4.502 秒），标准 go vet 通过。主代理自审完整 diff，取消/未知/释放合同未扩大。共享工作区 docs-check 因账户任务正在归档、架构文档链接尚不存在的 saas-account-team 归档文件而失败；在隔离基线 2610f2b0 加本切片三个文件执行 docs-check 通过，确认临时 checkout 仅有本切片后已清理。共享文档失败不计为通过，也未修改其他任务文档。
+
+
+连续生图额度查找切片由本任务主代理负责，范围为 `imagesession/quota_wire.go` 和 [数据库查询失败回归](../../go/internal/imagesession/quota_lookup_error_test.go)。原 mustActiveQuotaKey 在查询报错时退回首次生成键，后续额度查询错误会掩盖原故障；未建额度账户的原始负例甚至三条入口均返回 nil。最终回归补齐真实账户和 reserved hold，在独立 pf_quotaread_* 测试库暂时重命名 hold 表，验证 settle/release/unknown 保留 PostgreSQL 42P01、余额与原 hold 不变。该表仅属于一次性测试库，清理先恢复名称再关闭测试库。实际没有活跃 hold 时的旧键合同、缺失 hold 容忍和 billing sequence 绑定尚未在本切片改变。
+
+额度查找切片 imagesession 整包通过（40.192 秒），随后补强真实预留的回归通过（1.803 秒），标准 go vet 与当前共享工作区 docs-check 通过。完整 diff 自审及 mustActiveQuotaKey 删除残留检查通过；无新增 schema 或 API，无其他任务资源改动。
