@@ -120,11 +120,21 @@ func localEditRecoveryScope(tx *gorm.DB, cutoff time.Time) *gorm.DB {
 
 func recoverLocalEditState(ctx context.Context, gdb *gorm.DB, taskID string, staleAfter time.Duration, now time.Time) (string, error) {
 	var outcome string
+	var unknownQuota struct {
+		productID string
+		attemptID string
+		mark      bool
+	}
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var recErr error
-		outcome, recErr = recoverOne(ctx, pgxTx, taskID, true, staleAfter, now)
+		outcome, unknownQuota.productID, unknownQuota.attemptID, unknownQuota.mark, recErr = recoverOne(ctx, pgxTx, taskID, true, staleAfter, now)
 		return recErr
 	})
+	if err == nil && unknownQuota.mark {
+		if qErr := finalizeRecoveredUnknownQuota(ctx, gdb, unknownQuota.productID, taskID, unknownQuota.attemptID); qErr != nil {
+			return outcome, qErr
+		}
+	}
 	return outcome, err
 }
 
@@ -158,25 +168,26 @@ func restageLocalEditTask(ctx context.Context, gdb *gorm.DB, taskID string) (boo
 // recoverOne 处理一条 queued/running 任务的状态。queued 只确认仍 queued；running 过期且尚未打 provider 可重排队；
 // 已过 provider 边界只能标 unknown。RestageIfIdle 由调用方在状态事务提交后另开 outbox 事务。
 // resetStale=false 时只观察不改行。SKIP LOCKED 跳过仍被 live worker 持有的行。
-func recoverOne(ctx context.Context, pgxTx *gorm.DB, taskID string, resetStale bool, staleAfter time.Duration, now time.Time) (string, error) {
+// 第四、五返回值：标 unknown 时带回 product/attempt，供事务外 MarkUnknown 额度。
+func recoverOne(ctx context.Context, pgxTx *gorm.DB, taskID string, resetStale bool, staleAfter time.Duration, now time.Time) (string, string, string, bool, error) {
 	var row schema.LocalImageEditTasks
 	err := pgxTx.Clauses(pfdb.SkipLocked()).Where("id = ?", taskID).Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "skipped", nil
+		return "skipped", "", "", false, nil
 	}
 	if err != nil {
-		return "", err
+		return "", "", "", false, err
 	}
 	task := taskFromModel(row)
 	if task.Status == "queued" {
-		return "queued", nil
+		return "queued", "", "", false, nil
 	}
 	if task.Status != "running" {
-		return "ignored", nil
+		return "ignored", "", "", false, nil
 	}
 	stale := task.StartedAt == nil || now.Sub(task.StartedAt.UTC()) >= staleAfter
 	if !resetStale || !stale {
-		return "fresh", nil
+		return "fresh", "", "", false, nil
 	}
 	phase := ""
 	if task.ProgressPhase != nil {
@@ -184,18 +195,22 @@ func recoverOne(ctx context.Context, pgxTx *gorm.DB, taskID string, resetStale b
 	}
 	if phase == "claimed" {
 		if err := markStaleClaimed(ctx, pgxTx, task); err != nil {
-			return "", err
+			return "", "", "", false, err
 		}
-		return "requeued", nil
+		return "requeued", "", "", false, nil
 	}
 	detail := "局部编辑运行阶段无法识别，已停止自动重投"
 	if phase == "provider_pending" || phase == "provider_call" || phase == "provider_result_received" {
 		detail = "provider boundary 已开始，滞留运行不能自动重投"
 	}
-	if err := markUnknownLocked(ctx, pgxTx, task, detail); err != nil {
-		return "", err
+	attemptID := ""
+	if task.ActiveAttemptID != nil {
+		attemptID = *task.ActiveAttemptID
 	}
-	return "unknown", nil
+	if err := markUnknownLocked(ctx, pgxTx, task, detail); err != nil {
+		return "", "", "", false, err
+	}
+	return "unknown", task.ProductID, attemptID, true, nil
 }
 
 func payloadFor(task taskRow) map[string]any {

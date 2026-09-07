@@ -368,7 +368,14 @@ func (s Service) Retry(ctx context.Context, productID, taskID string, expectedRe
 // Cancel 取消尚未终态的局部编辑任务。
 // 调用时机：HTTP POST .../cancel。succeeded/failed/unknown 返回 Conflict；已 cancelled 幂等成功。
 // expectedRevision 非 nil 且对不上 Conflict。不删除 mask MediaObject。
+// 额度：未过 provider 边界 Release；已过 MarkUnknown（禁止当零消费）。
 func (s Service) Cancel(ctx context.Context, productID, taskID string, expectedRevision *int) (TaskResponse, error) {
+	var finalize struct {
+		merchantID    string
+		attemptID     string
+		progressPhase string
+		do            bool
+	}
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskForUpdate(ctx, pgxTx, productID, taskID)
 		if err != nil {
@@ -383,22 +390,28 @@ func (s Service) Cancel(ctx context.Context, productID, taskID string, expectedR
 		case "cancelled":
 			return nil
 		}
+		phase := ""
+		if task.ProgressPhase != nil {
+			phase = *task.ProgressPhase
+		}
+		attemptID := ""
 		if task.ActiveAttemptID != nil {
-			phase := "failed"
+			attemptID = *task.ActiveAttemptID
+			phaseLabel := "failed"
 			result := "failed"
-			if task.ProgressPhase != nil && *task.ProgressPhase != "claimed" {
-				phase = "unknown"
+			if providerPhaseStarted(phase) {
+				phaseLabel = "unknown"
 				result = "unknown"
 			}
 			detail := "局部编辑任务已取消；provider boundary 之后的结果只能作为审计"
 			_ = pgxTx.Model(&schema.LocalImageEditProviderAttempts{}).
 				Where("task_id = ? AND attempt_id = ?", taskID, *task.ActiveAttemptID).
 				Updates(map[string]any{
-					"phase": phase, "effect_result": result, "detail": detail, "updated_at": time.Now().UTC(),
+					"phase": phaseLabel, "effect_result": result, "detail": detail, "updated_at": time.Now().UTC(),
 				}).Error
 		}
 		now := time.Now().UTC()
-		err = pgxTx.Model(&schema.LocalImageEditTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+		if err := pgxTx.Model(&schema.LocalImageEditTasks{}).Where("id = ?", taskID).Updates(map[string]any{
 			"status":            "cancelled",
 			"active_attempt_id": nil,
 			"progress_phase":    "cancelled",
@@ -406,11 +419,24 @@ func (s Service) Cancel(ctx context.Context, productID, taskID string, expectedR
 			"is_retryable":      false,
 			"finished_at":       now,
 			"updated_at":        now,
-		}).Error
-		return err
+		}).Error; err != nil {
+			return err
+		}
+		merchantID, mErr := merchantIDForProduct(ctx, pgxTx, productID)
+		if mErr != nil {
+			return mErr
+		}
+		finalize.merchantID = merchantID
+		finalize.attemptID = attemptID
+		finalize.progressPhase = phase
+		finalize.do = true
+		return nil
 	})
 	if err != nil {
 		return TaskResponse{}, err
+	}
+	if finalize.do {
+		_ = s.finalizeEditQuotaOnCancel(ctx, finalize.merchantID, taskID, finalize.attemptID, finalize.progressPhase)
 	}
 	return s.Get(ctx, productID, taskID, true)
 }

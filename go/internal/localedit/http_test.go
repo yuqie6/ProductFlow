@@ -65,6 +65,7 @@ func newEditServer(t *testing.T, provider Provider) *editServer {
 	t.Cleanup(srv.Close)
 	es := &editServer{pool: pool, db: gdb, media: mediaStore, svc: svc, srv: srv, client: &http.Client{}}
 	es.cookies = auth.MustAuthenticate(t, es.client, srv.URL)
+	mustSeedMerchantQuota(t, gdb, auth.MustDevMerchantID(t, gdb), 10_000)
 	var previousCapacity *string
 	_ = es.pool.QueryRow(context.Background(), `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&previousCapacity)
 	_, _ = es.pool.Exec(context.Background(), `

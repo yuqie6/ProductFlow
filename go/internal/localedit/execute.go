@@ -34,6 +34,7 @@ func (e Executor) provider() Provider {
 }
 
 // Execute 是 worker 入口。无法证明的 provider 结果标 unknown，且返回 nil 以便 dispatch 记 CONSUMED。
+// 额度：capability 通过后、Edit 前 Reserve；成功 Settle；未发出 Release；已发出不明 MarkUnknown。
 func (e Executor) Execute(ctx context.Context, taskID string) error {
 	claimed, attemptID, err := e.claim(ctx, taskID)
 	if err != nil {
@@ -73,14 +74,31 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		e.finish(ctx, taskID, attemptID, "failed", "failed", "unsupported", detail, false, "", "")
 		return nil
 	}
+	merchantID, err := merchantIDForProduct(ctx, e.DB, snap.ProductID)
+	if err != nil {
+		detail := "局部编辑缺少商家额度归属"
+		var ae apperr.Error
+		if errors.As(err, &ae) && ae.Detail != "" {
+			detail = ae.Detail
+		}
+		e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
+		return nil
+	}
+	if err := e.reserveEditQuota(ctx, merchantID, taskID, attemptID); err != nil {
+		e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", quotaConflictDetail(err), true, "", "")
+		return nil
+	}
 	if err := e.markPhase(ctx, taskID, attemptID, "provider_pending", cap.ProviderName, snap.auditJSON()); err != nil {
+		_ = e.releaseEditQuota(ctx, merchantID, taskID, attemptID)
 		return nil
 	}
 	if err := e.markPhase(ctx, taskID, attemptID, "provider_call", cap.ProviderName, nil); err != nil {
+		_ = e.releaseEditQuota(ctx, merchantID, taskID, attemptID)
 		return nil
 	}
 	editSize, err := sourceEditSize(snap.SourceBytes, snap.SourceMIME)
 	if err != nil {
+		_ = e.releaseEditQuota(ctx, merchantID, taskID, attemptID)
 		detail := "局部编辑源图未通过媒体核验"
 		var ae apperr.Error
 		if errors.As(err, &ae) && ae.Status == 400 && ae.Detail != "" {
@@ -100,17 +118,21 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		Size:      editSize,
 	})
 	if err != nil {
+		_ = e.markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
 		e.finish(ctx, taskID, attemptID, "unknown", "unknown", "unknown", unknownDetail, false, truncStatus(fmt.Sprintf("%T", err)), "")
 		return nil
 	}
 	if len(result.Bytes) == 0 {
+		_ = e.markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
 		e.finish(ctx, taskID, attemptID, "unknown", "unknown", "unknown", "图片 provider 返回的局部编辑结果数量无法确认", false, result.ProviderStatus, result.ResponseID)
 		return nil
 	}
 	if err := e.persistResult(ctx, snap, attemptID, result); err != nil {
+		_ = e.markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
 		e.finish(ctx, taskID, attemptID, "unknown", "unknown_provider_effect", "unknown", "provider 结果已返回，但结果资产保存状态无法确认", false, result.ProviderStatus, result.ResponseID)
 		return nil
 	}
+	_ = e.settleEditQuota(ctx, merchantID, taskID, attemptID)
 	return nil
 }
 
@@ -154,6 +176,11 @@ func (s snapshot) auditJSON() map[string]any {
 func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error) {
 	var claimed bool
 	var attemptID string
+	var unknownQuota struct {
+		productID string
+		attemptID string
+		mark      bool
+	}
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		task, err := loadTaskByID(ctx, pgxTx, taskID)
 		if err != nil {
@@ -183,6 +210,11 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 				task.Status = "queued"
 				task.ActiveAttemptID = nil
 			case "provider_pending", "provider_call", "provider_result_received":
+				if task.ActiveAttemptID != nil {
+					unknownQuota.productID = task.ProductID
+					unknownQuota.attemptID = *task.ActiveAttemptID
+					unknownQuota.mark = true
+				}
 				if err := markUnknownLocked(ctx, pgxTx, task, "provider boundary 已开始，滞留运行不能自动重投"); err != nil {
 					return err
 				}
@@ -227,6 +259,9 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 		claimed = true
 		return nil
 	})
+	if unknownQuota.mark {
+		_ = finalizeRecoveredUnknownQuota(ctx, e.DB, unknownQuota.productID, taskID, unknownQuota.attemptID)
+	}
 	return claimed, attemptID, err
 }
 

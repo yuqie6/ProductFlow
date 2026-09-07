@@ -37,7 +37,7 @@
 |---|---|---|
 | MP-A 身份 | 多角色、邀请/撤销/恢复、最后 Owner 与并发变更、会话失效可验证 | **通过**（B0，见 [merchant-identity-skeleton](tasks/archive/merchant-identity-skeleton.md)；邀请/角色/撤销/最后 Owner 自动化） |
 | MP-B 隔离 | A/B 商家合法操作成功，所有交叉读写、导出、事件、Agent 与后台路径拒绝；查询与引用一致性约束有测试 | **通过**（B10，2026-09-07，见 [merchant-isolation-gate](tasks/archive/merchant-isolation-gate.md)）；**未开放**第二互不信任商家产品上线；≠ MP-C/MP-D |
-| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0–B4 已交付**（账本+图会话/Graph/Agent 主入口+[B4](tasks/archive/merchant-mp-c-balance-http-b4.md) 余额 HTTP）。**总纲 R5 未通过**（见 [merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）：缺全收费入口接线、真实价格版本、unknown 到期策略；≠真实支付 |
+| MP-C 商业额度 | 并发争用、幂等、重试、取消、unknown 和调账不会重复结算；每项能解释费用来源 | **B0–B4 + localedit 已交付**（账本+三主入口+余额 HTTP+[localedit](tasks/archive/merchant-mp-c-wire-localedit.md)）。**总纲 R5 未通过**（见 [merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）：仍缺 source-note 等入口、真实价格版本、unknown 到期策略；≠真实支付 |
 | MP-D 运营 | 运营密钥不进入商家上下文；停用、支持访问、数据导出有明确权限与审计 | 未实现（A8 合同草案仅） |
 
 **总纲 R1：** **通过**（2026-09-07，见 [merchant-r1-close-ruling](tasks/archive/merchant-r1-close-ruling.md)）。证据口径：测试夹具双商 + 多角色 + 成员撤销 + HTTP/资源/队列/事件/Agent/后台交叉拒绝；**≠** 产品上线第二互不信任商；**≠** MP-C/MP-D。
@@ -321,7 +321,7 @@
 
 ## 验收缺口（R1 通过后的残余，不阻塞 R1）
 
-- MP-C **B0–B4 已交付**；**总纲 R5 裁定未通过**（2026-09-07，[merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）。已接：图会话 `Generate`、Graph `callImageProvider`、Agent `before_model_request`、商家/Op 余额 HTTP。**阻塞缺口**：localedit / source-note 等其它收费入口未 `Reserve`；`pv-placeholder-v0` 非真实价格目录；unknown 无到期运营/客服裁定策略。MP-D 仅 A8 合同草案（≠完整运营产品化）。
+- MP-C **B0–B4 已交付**；**总纲 R5 裁定未通过**（2026-09-07，[merchant-r5-close-ruling](tasks/archive/merchant-r5-close-ruling.md)）。已接：图会话 `Generate`、Graph `callImageProvider`、Agent `before_model_request`、商家/Op 余额 HTTP、**localedit `Executor.Execute`（Edit 前 Reserve）**。**阻塞缺口**：source-note 等其它收费入口未 `Reserve`；`pv-placeholder-v0` 非真实价格目录；unknown 无到期运营/客服裁定策略。MP-D 仅 A8 合同草案（≠完整运营产品化）。**≠宣称 R5 通过**。
 - **运营尚未邀请第二互不信任商家**；产品 `CreateMerchant` 仍 409；邀请属运营另决，不由 R1/B10 自动开启。
 - 额度公平调度、混合负载经营验收、真实支付仍属后续（≠本 R1/R5 条文通过条件中的已交付子集）。
 

@@ -1,0 +1,169 @@
+package localedit
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/yuqie6/productflow/internal/platform/apperr"
+	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/quota"
+	"gorm.io/gorm"
+)
+
+// MP-C：localedit 在 provider Edit 前 Reserve；成功 Settle、未发出 Release、已发出不明 MarkUnknown。
+// 单价占位 1 内部单位；幂等键绑定 task + attempt（重试另开 attempt）。
+
+const localEditQuotaUnits int64 = 1
+
+func (s Service) quota() *quota.Service {
+	return &quota.Service{DB: s.DB}
+}
+
+func (e Executor) quota() *quota.Service {
+	return &quota.Service{DB: e.DB}
+}
+
+func editQuotaKey(taskID, attemptID string) string {
+	return fmt.Sprintf("local-edit:%s:%s", strings.TrimSpace(taskID), strings.TrimSpace(attemptID))
+}
+
+func merchantIDForProduct(ctx context.Context, db *gorm.DB, productID string) (string, error) {
+	productID = strings.TrimSpace(productID)
+	if productID == "" {
+		return "", apperr.Internal("缺少商品")
+	}
+	var merchantID string
+	err := db.WithContext(ctx).Model(&schema.Products{}).
+		Select("merchant_id").Where("id = ?", productID).Scan(&merchantID).Error
+	if err != nil {
+		return "", apperr.Internal("读取商品商家失败")
+	}
+	merchantID = strings.TrimSpace(merchantID)
+	if merchantID == "" {
+		return "", apperr.Internal("商品缺少商家归属")
+	}
+	return merchantID, nil
+}
+
+func (e Executor) reserveEditQuota(ctx context.Context, merchantID, taskID, attemptID string) error {
+	merchantID = strings.TrimSpace(merchantID)
+	if merchantID == "" {
+		return apperr.Internal("缺少商家额度归属")
+	}
+	_, _, err := e.quota().Reserve(ctx, merchantID, editQuotaKey(taskID, attemptID), localEditQuotaUnits, quota.DefaultPriceVersionID)
+	return err
+}
+
+func (e Executor) settleEditQuota(ctx context.Context, merchantID, taskID, attemptID string) error {
+	key := mustActiveEditQuotaKey(ctx, e.DB, merchantID, taskID, attemptID)
+	return finalizeQuotaIgnoreMissing(e.quota().Settle(ctx, merchantID, key, localEditQuotaUnits))
+}
+
+func (e Executor) markEditQuotaUnknown(ctx context.Context, merchantID, taskID, attemptID string) error {
+	key := mustActiveEditQuotaKey(ctx, e.DB, merchantID, taskID, attemptID)
+	return finalizeQuotaIgnoreMissing(e.quota().MarkUnknown(ctx, merchantID, key))
+}
+
+func (e Executor) releaseEditQuota(ctx context.Context, merchantID, taskID, attemptID string) error {
+	key := mustActiveEditQuotaKey(ctx, e.DB, merchantID, taskID, attemptID)
+	return finalizeQuotaIgnoreMissing(e.quota().Release(ctx, merchantID, key))
+}
+
+func finalizeQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) error {
+	if err == nil {
+		return nil
+	}
+	if apperr.IsNotFound(err) {
+		// 夹具或跳过路径未 Reserve；不要把缺 hold 升级成 worker 失败。
+		return nil
+	}
+	return err
+}
+
+func mustActiveEditQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID, attemptID string) string {
+	key, err := activeEditQuotaKey(ctx, db, merchantID, taskID, attemptID)
+	if err != nil || key == "" {
+		return editQuotaKey(taskID, attemptID)
+	}
+	return key
+}
+
+func activeEditQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID, attemptID string) (string, error) {
+	merchantID = strings.TrimSpace(merchantID)
+	taskID = strings.TrimSpace(taskID)
+	attemptID = strings.TrimSpace(attemptID)
+	if merchantID == "" || taskID == "" {
+		return editQuotaKey(taskID, attemptID), nil
+	}
+	if attemptID != "" {
+		exact := editQuotaKey(taskID, attemptID)
+		var row schema.MerchantQuotaHolds
+		err := db.WithContext(ctx).
+			Where("merchant_id = ? AND idempotency_key = ? AND status IN ?", merchantID, exact, []string{
+				quota.StatusReserved, quota.StatusPendingReconciliation,
+			}).
+			Take(&row).Error
+		if err == nil {
+			return row.IdempotencyKey, nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", apperr.Internal("读取额度预留失败")
+		}
+	}
+	prefix := "local-edit:" + taskID + ":"
+	var row schema.MerchantQuotaHolds
+	err := db.WithContext(ctx).
+		Where("merchant_id = ? AND idempotency_key LIKE ? AND status IN ?", merchantID, prefix+"%", []string{
+			quota.StatusReserved, quota.StatusPendingReconciliation,
+		}).
+		Order("created_at DESC").
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return editQuotaKey(taskID, attemptID), nil
+	}
+	if err != nil {
+		return "", apperr.Internal("读取额度预留失败")
+	}
+	return row.IdempotencyKey, nil
+}
+
+func providerPhaseStarted(phase string) bool {
+	switch strings.TrimSpace(phase) {
+	case "provider_pending", "provider_call", "provider_result_received":
+		return true
+	default:
+		return false
+	}
+}
+
+// finalizeEditQuotaOnCancel 取消收口：未过 provider 边界 → Release；已过 → MarkUnknown（禁止当零消费）。
+func (s Service) finalizeEditQuotaOnCancel(ctx context.Context, merchantID, taskID, attemptID, progressPhase string) error {
+	merchantID = strings.TrimSpace(merchantID)
+	if merchantID == "" {
+		return nil
+	}
+	key := mustActiveEditQuotaKey(ctx, s.DB, merchantID, taskID, attemptID)
+	if providerPhaseStarted(progressPhase) {
+		return finalizeQuotaIgnoreMissing(s.quota().MarkUnknown(ctx, merchantID, key))
+	}
+	return finalizeQuotaIgnoreMissing(s.quota().Release(ctx, merchantID, key))
+}
+
+func finalizeRecoveredUnknownQuota(ctx context.Context, db *gorm.DB, productID, taskID, attemptID string) error {
+	merchantID, err := merchantIDForProduct(ctx, db, productID)
+	if err != nil {
+		return err
+	}
+	key := mustActiveEditQuotaKey(ctx, db, merchantID, taskID, attemptID)
+	return finalizeQuotaIgnoreMissing((&quota.Service{DB: db}).MarkUnknown(ctx, merchantID, key))
+}
+
+func quotaConflictDetail(err error) string {
+	var ae apperr.Error
+	if errors.As(err, &ae) && strings.TrimSpace(ae.Detail) != "" {
+		return ae.Detail
+	}
+	return "可用额度不足"
+}
