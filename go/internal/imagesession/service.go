@@ -23,6 +23,7 @@ import (
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
@@ -364,25 +365,12 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 	}
 	toolOpts := filterToolOptions(req.ToolOptions, s.allowedToolFields(ctx))
 
-	var merchantID string
+	taskID := clockid.New()
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		sess, err := loadSession(ctx, pgxTx, sessionID)
 		if err != nil {
 			return err
 		}
-		merchantID = sess.MerchantID
-		return nil
-	})
-	if err != nil {
-		return DetailResponse{}, err
-	}
-
-	taskID := clockid.New()
-	if err := s.reserveGenerationQuota(ctx, merchantID, taskID, 0); err != nil {
-		return DetailResponse{}, err
-	}
-
-	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		sessAssets, err := listAssets(ctx, pgxTx, sessionID)
 		if err != nil {
 			return fmt.Errorf("list assets: %w", err)
@@ -426,6 +414,11 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 		if err := pgxTx.Create(&row).Error; err != nil {
 			return fmt.Errorf("insert generation task: %w", err)
 		}
+		command := s
+		command.DB = pgxTx
+		if err := command.reserveGenerationQuota(ctx, sess.MerchantID, taskID, 0); err != nil {
+			return err
+		}
 		if err := pgxTx.Model(&schema.ImageSessions{}).Where("id = ?", sessionID).Updates(map[string]any{
 			"updated_at": now,
 		}).Error; err != nil {
@@ -437,7 +430,6 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 		return publishSession(ctx, pgxTx, sessionID)
 	})
 	if err != nil {
-		_ = s.releaseGenerationQuota(ctx, merchantID, taskID)
 		return DetailResponse{}, err
 	}
 	return s.Get(ctx, sessionID)
@@ -446,15 +438,12 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 // Retry 把可重试的 failed 任务重新标 queued 并补 PENDING dispatch；unknown 不会被当成失败重试。
 // 终态失败后重新 Reserve（幂等键带 attempts），避免沿用已 Settle/Release 的旧 hold。
 func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailResponse, error) {
-	var merchantID string
-	var billingSeq int
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		sess, err := loadSession(ctx, pgxTx, sessionID)
 		if err != nil {
 			return err
 		}
-		merchantID = sess.MerchantID
-		task, err := loadTask(ctx, pgxTx, sessionID, taskID)
+		task, err := loadTask(ctx, pgxTx.Clauses(pfdb.ForUpdate()), sessionID, taskID)
 		if err != nil {
 			return err
 		}
@@ -464,31 +453,14 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 		if !task.IsRetryable {
 			return apperr.Validation("该生成任务不可重试")
 		}
-		billingSeq = task.Attempts
+		billingSeq := task.Attempts
 		if billingSeq < 1 {
 			billingSeq = 1
 		}
-		return nil
-	})
-	if err != nil {
-		return DetailResponse{}, err
-	}
-	if err := s.reserveGenerationQuota(ctx, merchantID, taskID, billingSeq); err != nil {
-		return DetailResponse{}, err
-	}
-	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
+		command := s
+		command.DB = pgxTx
+		if err := command.reserveGenerationQuota(ctx, sess.MerchantID, taskID, billingSeq); err != nil {
 			return err
-		}
-		task, err := loadTask(ctx, pgxTx, sessionID, taskID)
-		if err != nil {
-			return err
-		}
-		if task.Status != "failed" {
-			return apperr.Validation("只有失败的生成任务可以重试")
-		}
-		if !task.IsRetryable {
-			return apperr.Validation("该生成任务不可重试")
 		}
 		now := time.Now().UTC()
 		if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).Where("id = ?", taskID).Updates(map[string]any{
@@ -513,7 +485,6 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 		return publishSession(ctx, pgxTx, sessionID)
 	})
 	if err != nil {
-		_ = s.releaseGenerationQuota(ctx, merchantID, taskID)
 		return DetailResponse{}, err
 	}
 	return s.Get(ctx, sessionID)
@@ -524,16 +495,12 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 // HTTP 不入队 broker。unknown 任务不能当失败取消后再 Retry。
 // 未写 provider effect 时 Release 预留；已有 effect 则 MarkUnknown（禁止超时/在途当零消费）。
 func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailResponse, error) {
-	var merchantID string
-	var hadEffect bool
-	var wasActive bool
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		sess, err := loadSession(ctx, pgxTx, sessionID)
+		_, err := loadSession(ctx, pgxTx, sessionID)
 		if err != nil {
 			return err
 		}
-		merchantID = sess.MerchantID
-		task, err := loadTask(ctx, pgxTx, sessionID, taskID)
+		task, err := loadTask(ctx, pgxTx.Clauses(pfdb.ForUpdate()), sessionID, taskID)
 		if err != nil {
 			return err
 		}
@@ -543,13 +510,6 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 		if task.Status == "succeeded" || task.Status == "failed" || task.Status == "unknown" {
 			return apperr.Validation("已结束的生成任务不能取消")
 		}
-		wasActive = true
-		var n int64
-		if err := pgxTx.Model(&schema.ImageSessionProviderEffects{}).
-			Where("generation_task_id = ?", taskID).Count(&n).Error; err != nil {
-			return err
-		}
-		hadEffect = n > 0
 		now := time.Now().UTC()
 		err = pgxTx.Model(&schema.ImageSessionGenerationTasks{}).Where("id = ?", taskID).Updates(map[string]any{
 			"status":              "cancelled",
@@ -563,17 +523,13 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 		if err != nil {
 			return err
 		}
+		if err := (Executor{DB: pgxTx}).finalizeQuotaOnCancel(ctx, sessionID, taskID); err != nil {
+			return err
+		}
 		return publishSession(ctx, pgxTx, sessionID)
 	})
 	if err != nil {
 		return DetailResponse{}, err
-	}
-	if wasActive {
-		if hadEffect {
-			_ = finalizeQuotaIgnoreMissing(s.quota().MarkUnknown(ctx, merchantID, mustActiveQuotaKey(ctx, s.DB, merchantID, taskID)))
-		} else {
-			_ = s.releaseGenerationQuota(ctx, merchantID, taskID)
-		}
 	}
 	return s.Get(ctx, sessionID)
 }

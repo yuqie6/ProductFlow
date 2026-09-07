@@ -42,11 +42,6 @@ func (s Service) reserveGenerationQuota(ctx context.Context, merchantID, taskID 
 	return err
 }
 
-func (s Service) releaseGenerationQuota(ctx context.Context, merchantID, taskID string) error {
-	key := mustActiveQuotaKey(ctx, s.DB, merchantID, taskID)
-	return finalizeQuotaIgnoreMissing(s.quota().Release(ctx, merchantID, key))
-}
-
 func (e Executor) settleGenerationQuota(ctx context.Context, merchantID, taskID string) error {
 	key := mustActiveQuotaKey(ctx, e.DB, merchantID, taskID)
 	return finalizeQuotaIgnoreMissing(e.quota().Settle(ctx, merchantID, key, imageSessionQuotaUnits))
