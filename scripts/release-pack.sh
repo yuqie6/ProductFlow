@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Assemble a versioned install package: locked compose, env sample, VERSION,
-# images.env, and install instructions. Optionally docker-save product images
-# for offline / local-registry-free hosts.
+# images.env, install + backup/restore instructions and scripts.
+# Optionally docker-save product images for offline / local-registry-free hosts.
 #
 # Usage:
 #   bash scripts/release-pack.sh
 #   RELEASE_PACK_SAVE_IMAGES=1 bash scripts/release-pack.sh
 #   RELEASE_PACK_OUT=/tmp/pf-pack bash scripts/release-pack.sh
 #
-# Does not mutate shared Compose projects. Does not implement backup (B3).
+# Does not mutate shared Compose projects. Does not claim D3/R6.
 
 set -euo pipefail
 
@@ -37,6 +37,15 @@ cp "${root}/release/docker-compose.prod-ports.yml" "${pkg_dir}/docker-compose.pr
 cp "${root}/release/.env.example" "${pkg_dir}/.env.example"
 cp "${root}/release/README.md" "${pkg_dir}/README.md"
 
+mkdir -p "${pkg_dir}/scripts"
+cp "${root}/scripts/release_common.sh" "${pkg_dir}/scripts/release_common.sh"
+cp "${root}/scripts/release_backup_common.sh" "${pkg_dir}/scripts/release_backup_common.sh"
+cp "${root}/scripts/release-backup.sh" "${pkg_dir}/scripts/release-backup.sh"
+cp "${root}/scripts/release-restore.sh" "${pkg_dir}/scripts/release-restore.sh"
+chmod +x \
+  "${pkg_dir}/scripts/release-backup.sh" \
+  "${pkg_dir}/scripts/release-restore.sh"
+
 release_write_version_file "${pkg_dir}/VERSION"
 
 # images.env is the pin consumed by compose variable substitution.
@@ -47,7 +56,18 @@ cat >"${pkg_dir}/SHA256SUMS" <<EOF
 EOF
 (
   cd "$pkg_dir"
-  sha256sum docker-compose.yml docker-compose.prod-ports.yml .env.example README.md VERSION images.env >>SHA256SUMS
+  sha256sum \
+    docker-compose.yml \
+    docker-compose.prod-ports.yml \
+    .env.example \
+    README.md \
+    VERSION \
+    images.env \
+    scripts/release_common.sh \
+    scripts/release_backup_common.sh \
+    scripts/release-backup.sh \
+    scripts/release-restore.sh \
+    >>SHA256SUMS
 )
 
 if [[ "$save_images" == "1" ]]; then

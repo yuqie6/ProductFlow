@@ -189,7 +189,7 @@ docker compose --env-file images.env --env-file .env \
   -f docker-compose.yml -f docker-compose.prod-ports.yml up -d
 ```
 
-发行物路径不依赖作者本地 `storage` 或隐藏配置。备份/恢复与 R6 全项仍见平台可靠性章程；本 README 不宣称它们已通过。
+发行物路径不依赖作者本地 `storage` 或隐藏配置。备份/恢复脚本与一致点 runbook 见 [release/README.md](release/README.md)（B3 / D2）；完整 D3 隔离实跑与 R6 仍见平台可靠性章程，本 README 不宣称它们已通过。
 
 ## 本地开发
 
@@ -283,11 +283,15 @@ just release-dry-run
 just release
 just release-build-images
 just release-pack
+just release-backup
+just release-restore
 ```
 
 `release-dry-run` 校验**源码树** Compose 配置并打印当前发布动作。`release` 执行 `docker compose up -d --build --remove-orphans`，随后检查 backend、Agent service、Web 和 Web API proxy；它不会删除 volumes。生产式端口请在 Compose 命令中叠用 `docker-compose.prod-ports.yml`（见上文），再按同样四项探活验收；`just release` 默认仍使用开发 Compose 端口映射。
 
 `release-build-images` / `release-pack`（及可选 `PRODUCTFLOW_REGISTRY=… just release-push-images`）产出不可变镜像 tag 与锁定安装包，供无 git 空主机安装；步骤与限制见 [release/README.md](release/README.md)。
+
+`release-backup` / `release-restore` 需要显式 `COMPOSE_PROJECT_NAME`（及恢复时的 `BACKUP_DIR`）；默认拒绝共享项目名 `productflow`。详见 [release/README.md](release/README.md) 备份节。不宣称 D3/R6。
 
 ## 主要 API 资源
 

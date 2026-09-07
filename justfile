@@ -277,6 +277,14 @@ release-build-images:
 release-push-images:
     bash scripts/release-push-images.sh
 
-# Assemble dist/release/productflow-<tag>/ and .tar.gz (compose + env sample + VERSION).
+# Assemble dist/release/productflow-<tag>/ and .tar.gz (compose + env sample + VERSION + backup scripts).
 release-pack:
     bash scripts/release-pack.sh
+
+# Consistent-point backup (PG + storage + agent /data + .env; optional Redis). See release/README.md.
+release-backup:
+    bash scripts/release-backup.sh
+
+# Restore a productflow-backup-* directory into a new compose project. See release/README.md.
+release-restore:
+    bash scripts/release-restore.sh

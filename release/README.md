@@ -2,7 +2,7 @@
 
 自营与自托管使用**同一套**发行物：版本化镜像 tag、锁定 Compose、`.env` 样例与 `VERSION` / `images.env`。本目录是源码树内的安装包模板；发布者用 `scripts/release-pack.sh` 打出 `dist/release/productflow-<tag>/`（及 `.tar.gz`）交给空主机。
 
-本路径覆盖总纲「可安装」方向与演练合同 **D1**（干净安装步骤）。**不**包含备份/恢复（B3）、稳定版 N→N+1（B5），也**不**宣称 **R6** 已通过。
+本路径覆盖总纲「可安装」方向与演练合同 **D1**（干净安装步骤），以及 **B3** 备份/恢复脚本与一致点 runbook（对齐 **D2** 清单）。**不**包含稳定版 N→N+1（B5），也**不**宣称 **D3** 全项实跑或 **R6** 已通过；不杜撰 RPO/RTO/SLA。
 
 ## 镜像 tag 约定
 
@@ -92,6 +92,7 @@ docker compose --env-file images.env --env-file .env \
 | `docker-compose.yml` | 仅 `image:`，无 `build:` |
 | `docker-compose.prod-ports.yml` | 生产式端口 overlay |
 | `.env.example` | 启动密钥与端口样例（无秘密） |
+| `scripts/release-backup.sh` 等 | B3 备份/恢复（与源码树同一工具链） |
 | `SHA256SUMS` | 包内文本文件校验 |
 | `images/*.tar` | 可选；`RELEASE_PACK_SAVE_IMAGES=1` 时生成 |
 
@@ -99,8 +100,66 @@ docker compose --env-file images.env --env-file .env \
 
 若构建机访问 `registry.npmjs.org`、`proxy.golang.org` 或目标镜像仓库 TLS/网络失败，`release-build-images` / `release-push-images` 会失败。应如实记录，**不得**把「用旧镜像 retag + 包结构校验」写成「当前 HEAD 全量 `docker compose build` / registry push 已通」。空主机 D1 实跑可与本发行物同隔离窗口预约，或另开证据单；未完成实跑前不关闭 R6。
 
+## 备份与恢复（B3 / D2）
+
+自营与自托管使用**同一套**脚本（源码树 `scripts/`；发行包内为 `scripts/release-backup.sh` 与 `scripts/release-restore.sh`）。备份对象不能只有数据库：PostgreSQL、`/app/storage` 媒体、Agent `/data`、部署 `.env` 为必备；Redis 与 agent traces 可选。
+
+### 一致点
+
+| 模式 | 行为 | 记录 |
+|---|---|---|
+| `CONSISTENCY_MODE=drain`（默认） | `stop` worker / dispatcher / Agent（**不是** `compose down`，更不是 `down -v`）后同窗口备份四类对象，再按需 `start` 回来 | `MANIFEST` 中 `JOBS_DRAINED=true/false` 与 `DRAINED_SERVICES` |
+| `CONSISTENCY_MODE=crash` | 热备；接受崩溃一致 | `JOBS_DRAINED=false`；在途 lease 恢复后按既有 recovery 合同收敛 |
+
+在途作业：持有 lease 的 Graph / ImageSession / Agent / Delivery / LocalEdit 在恢复后按既有 recovery 收敛；不可证明的供应商结果保持 `unknown`，不自动当失败重放。
+
+### 备份
+
+在安装目录（或源码树）执行；**必须**指定 Compose 项目名。默认拒绝共享开发项目名 `productflow`（除非显式 `PRODUCTFLOW_ALLOW_SHARED_PROJECT=1`）。
+
+```bash
+COMPOSE_PROJECT_NAME=pf-site \
+PRODUCTFLOW_RELEASE_DIR=/opt/productflow \
+BACKUP_OUT=/var/backups/productflow \
+bash scripts/release-backup.sh
+
+# 可选：同代 Redis
+INCLUDE_REDIS=1 COMPOSE_PROJECT_NAME=pf-site bash scripts/release-backup.sh
+```
+
+输出目录 `productflow-backup-<UTC>-<project>/` 含：
+
+| 路径 | 内容 |
+|---|---|
+| `MANIFEST` | commit/digest（能解析时）、对象清单、一致点模式、是否排空在途作业 |
+| `CHECKSUMS` | 载荷 sha256 |
+| `postgres/productflow.dump` | `pg_dump -Fc` |
+| `storage/storage.tar.gz` | 媒体与日志树 |
+| `agent-data/agent-data.tar.gz` | Pi `/data` |
+| `env/.env` | 部署密钥副本（权限 `0600`；**勿入库**） |
+| `redis/…` | 仅 `INCLUDE_REDIS=1` |
+
+### 恢复到新目录 / 新实例
+
+目标应是**新** Compose 项目（或新主机上的安装目录）。脚本会写入 `.env`、恢复 PG / storage / agent-data，再 `compose up -d`（migrate 经 `depends_on`）。空 Redis 亦可：以 PG `async_dispatches` 再投递为准。
+
+```bash
+COMPOSE_PROJECT_NAME=pf-restore-20260907 \
+PRODUCTFLOW_RELEASE_DIR=/opt/productflow-restored \
+BACKUP_DIR=/var/backups/productflow/productflow-backup-… \
+bash scripts/release-restore.sh
+```
+
+恢复结束后脚本打印 **D3 业务断言清单**（登录、媒体非 missing、provider 密钥列、任务/outbox、Agent health）。**完整隔离实跑证据归 B4**；跑通本脚本不等于 D3 通过，也不等于 R6。
+
+### D2 清单对齐
+
+1. 写入探针后备份：一商品、一媒体原图、一设置/provider 行、一可识别 Agent/Pi 文件（演练任务填写具体隔离项目）。
+2. 同窗口备份 PG + storage + agent-data + `.env`（可选 Redis）。
+3. 断言：`MANIFEST` 含四类对象与 commit/digest，并记录是否排空在途作业。
+
 ## 明确不做
 
-- B3 备份/恢复脚本与一致点自动化
 - B5 稳定版 N→N+1 升级包
 - 容量 SLA、RPO/RTO、R6 总项通过声明
+- 本 README 不把脚本存在当作 D3 / R6 已通过

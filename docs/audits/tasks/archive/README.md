@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [release-backup-restore.md](release-backup-restore.md) | 完成 | B3 备份/恢复脚本+runbook；隔离数据面冒烟；≠D3全栈/R6 |
 | [delivery-adoption-snapshot.md](delivery-adoption-snapshot.md) | 完成 | 不可变采用版本+成果视图接线；Go/Vitest 通过；≠R2/浏览器整链 |
 | [release-versioned-artifact.md](release-versioned-artifact.md) | 完成 | 不可变 tag + release/ 包 + pack 脚本；隔离探活；≠全量 build/R6 |
 | [compete-facts-layer-gate.md](compete-facts-layer-gate.md) | 完成 | layer/确认门/营销闸 + 资料分栏；IQ-CF-01/CF-B0；≠R3 |
