@@ -32,7 +32,8 @@
 | Graph 明确失败命令先提交终态，节点执行器才补做额度，运行失败入口遗漏预留 | `failClaimedNode/failGraphRunLocked` 在锁内释放原 attempt 预留，删除执行器后处理与重复分类 helper | 两种入口原代码复现额度故障不阻止 failed；修复后故障保留当前运行/节点/attempt，解除后释放幂等；未知分支仍使用 markNodeUnknown | `16c99e42` |
 | Graph 成功结算忽略缺失 hold，付费异常与合法免费合成混在一起 | 复用 subjectPreserveImageDelivery，资产入口对本地合成显式跳过结算；付费 settle 原样返回缺失预留 | 原代码缺预留仍接受付费结算；修复后拒绝，真实本地合成不调用 Provider、持久化产物且余额不变，正常付费结算仍通过 | `1d56674d` |
 | 连续生图 effect 完成只按任务/批次写入，旧 worker 结果没有 attempt 围栏 | `markEffect` 显式接收 attempt，锁任务并核对当前执行，再按 effect attempt 更新 | failed/unknown/applied 三种旧结果均被拒绝且新 effect 保持 pending；原实现三种写入均接受 | `e4591471` |
-| 连续生图 effect 写失败被吞掉或作为业务失败自动重试，队列可能消费未完成持久化 | effectPersistenceError 保留底层错误，Execute 将其返回队列；各结果分支检查写入结果，Provider 错误仅分类一次再统一写账本 | 确认失败/未知/applied 三种 PostgreSQL 约束故障原代码均被消费；修复后 SQLSTATE 23514 透传、任务 running、信封 pending，恢复不重复 Provider | 随本次提交 |
+| 连续生图 effect 写失败被吞掉或作为业务失败自动重试，队列可能消费未完成持久化 | effectPersistenceError 保留底层错误，Execute 将其返回队列；各结果分支检查写入结果，Provider 错误仅分类一次再统一写账本 | 确认失败/未知/applied 三种 PostgreSQL 约束故障原代码均被消费；修复后 SQLSTATE 23514 透传、任务 running、信封 pending，恢复不重复 Provider | `18ad035b` |
+| 连续生图恢复删除已保存结果的 pending effect，仅凭 completed 计数可安全重排队 | 恢复事务用同会话/同生成组完整轮次与资产证明批次完成，保留 effect 并标 applied；证据不足收敛 unknown | 原代码复现恢复后 effect 丢失及无轮次仍重排队；修复后调用记录保留，恢复 applied 写失败回滚任务，缺证据不再重投 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -118,6 +119,10 @@ Graph 成功计费合同切片由本任务主代理负责，范围为 `execute_n
 
 连续生图 effect 持久化切片由本任务主代理负责，范围为 `imagesession/execute.go` 与 [队列/effect 持久化回归](../../go/internal/imagesession/effect_persistence_test.go)。只将 effect 账本写入错误从业务重试分类中分离，保留底层数据库错误供追踪；尝试失效仍使用 errStale。确认失败、未知与图片已保存三种故障均通过真实 queue.Consume；故障解除后已有恢复流程分别保持未知或完成已保存结果，不再次调用 Provider。
 
-仍存追踪缺口：图片已保存但 applied 写失败时，恢复依赖候选 checkpoint 可避免重复 Provider；当前恢复会删除对应 pending effect，没有重建完整 applied 记录。该行为的账本追踪完整性尚未验收，不能以不重复调用或最终 succeeded 代替。
+发现过的追踪缺口：图片已保存但 applied 写失败时，旧恢复删除 pending effect。后续恢复账本切片已改为根据实际轮次/资产恢复 applied 并保留原请求；没有证据的 pending 保留为未知。该修复不代表其他对账路径已全部验收。
 
 effect 持久化切片当前工作区 imagesession 整包通过（31.598 秒）；新增数据库用例实际运行，校验原始约束 SQLSTATE、队列 pending、恢复终态及 Provider 调用次数。`just docs-check` 与主代理完整 diff 自审通过，所有 markEffect 调用者已扫描，不再忽略其返回错误。
+
+连续生图恢复账本切片由本任务主代理负责，范围为 `imagesession/recovery.go`、补强 [effect 持久化回归](../../go/internal/imagesession/effect_persistence_test.go) 和 [缺失轮次证据回归](../../go/internal/imagesession/recovery_effect_test.go)。原代码两个负例均复现。恢复只提升当前 attempt 的 pending effect，要求批次全部索引都有同会话、同组轮次及资产；完整已保存批次保留原 request/attempt，其他未解释的 pending/unknown 阻止重排队。删除原恢复中的 pending effect 删除路径。
+
+恢复账本切片验证：账户任务未完成的 auth 签名曾阻挡编译，未修改其文件；在隔离基线 `18ad035b` 加本切片的 imagesession 整包通过（35.401 秒）。随后当前工作区的 effect 持久化、缺证据与恢复回归通过（4.060 秒）。新增数据库用例实际运行，包含恢复 applied 更新被约束拒绝时任务回滚。主代理完整 diff 自审与 `just docs-check` 通过；临时 checkout 只含本切片文件，验证后清理。

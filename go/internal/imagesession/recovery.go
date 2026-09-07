@@ -170,16 +170,31 @@ func recoverImageTaskState(ctx context.Context, gdb *gorm.DB, taskID string, cut
 			phase = *task.ProgressPhase
 		}
 		safe := phase == "running" || phase == "candidate_saved"
+		now := time.Now().UTC()
+		if task.ResultGenerationGroupID != nil {
+			// A completed counter alone does not prove delivery. Every position in the effect
+			// must have a saved round and asset in this session and generation group.
+			if err := pgxTx.Model(&schema.ImageSessionProviderEffects{}).
+				Where("generation_task_id = ? AND attempt_id = ? AND effect_result = ? AND candidate_start_index + candidate_count - 1 <= ?", task.ID, *task.ActiveAttemptID, "pending", task.CompletedCandidates).
+				Where(`(SELECT COUNT(DISTINCT r.candidate_index)
+                    FROM image_session_rounds r
+                    JOIN image_session_assets a ON a.id = r.generated_asset_id AND a.session_id = r.session_id
+                    WHERE r.session_id = ? AND r.generation_group_id = ?
+                      AND r.candidate_index >= image_session_provider_effects.candidate_start_index
+                      AND r.candidate_index < image_session_provider_effects.candidate_start_index + image_session_provider_effects.candidate_count
+                    ) = image_session_provider_effects.candidate_count`, task.SessionID, *task.ResultGenerationGroupID).
+				Updates(map[string]any{"effect_result": "applied", "reconciliation_state": "applied", "updated_at": now}).Error; err != nil {
+				return err
+			}
+		}
 		nextCandidate := task.CompletedCandidates + 1
-		var covering int64
+		var unresolvedEffects int64
 		if err := pgxTx.Model(&schema.ImageSessionProviderEffects{}).
-			Where("generation_task_id = ? AND effect_result IN ? AND candidate_start_index <= ? AND (candidate_start_index + candidate_count - 1) >= ?",
-				task.ID, []string{"pending", "applied", "unknown"}, nextCandidate, nextCandidate).
-			Count(&covering).Error; err != nil {
+			Where("generation_task_id = ? AND (effect_result IN ? OR (effect_result = ? AND candidate_start_index <= ? AND candidate_start_index + candidate_count - 1 >= ?))", task.ID, []string{"pending", "unknown"}, "applied", nextCandidate, nextCandidate).
+			Count(&unresolvedEffects).Error; err != nil {
 			return err
 		}
-		now := time.Now().UTC()
-		unknown := task.ActiveCandidateIndex != nil || !safe || covering > 0
+		unknown := task.ActiveCandidateIndex != nil || !safe || unresolvedEffects > 0
 		if unknown {
 			if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
 				Where("id = ? AND status = ?", task.ID, "running").
@@ -234,8 +249,6 @@ func recoverImageTaskState(ctx context.Context, gdb *gorm.DB, taskID string, cut
 		if res.RowsAffected != 1 {
 			return nil
 		}
-		_ = pgxTx.Where("generation_task_id = ? AND effect_result = ?", task.ID, "pending").
-			Delete(&schema.ImageSessionProviderEffects{}).Error
 		result.outcome = "requeued"
 		return nil
 	})

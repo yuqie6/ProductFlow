@@ -66,6 +66,20 @@ func TestEffectPersistenceFailureDoesNotConsumeOrRetryProvider(t *testing.T) {
 			if provider.calls != 1 {
 				t.Fatalf("provider calls=%d", provider.calls)
 			}
+			if mode == "applied" {
+				if _, err := ss.pool.Exec(ctx, "UPDATE image_session_generation_tasks SET progress_updated_at=NOW()-interval '1 hour' WHERE id=$1", taskID); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := recoverImageTaskState(ctx, ss.db, taskID, time.Now().Add(-time.Minute)); err == nil {
+					t.Fatal("recovery ignored applied persistence error")
+				}
+				if err := ss.pool.QueryRow(ctx, "SELECT status FROM image_session_generation_tasks WHERE id=$1", taskID).Scan(&taskStatus); err != nil {
+					t.Fatal(err)
+				}
+				if taskStatus != "running" {
+					t.Fatalf("failed recovery committed status=%s", taskStatus)
+				}
+			}
 			if _, err := ss.pool.Exec(ctx, "ALTER TABLE image_session_provider_effects DROP CONSTRAINT "+constraint); err != nil {
 				t.Fatal(err)
 			}
@@ -74,6 +88,15 @@ func TestEffectPersistenceFailureDoesNotConsumeOrRetryProvider(t *testing.T) {
 			}
 			if _, err := recoverImageTaskState(ctx, ss.db, taskID, time.Now().Add(-time.Minute)); err != nil {
 				t.Fatal(err)
+			}
+			if mode == "applied" {
+				var effect schema.ImageSessionProviderEffects
+				if err := ss.db.Where("generation_task_id=? AND candidate_start_index=1", taskID).Take(&effect).Error; err != nil {
+					t.Fatalf("recovery lost provider effect: %v", err)
+				}
+				if effect.EffectResult != "applied" || effect.ReconciliationState != "applied" || effect.RequestJSON == nil {
+					t.Fatalf("recovered effect incomplete: %+v", effect)
+				}
 			}
 			if err := e.Execute(ctx, taskID); err != nil {
 				t.Fatal(err)
