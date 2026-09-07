@@ -83,7 +83,7 @@ export function RecipeLibraryPanel({
       {application ? (
         <section className="rounded-lg border border-state-success/35 bg-state-success-soft p-3" aria-live="polite">
           <div className="flex items-start gap-2">
-            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-state-success text-white"><FileStack size={14} /></span>
+            <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-state-success text-state-success-fg"><FileStack size={14} /></span>
             <div className="min-w-0">
               <div className="text-xs font-semibold text-state-success">{t("workbench.recipe.applied")}</div>
               <div className="mt-1 text-[11px] leading-4 text-text-secondary">

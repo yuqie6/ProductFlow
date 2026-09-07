@@ -192,7 +192,7 @@ describe("AgentWorkbenchShell", () => {
 
     expect(collapsedGridChild).toContain("data-product-workbench-collapsed-tools");
     expect(collapsedGridChild).toContain(`style="width:${INSPECTOR_RAIL_WIDTH}px"`);
-    expect(collapsedGridChild).toContain("border-l border-border-l1 bg-surface-raised");
+    expect(collapsedGridChild).toContain("border-l border-border-l1 bg-surface-panel");
     expect(collapsedGridChild).toContain("lg:relative lg:inset-auto lg:z-auto lg:h-full lg:justify-self-stretch");
     expect(collapsedGridChild).toContain("lg:hidden");
     expect(collapsedGridChild).not.toContain("lg:invisible");

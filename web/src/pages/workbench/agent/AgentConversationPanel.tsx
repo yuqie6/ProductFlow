@@ -626,7 +626,7 @@ function AgentGoalLoopBar({
                 <button
                   type="submit"
                   disabled={!canStart || busy}
-                  className="inline-flex h-8 items-center rounded-md bg-accent px-2.5 text-[11px] font-semibold text-white disabled:opacity-50"
+                  className="inline-flex h-8 items-center rounded-md bg-accent px-2.5 text-[11px] font-semibold text-accent-fg disabled:opacity-50"
                 >
                   {t("agentWorkbench.goal.start")}
                 </button>
@@ -650,7 +650,7 @@ function AgentGoalLoopBar({
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {GOAL_LOOP_COMPLETABLE.has(task.status) ? (
-                  <button type="button" disabled={busy} onClick={() => completeMutation.mutate(task.id)} className="inline-flex h-8 items-center rounded-md bg-accent px-2.5 text-[11px] font-semibold text-white disabled:opacity-50">
+                  <button type="button" disabled={busy} onClick={() => completeMutation.mutate(task.id)} className="inline-flex h-8 items-center rounded-md bg-accent px-2.5 text-[11px] font-semibold text-accent-fg disabled:opacity-50">
                     {t("agentWorkbench.goal.complete")}
                   </button>
                 ) : null}

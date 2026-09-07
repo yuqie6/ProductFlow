@@ -23,7 +23,7 @@ function LoadMoreHistoryButton({
       type="button"
       onClick={onLoadMore}
       disabled={loading}
-      className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:cursor-wait disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950/55 dark:text-slate-300 dark:hover:border-violet-400/60 dark:hover:text-violet-100 ${
+      className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-border-l1 bg-surface-raised text-xs font-semibold text-text-secondary transition-colors hover:border-accent hover:text-accent disabled:cursor-wait disabled:opacity-60 dark:border-border-l1 dark:bg-surface-base/55 dark:text-text-secondary dark:hover:border-accent/60 dark:hover:text-accent ${
         compact ? "min-h-9 px-2.5" : "min-h-10 w-full px-3"
       }`}
     >
@@ -96,7 +96,7 @@ export function ImageChatHistoryPanel({
 
   if (variant === "mobileDrawer") {
     return (
-      <div className="flex min-h-0 flex-1 flex-col bg-white dark:bg-[#0f1726]">
+      <div className="flex min-h-0 flex-1 flex-col bg-surface-raised dark:bg-surface-panel">
         {historyBranches.length ? (
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-2 py-3">
             {hasMoreHistory && onLoadMoreHistory ? (
@@ -119,7 +119,7 @@ export function ImageChatHistoryPanel({
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center px-2 py-6">
-            <div className="flex min-h-24 w-full items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-2 text-center text-xs text-slate-400 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-500">
+            <div className="flex min-h-24 w-full items-center justify-center rounded-2xl border border-dashed border-border-l1 bg-surface-base px-2 text-center text-xs text-text-muted dark:border-border-l1 dark:bg-surface-base/40 dark:text-text-muted">
               {t("chat.resultsAppearHere")}
             </div>
           </div>
@@ -130,7 +130,7 @@ export function ImageChatHistoryPanel({
 
   return (
     <div
-      className="relative hidden shrink-0 flex-col border-t border-slate-200 bg-white/95 px-2.5 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-[0_-18px_40px_rgba(0,0,0,0.24)] lg:flex lg:h-[var(--image-chat-history-panel-height)] lg:px-3 lg:py-2.5"
+      className="relative hidden shrink-0 flex-col border-t border-border-l1 bg-surface-raised/95 px-2.5 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] dark:border-border-l1/80 dark:bg-surface-panel dark:shadow-[0_-18px_40px_rgba(0,0,0,0.24)] lg:flex lg:h-[var(--image-chat-history-panel-height)] lg:px-3 lg:py-2.5"
       style={style}
     >
       {onResizeStart ? (
@@ -139,21 +139,21 @@ export function ImageChatHistoryPanel({
           aria-label={t("chat.resizeHistory")}
           title={t("chat.resizeHistoryTitle")}
           onPointerDown={onResizeStart}
-          className="absolute inset-x-0 -top-1 z-20 hidden h-3 cursor-row-resize items-center justify-center transition-colors hover:bg-indigo-50/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:hover:bg-violet-500/15 lg:flex"
+          className="absolute inset-x-0 -top-1 z-20 hidden h-3 cursor-row-resize items-center justify-center transition-colors hover:bg-accent-soft/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:hover:bg-accent/15 lg:flex"
         >
-          <span className="h-1 w-12 rounded-full bg-slate-300 dark:bg-slate-600" />
+          <span className="h-1 w-12 rounded-full bg-surface-subtle dark:bg-surface-subtle" />
         </button>
       ) : null}
       <div className="mb-1 flex items-center justify-between gap-3 lg:mb-2">
         <div>
-          <div className="text-sm font-semibold text-slate-950 dark:text-white">{t("chat.history")}</div>
+          <div className="text-sm font-semibold text-text-primary dark:text-white">{t("chat.history")}</div>
         </div>
         <div className="flex items-center gap-2">
           {hasMoreHistory && onLoadMoreHistory ? (
             <LoadMoreHistoryButton compact loading={isLoadingMoreHistory} onLoadMore={onLoadMoreHistory} t={t} />
           ) : null}
           {branchBaseSelected ? (
-            <div className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700 dark:border-violet-400/40 dark:bg-violet-500/15 dark:text-violet-100">
+            <div className="rounded-full border border-accent bg-accent-soft px-2 py-1 text-xs font-semibold text-accent dark:border-accent/40 dark:bg-accent/15 dark:text-accent">
               {t("chat.clickHistoryBase")}
             </div>
           ) : null}
@@ -180,7 +180,7 @@ export function ImageChatHistoryPanel({
           ))}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-500">
+        <div className="flex min-h-0 flex-1 items-center justify-center rounded-2xl border border-dashed border-border-l1 bg-surface-base text-sm text-text-muted dark:border-border-l1 dark:bg-surface-base/40 dark:text-text-muted">
           {t("chat.resultsAppearHere")}
         </div>
       )}

@@ -500,7 +500,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
       {data.missingRunLabels.length ? (
         <div
           data-graph-missing-run-input
-          className="absolute -right-1 -top-1 z-30 max-w-[11rem] rounded-full bg-state-error px-1.5 py-0.5 text-[9px] font-semibold leading-4 text-white shadow-elev-1"
+          className="absolute -right-1 -top-1 z-30 max-w-[11rem] rounded-full bg-state-error px-1.5 py-0.5 text-[9px] font-semibold leading-4 text-state-error-fg shadow-elev-1"
         >
           {data.missingRunLabels.join(" · ")}
         </div>

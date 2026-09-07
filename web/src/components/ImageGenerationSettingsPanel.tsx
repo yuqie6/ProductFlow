@@ -41,22 +41,22 @@ export function ImageGenerationSettingsPanel({
 }: ImageGenerationSettingsPanelProps) {
   const { t } = useI18n();
   const showCount = generationCount !== undefined && generationCountOptions?.length && onGenerationCountChange;
-  const containerClassName = surface === "card" ? "rounded-2xl border border-slate-200 bg-white p-4" : "space-y-3";
+  const containerClassName = surface === "card" ? "rounded-2xl border border-border-l1 bg-surface-raised p-4" : "space-y-3";
 
   return (
     <div className={containerClassName}>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="text-sm font-semibold text-slate-950">{t("imageSettings.title")}</div>
-        <span className="text-[11px] font-medium text-slate-400">{formatImageSizeValue(size)}</span>
+        <div className="text-sm font-semibold text-text-primary">{t("imageSettings.title")}</div>
+        <span className="text-[11px] font-medium text-text-muted">{formatImageSizeValue(size)}</span>
       </div>
       <ImageSizePicker value={size} presets={sizeOptions} maxDimension={maxDimension} onChange={onSizeChange} />
       {showCount ? (
         <label className="mt-3 block" htmlFor="image-generation-count">
-          <span className="mb-1.5 block text-xs font-semibold text-slate-700">
+          <span className="mb-1.5 block text-xs font-semibold text-text-secondary">
             {generationCountLabel ?? t("imageSettings.count")}
           </span>
           {generationCountDescription ? (
-            <span className="mb-1.5 block text-[11px] leading-5 text-slate-500">{generationCountDescription}</span>
+            <span className="mb-1.5 block text-[11px] leading-5 text-text-muted">{generationCountDescription}</span>
           ) : null}
           <SelectField
             id="image-generation-count"

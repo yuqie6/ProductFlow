@@ -184,7 +184,7 @@ export function ProductWorkbenchInspector({
             aria-label={ariaLabel}
             style={{ width: INSPECTOR_RAIL_WIDTH }}
             className={`absolute right-6 z-30 hidden flex-col items-center gap-2 p-2 pb-3 lg:flex ${desktopGridChild
-                ? "border-l border-border-l1 bg-surface-raised lg:relative lg:inset-auto lg:z-auto lg:h-full lg:justify-self-stretch"
+                ? "border-l border-border-l1 bg-surface-panel lg:relative lg:inset-auto lg:z-auto lg:h-full lg:justify-self-stretch"
                 : desktopCollapsedPositionClassName
               } ${desktopGridChild ? "" : "glass-inspector rounded-surface shadow-elev-3"}`}
           >
@@ -209,7 +209,7 @@ export function ProductWorkbenchInspector({
         data-inspector-layout={workflowAvailable ? "drawer" : "page"}
         aria-hidden={inert || undefined}
         inert={inert}
-        className={`absolute z-30 min-h-0 min-w-0 flex-col overflow-hidden bg-surface-raised transition-[opacity,visibility] duration-300 motion-reduce:transition-none lg:flex-row ${visibilityClassName} ${workflowAvailable
+        className={`absolute z-30 min-h-0 min-w-0 flex-col overflow-hidden bg-surface-panel transition-[opacity,visibility] duration-300 motion-reduce:transition-none lg:flex-row ${visibilityClassName} ${workflowAvailable
             ? `inset-x-0 bottom-0 top-auto h-[min(64vh,30rem)] max-h-[min(64vh,30rem)] rounded-t-surface border-t border-border-l1 shadow-elev-3 lg:inset-auto lg:h-auto lg:max-h-none lg:w-[var(--product-workbench-inspector-width)] ${desktopGridChild
               ? "lg:relative lg:z-auto lg:h-full lg:justify-self-stretch lg:rounded-none lg:border-l lg:border-t-0 lg:shadow-none"
               : desktopPositionClassName
@@ -231,7 +231,7 @@ export function ProductWorkbenchInspector({
 
             <nav
               aria-label={ariaLabel}
-              className="flex h-auto w-full shrink-0 gap-1 overflow-x-auto border-b border-border-l1 bg-surface-raised px-2 py-2 lg:h-full lg:w-[72px] lg:flex-col lg:gap-2 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-2 lg:py-4"
+              className="flex h-auto w-full shrink-0 gap-1 overflow-x-auto border-b border-border-l1 bg-surface-panel px-2 py-2 lg:h-full lg:w-[72px] lg:flex-col lg:gap-2 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-2 lg:py-4"
             >
               {railBefore}
               {renderRailTools(false)}
@@ -267,13 +267,13 @@ export function ProductWorkbenchInspector({
                 data-product-workbench-tool-panel={tool.id}
                 aria-hidden={!active || undefined}
                 inert={!active}
-                className={`absolute inset-0 min-h-0 min-w-0 overflow-hidden bg-surface-raised transition-[opacity,visibility] duration-200 ${active ? "visible opacity-100" : "invisible pointer-events-none opacity-0"
+                className={`absolute inset-0 min-h-0 min-w-0 overflow-hidden bg-surface-panel transition-[opacity,visibility] duration-200 ${active ? "visible opacity-100" : "invisible pointer-events-none opacity-0"
                   }`}
               >
                 {mounted ? tool.chrome === "embedded" ? tool.content : (
                   <div className="flex h-full min-h-0 flex-col bg-transparent">
                     <header className="flex h-12 shrink-0 items-center border-b border-border-l1 px-4">
-                      <span className="mr-2 text-accent">{tool.icon}</span>
+                      <span className="mr-2 text-text-secondary">{tool.icon}</span>
                       <h2 className="truncate text-xs font-semibold text-text-secondary">
                         {tool.label}
                       </h2>

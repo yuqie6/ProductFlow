@@ -142,16 +142,8 @@ function familyHintKey(family: ImageTypeFamily): "agentCreate.family.photography
 }
 
 const stepClass =
-  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-[11px] font-bold text-white shadow-[0_3px_8px_rgb(99_102_241/0.3)]";
+  "flex h-6 w-6 shrink-0 items-center justify-center rounded-control bg-surface-subtle text-[11px] font-semibold text-text-secondary";
 
-function cardShellClass(isActive: boolean): string {
-  const base =
-    "relative rounded-2xl border bg-surface-raised p-5 shadow-sm transition-[border-color,box-shadow] duration-200 sm:p-6";
-  if (isActive) {
-    return `${base} border-accent/40 shadow-[0_12px_44px_-16px_rgb(99_102_241/0.35)] ring-1 ring-accent/15`;
-  }
-  return `${base} border-border-l1 hover:border-border-l3`;
-}
 
 function formatFileSize(bytes: number, locale: string): string {
   const value = bytes >= 1024 * 1024 ? bytes / (1024 * 1024) : bytes / 1024;
@@ -297,8 +289,8 @@ export function AgentProductCreateForm({
   const stageCard = (stage: 1 | 2 | 3 | 4 | 5, meta: string, isActive: boolean, body: ReactNode) => {
     const Icon = STAGE_ICONS[stage - 1];
     return (
-      <section aria-labelledby={`agent-stage-${stage}-title`} className={cardShellClass(isActive)}>
-        <div className="mb-4 flex items-start gap-3 border-b border-border-l2 pb-4">
+      <section aria-labelledby={`agent-stage-${stage}-title`} className="grid gap-5 border-t border-border-l1 py-6 md:grid-cols-[160px_minmax(0,1fr)] md:gap-8">
+        <div className="flex items-start gap-3">
           <span className={stepClass} aria-hidden="true">
             {stage}
           </span>
@@ -310,10 +302,10 @@ export function AgentProductCreateForm({
               <Icon size={16} className="text-accent" aria-hidden="true" />
               {stageTitle(stage)}
             </h2>
-            <p className="mt-0.5 text-xs leading-4 text-text-muted">{meta}</p>
+            {stage === 2 || stage === 4 ? <p className="mt-1 text-xs leading-5 text-text-muted">{meta}</p> : null}
           </div>
           {isActive ? (
-            <span className="mt-0.5 hidden shrink-0 items-center gap-1 rounded-full border border-accent/30 bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent-strong sm:flex">
+            <span className="mt-0.5 hidden shrink-0 items-center gap-1 rounded-full px-1 py-1 text-[11px] font-semibold text-accent-strong sm:flex">
               <Check size={12} aria-hidden="true" />
               {t("agentCreate.stageReady")}
             </span>
@@ -503,7 +495,7 @@ export function AgentProductCreateForm({
                     aria-label={t("agentCreate.remove", { name: file.name })}
                     disabled={isSubmitting || editingLocked}
                     onClick={() => onRemoveReferenceFile(index)}
-                    className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-surface-inverse/70 text-surface-inverse-fg backdrop-blur-sm transition-opacity hover:bg-state-error hover:text-white focus:opacity-100 group-hover:opacity-100 disabled:opacity-40 sm:opacity-0"
+                    className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-surface-inverse/70 text-surface-inverse-fg backdrop-blur-sm transition-opacity hover:bg-state-error hover:text-state-error-fg focus:opacity-100 group-hover:opacity-100 disabled:opacity-40 sm:opacity-0"
                   >
                     <X size={13} />
                   </button>
@@ -614,8 +606,8 @@ export function AgentProductCreateForm({
                           <label
                             key={option.key}
                             data-image-type={option.key}
-                            className={`group flex min-h-32 cursor-pointer flex-col rounded-xl border p-4 transition-[border-color,background-color,box-shadow] duration-200 ${selected
-                              ? "border-accent/60 bg-accent-soft/60 shadow-[0_8px_24px_-14px_rgb(99_102_241/0.45)] dark:bg-accent/10"
+                            className={`group flex min-h-28 cursor-pointer flex-col rounded-control border p-3 transition-[border-color,background-color,box-shadow] duration-200 ${selected
+                              ? "border-accent bg-surface-raised ring-1 ring-accent/30"
                               : "border-border-l1 bg-surface-base/60 hover:border-border-l3 hover:bg-surface-raised"
                               }`}
                           >
@@ -629,11 +621,11 @@ export function AgentProductCreateForm({
                               />
                               <span
                                 aria-hidden="true"
-                                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-400/80 bg-surface-raised transition-colors group-hover:border-accent/60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:hidden dark:border-slate-500 dark:peer-focus-visible:ring-offset-surface-raised"
+                                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border-l3/80 bg-surface-raised transition-colors group-hover:border-accent/60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:hidden dark:border-border-l3 dark:peer-focus-visible:ring-offset-surface-raised"
                               />
                               <span
                                 aria-hidden="true"
-                                className="mt-0.5 hidden h-5 w-5 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-white shadow-[0_2px_6px_rgb(99_102_241/0.4)] transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:flex dark:peer-focus-visible:ring-offset-surface-raised"
+                                className="mt-0.5 hidden h-5 w-5 shrink-0 items-center justify-center rounded-md bg-accent text-accent-fg shadow-elev-1 transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:flex dark:peer-focus-visible:ring-offset-surface-raised"
                               >
                                 <Check size={12} strokeWidth={3} aria-hidden="true" />
                               </span>
@@ -751,7 +743,7 @@ export function AgentProductCreateForm({
         </div>
       ) : null}
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border-l1 bg-surface-raised shadow-[0_-10px_30px_-12px_rgb(2_6_23/0.25)] dark:border-slate-700 dark:bg-[#0b1424] dark:shadow-[0_-14px_36px_rgb(0_0_0/0.45)]">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border-l1 bg-surface-raised shadow-[0_-10px_30px_-12px_rgb(2_6_23/0.25)] dark:border-border-l1 dark:bg-surface-panel dark:shadow-[0_-14px_36px_rgb(0_0_0/0.45)]">
         <div className="mx-auto flex w-full max-w-[920px] flex-col-reverse gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-text-secondary">
             <span data-create-outcome={createOutcome} className="w-full text-text-primary">
@@ -806,7 +798,7 @@ export function AgentProductCreateForm({
                 data-create-direct
                 data-create-direct-ready={canvasReady ? "true" : "false"}
                 onClick={onDirectCreate}
-                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-indigo-200 px-6 text-sm font-semibold text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-accent px-6 text-sm font-semibold text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {isDirectCreating ? <Loader2 size={16} className="animate-spin" /> : null}
                 {t("agentCreate.submitDirect")}

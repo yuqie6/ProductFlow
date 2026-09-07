@@ -6,11 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.e2e.json && vite build",
-    "lint": "eslint .",
+    "lint": "eslint . && pnpm check:design",
     "test": "vitest",
     "test:run": "vitest run",
     "test:e2e:live-graph": "playwright test --config playwright.config.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:design": "node scripts/check-design-tokens.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.23",

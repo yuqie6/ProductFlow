@@ -132,31 +132,31 @@ export interface AgentBindingDraft {
 }
 
 const INPUT_CLASS =
-  "h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-4 text-sm text-slate-950 " +
-  "placeholder:text-slate-400 shadow-sm shadow-slate-200/35 focus:border-indigo-500 focus:bg-white " +
-  "focus:outline-none focus:ring-1 focus:ring-indigo-500 " +
-  "dark:border-slate-700 dark:bg-[#111b2d] dark:text-slate-100 dark:shadow-black/20 " +
-  "dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:bg-[#111b2d]";
+  "h-11 w-full rounded-lg border border-border-l1 bg-surface-base px-4 text-sm text-text-primary " +
+  "placeholder:text-text-muted shadow-sm  focus:border-accent focus:bg-surface-raised " +
+  "focus:outline-none focus:ring-1 focus:ring-accent " +
+  "dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary dark:shadow-black/20 " +
+  "dark:placeholder:text-text-muted dark:focus:border-accent dark:focus:bg-surface-panel";
 
 const TEXTAREA_CLASS =
-  "w-full rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-950 " +
-  "placeholder:text-slate-400 shadow-sm shadow-slate-200/35 focus:border-indigo-500 focus:bg-white " +
-  "focus:outline-none focus:ring-1 focus:ring-indigo-500 dark:border-slate-700 dark:bg-[#111b2d] " +
-  "dark:text-slate-100 dark:shadow-black/20 dark:placeholder:text-slate-500 dark:focus:border-violet-400";
+  "w-full rounded-lg border border-border-l1 bg-surface-base px-4 py-3 text-sm text-text-primary " +
+  "placeholder:text-text-muted shadow-sm  focus:border-accent focus:bg-surface-raised " +
+  "focus:outline-none focus:ring-1 focus:ring-accent dark:border-border-l1 dark:bg-surface-panel " +
+  "dark:text-text-primary dark:shadow-black/20 dark:placeholder:text-text-muted dark:focus:border-accent";
 
 const PANEL_CLASS =
-  "rounded-xl border border-slate-200 bg-white p-6 shadow-sm shadow-slate-200/60 " +
-  "dark:border-slate-800 dark:bg-[#0f1726] dark:shadow-black/25";
+  "rounded-xl border border-border-l1 bg-surface-raised p-6 shadow-sm  " +
+  "dark:border-border-l2 dark:bg-surface-panel dark:shadow-black/25";
 
 const SETTINGS_MAIN_ACTION_CLASS =
-  "inline-flex h-11 items-center justify-center rounded-lg bg-indigo-600 px-5 text-sm font-semibold text-white " +
-  "shadow-sm shadow-indigo-500/25 hover:bg-indigo-500 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400";
+  "inline-flex h-11 items-center justify-center rounded-lg bg-accent px-5 text-sm font-semibold text-accent-fg " +
+  "shadow-sm  hover:bg-accent disabled:opacity-50 dark:bg-accent dark:hover:bg-accent";
 
 const PROVIDER_DRAWER_INPUT_CLASS =
-  "h-[43px] w-full rounded-xl border border-slate-300 bg-white px-4 text-sm font-medium text-slate-950 " +
-  "placeholder:text-slate-400 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 " +
-  "dark:border-slate-700 dark:bg-[#192234] dark:text-slate-100 dark:placeholder:text-slate-500 " +
-  "dark:focus:border-violet-500 dark:focus:ring-violet-500/35";
+  "h-[43px] w-full rounded-xl border border-border-l3 bg-surface-raised px-4 text-sm font-medium text-text-primary " +
+  "placeholder:text-text-muted outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20 " +
+  "dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary dark:placeholder:text-text-muted " +
+  "dark:focus:border-accent dark:focus:ring-accent/35";
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
   {
@@ -345,9 +345,9 @@ function sourceLabel(item: ConfigItem, t: ReturnType<typeof useI18n>["t"]): stri
 
 function sourceClassName(item: ConfigItem): string {
   if (item.source === "database") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/35 dark:bg-emerald-500/12";
+    return "border-state-success bg-state-success-soft text-state-success dark:border-state-success/35 dark:bg-state-success/12";
   }
-  return "border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-slate-700 dark:bg-[#0b1220]";
+  return "border-border-l1 bg-surface-base text-text-muted dark:border-border-l1 dark:bg-surface-panel";
 }
 
 function textValue(record: Record<string, unknown> | undefined, key: string): string {
@@ -664,17 +664,17 @@ function SettingsMigrationPanel({
     <section className={`${PANEL_CLASS} mb-8`}>
       <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="max-w-2xl">
-          <div className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 dark:border-amber-400/35 dark:bg-amber-500/12 dark:text-amber-200">
+          <div className="inline-flex items-center rounded-full border border-state-warning bg-state-warning-soft px-3 py-1 text-xs font-semibold text-state-warning dark:border-state-warning/35 dark:bg-state-warning/12 dark:text-state-warning">
             <KeyRound size={13} className="mr-1.5" />
             {t("settings.migration.sensitiveLabel")}
           </div>
-          <h2 className="mt-3 text-lg font-semibold text-slate-950 dark:text-white">
+          <h2 className="mt-3 text-lg font-semibold text-text-primary dark:text-white">
             {t("settings.migration.title")}
           </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
+          <p className="mt-2 text-sm leading-6 text-text-muted dark:text-text-muted">
             {t("settings.migration.description")}
           </p>
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-100">
+          <p className="mt-3 rounded-lg border border-state-warning bg-state-warning-soft px-3 py-2 text-xs leading-5 text-state-warning dark:border-state-warning/35 dark:bg-state-warning/10 dark:text-state-warning">
             {t("settings.migration.sensitiveWarning")}
           </p>
         </div>
@@ -692,7 +692,7 @@ function SettingsMigrationPanel({
             type="button"
             onClick={onChooseImportFile}
             disabled={importPreviewBusy || importCommitBusy}
-            className="inline-flex h-11 items-center justify-center rounded-lg border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-[#111b2d] dark:text-slate-100 dark:hover:bg-slate-800"
+            className="inline-flex h-11 items-center justify-center rounded-lg border border-border-l1 bg-surface-raised px-5 text-sm font-semibold text-text-secondary shadow-sm hover:bg-surface-base disabled:opacity-50 dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary dark:hover:bg-surface-panel"
           >
             {importPreviewBusy ? (
               <Loader2 size={14} className="mr-2 animate-spin" />
@@ -712,14 +712,14 @@ function SettingsMigrationPanel({
       </div>
 
       {importPreview && counts ? (
-        <div className="mt-5 rounded-xl border border-indigo-200 bg-indigo-50/70 p-4 dark:border-violet-400/35 dark:bg-violet-500/10">
+        <div className="mt-5 border-t border-border-l1 pt-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <div className="flex items-center text-sm font-semibold text-indigo-800 dark:text-violet-100">
+              <div className="flex items-center text-sm font-semibold text-accent dark:text-accent">
                 <FileJson size={15} className="mr-2" />
                 {t("settings.migration.previewTitle")}
               </div>
-              <p className="mt-1 text-xs text-indigo-700/80 dark:text-violet-100/75">
+              <p className="mt-1 text-xs text-accent/80 dark:text-accent/75">
                 {t("settings.migration.previewFile", { file: importFileName })}
               </p>
             </div>
@@ -728,7 +728,7 @@ function SettingsMigrationPanel({
                 type="button"
                 onClick={onCancelImport}
                 disabled={importCommitBusy}
-                className="h-9 rounded-lg px-3 text-sm font-medium text-slate-600 hover:bg-white/70 disabled:opacity-50 dark:text-slate-200 dark:hover:bg-white/10"
+                className="h-9 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-surface-raised/70 disabled:opacity-50 dark:text-text-primary dark:hover:bg-surface-raised/10"
               >
                 {t("common.cancel")}
               </button>
@@ -744,16 +744,16 @@ function SettingsMigrationPanel({
             </div>
           </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-lg bg-white px-3 py-2 text-xs text-slate-600 shadow-sm dark:bg-[#101827] dark:text-slate-300">
+            <div className="py-2 text-xs text-text-secondary">
               {t("settings.migration.runtimeCount", { count: counts.runtimeConfigCount })}
             </div>
-            <div className="rounded-lg bg-white px-3 py-2 text-xs text-slate-600 shadow-sm dark:bg-[#101827] dark:text-slate-300">
+            <div className="py-2 text-xs text-text-secondary">
               {t("settings.migration.profileCount", { count: counts.providerProfileCount })}
             </div>
-            <div className="rounded-lg bg-white px-3 py-2 text-xs text-slate-600 shadow-sm dark:bg-[#101827] dark:text-slate-300">
+            <div className="py-2 text-xs text-text-secondary">
               {t("settings.migration.bindingCount", { count: counts.providerBindingCount })}
             </div>
-            <div className="rounded-lg bg-white px-3 py-2 text-xs text-slate-600 shadow-sm dark:bg-[#101827] dark:text-slate-300">
+            <div className="py-2 text-xs text-text-secondary">
               {t("settings.migration.keyCount", { count: counts.providerProfilesWithApiKeyCount })}
             </div>
           </div>
@@ -772,7 +772,7 @@ interface SettingsFormFieldProps {
 function SettingsFormField({ label, children, className = "" }: SettingsFormFieldProps) {
   return (
     <label className={`block space-y-2 ${className}`}>
-      <span className="text-xs font-medium text-slate-600 dark:text-slate-300">{label}</span>
+      <span className="text-xs font-medium text-text-secondary dark:text-text-secondary">{label}</span>
       {children}
     </label>
   );
@@ -822,13 +822,13 @@ function ConfigField({
         {item.options.map((option) => (
           <label
             key={`${item.key}-${option.value}`}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300"
+            className="inline-flex items-center gap-2 rounded-lg border border-border-l1 bg-surface-raised px-2.5 py-2 text-xs font-medium text-text-secondary dark:border-border-l1 dark:bg-surface-panel dark:text-text-secondary"
           >
             <input
               type="checkbox"
               checked={selectedMultiValues.includes(option.value)}
               onChange={() => toggleMultiValue(option.value)}
-              className="h-3.5 w-3.5 accent-indigo-600"
+              className="h-3.5 w-3.5 accent-accent"
             />
             <span>{option.label}</span>
           </label>
@@ -845,7 +845,7 @@ function ConfigField({
         className={`${TEXTAREA_CLASS} resize-y leading-6`}
       />
     ) : item.input_type === "boolean" ? (
-      <label className="inline-flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300">
+      <label className="inline-flex cursor-pointer items-center gap-3 rounded-lg border border-border-l1 bg-surface-raised px-3 py-2 text-sm text-text-secondary dark:border-border-l1 dark:bg-surface-panel dark:text-text-secondary">
         <input
           id={item.key}
           type="checkbox"
@@ -871,9 +871,9 @@ function ConfigField({
 
   if (layout === "card") {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm shadow-slate-200/50 dark:border-slate-800 dark:bg-[#0f1726] dark:shadow-black/20">
+      <div className="rounded-xl border border-border-l1 bg-surface-raised p-3 shadow-sm dark:border-border-l2 dark:bg-surface-panel dark:shadow-black/20">
         <div className="flex items-start justify-between gap-3">
-          <label htmlFor={item.key} className="min-w-0 text-sm font-semibold text-zinc-950 dark:text-white">
+          <label htmlFor={item.key} className="min-w-0 text-sm font-semibold text-text-primary dark:text-white">
             {label}
           </label>
           <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium ${sourceClassName(item)}`}>
@@ -883,9 +883,9 @@ function ConfigField({
         <div className="mt-3">{control}</div>
         <div className="mt-2 flex min-h-5 items-start justify-between gap-3">
           <div>
-            <div className="font-mono text-[11px] text-zinc-400 dark:text-slate-500">{item.key}</div>
+            <div className="font-mono text-[11px] text-text-muted dark:text-text-muted">{item.key}</div>
             {item.secret && secretTouched ? (
-              <div className="mt-1 text-xs text-amber-600 dark:text-amber-300">{t("settings.writeNewSecret")}</div>
+              <div className="mt-1 text-xs text-state-warning dark:text-state-warning">{t("settings.writeNewSecret")}</div>
             ) : null}
           </div>
           {item.source === "database" ? (
@@ -893,7 +893,7 @@ function ConfigField({
               type="button"
               onClick={onReset}
               disabled={isResetting}
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-zinc-400 hover:bg-slate-100 hover:text-zinc-900 disabled:opacity-50 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-white"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-subtle hover:text-text-primary disabled:opacity-50 dark:text-text-muted dark:hover:bg-surface-panel dark:hover:text-white"
               aria-label={t("settings.restoreDefault")}
               title={t("settings.restoreDefault")}
             >
@@ -906,25 +906,25 @@ function ConfigField({
   }
 
   return (
-    <div className="grid gap-3 border-t border-slate-100 py-5 first:border-t-0 dark:border-slate-800 md:grid-cols-[220px_minmax(0,1fr)]">
+    <div className="grid gap-3 border-t border-border-l2 py-5 first:border-t-0 dark:border-border-l2 md:grid-cols-[220px_minmax(0,1fr)]">
       <div>
         <div className="flex flex-wrap items-center gap-2">
-          <label htmlFor={item.key} className="text-sm font-medium text-zinc-900 dark:text-white">
+          <label htmlFor={item.key} className="text-sm font-medium text-text-primary dark:text-white">
             {label}
           </label>
           <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${sourceClassName(item)}`}>
             {sourceLabel(item, t)}
           </span>
         </div>
-        {!smtpLabelKeys[item.key] ? <div className="mt-1 font-mono text-[11px] text-zinc-400 dark:text-slate-500">{item.key}</div> : null}
+        {!smtpLabelKeys[item.key] ? <div className="mt-1 font-mono text-[11px] text-text-muted dark:text-text-muted">{item.key}</div> : null}
       </div>
       <div className="space-y-2">
         {control}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="min-h-4 text-xs leading-5 text-zinc-500 dark:text-slate-400">
+          <p className="min-h-4 text-xs leading-5 text-text-muted dark:text-text-muted">
             {smtpLabelKeys[item.key] ? "" : item.description}
             {item.secret && secretTouched ? (
-              <span className="ml-2 text-amber-600 dark:text-amber-300">{t("settings.writeNewSecret")}</span>
+              <span className="ml-2 text-state-warning dark:text-state-warning">{t("settings.writeNewSecret")}</span>
             ) : null}
           </p>
           {item.source === "database" ? (
@@ -932,7 +932,7 @@ function ConfigField({
               type="button"
               onClick={onReset}
               disabled={isResetting}
-              className="inline-flex items-center text-xs font-medium text-zinc-500 hover:text-zinc-900 disabled:opacity-50 dark:text-slate-400 dark:hover:text-white"
+              className="inline-flex items-center text-xs font-medium text-text-muted hover:text-text-primary disabled:opacity-50 dark:text-text-muted dark:hover:text-white"
             >
               {isResetting ? <Loader2 size={13} className="mr-1 animate-spin" /> : <RotateCcw size={13} className="mr-1" />}
               {t("settings.restoreDefault")}
@@ -990,10 +990,10 @@ function ProvidersSection({
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-base font-semibold text-slate-950 dark:text-white">
+          <h2 className="text-base font-semibold text-text-primary dark:text-white">
             {t("settings.provider.listTitle")}
           </h2>
-          <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
+          <p className="mt-1 text-sm leading-6 text-text-muted dark:text-text-muted">
             {t("settings.provider.listDescription")}
           </p>
         </div>
@@ -1022,12 +1022,12 @@ function ProvidersSection({
           })}
         </div>
       ) : (
-        <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white px-6 text-center shadow-sm shadow-slate-200/60 dark:border-slate-700 dark:bg-[#0f1726] dark:shadow-black/25">
-          <Box size={42} className="text-slate-500" />
-          <div className="mt-5 text-base font-semibold text-slate-950 dark:text-white">
+        <div className="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed border-border-l3 bg-surface-raised px-6 text-center shadow-sm dark:border-border-l1 dark:bg-surface-panel dark:shadow-black/25">
+          <Box size={42} className="text-text-muted" />
+          <div className="mt-5 text-base font-semibold text-text-primary dark:text-white">
             {t("settings.provider.emptyTitle")}
           </div>
-          <p className="mt-3 max-w-sm text-sm leading-6 text-slate-500 dark:text-slate-400">
+          <p className="mt-3 max-w-sm text-sm leading-6 text-text-muted dark:text-text-muted">
             {t("settings.provider.emptyDescription")}
           </p>
           <button type="button" onClick={onOpenCreate} className={`${SETTINGS_MAIN_ACTION_CLASS} mt-6`}>
@@ -1086,12 +1086,12 @@ function ProviderEnabledSwitch({
       onKeyDown={(event) => event.stopPropagation()}
       className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition ${
         checked
-          ? "border-indigo-500 bg-indigo-600 dark:border-violet-400 dark:bg-violet-500"
-          : "border-slate-300 bg-slate-200 dark:border-slate-700 dark:bg-slate-800"
+          ? "border-accent bg-accent dark:border-accent dark:bg-accent"
+          : "border-border-l3 bg-surface-subtle dark:border-border-l1 dark:bg-surface-panel"
       } ${disabled ? "cursor-not-allowed opacity-55" : "hover:brightness-105"}`}
     >
       <span
-        className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-slate-500 shadow-sm transition ${
+        className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-surface-raised text-text-muted shadow-sm transition ${
           checked ? "translate-x-5" : "translate-x-0.5"
         }`}
       >
@@ -1127,27 +1127,27 @@ function ProviderProfileCard({
   const switchHelp = disableBlocked ? t("settings.provider.disableBlocked") : undefined;
 
   return (
-    <div className="group relative flex min-h-[230px] flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/60 transition hover:border-indigo-200 hover:shadow-md dark:border-slate-800 dark:bg-[#0f1726] dark:shadow-black/25 dark:hover:border-violet-400/45">
+    <div className="group relative flex min-h-[230px] flex-col justify-between rounded-xl border border-border-l1 bg-surface-raised p-5 shadow-sm transition hover:border-accent hover:shadow-md dark:border-border-l2 dark:bg-surface-panel dark:shadow-black/25 dark:hover:border-accent/45">
       <button
         type="button"
         onClick={onEdit}
-        className="-m-2 block w-full space-y-4 rounded-lg p-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:focus-visible:ring-violet-400"
+        className="-m-2 block w-full space-y-4 rounded-lg p-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent dark:focus-visible:ring-accent"
       >
         <span className="flex items-start justify-between gap-4">
           <span className="min-w-0 pr-20">
             <span className="flex flex-wrap items-center gap-2">
-              <span className="truncate text-base font-semibold text-slate-950 dark:text-white">{profile.name}</span>
+              <span className="truncate text-base font-semibold text-text-primary dark:text-white">{profile.name}</span>
               <span
                 className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
                   profile.enabled
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/35 dark:bg-emerald-500/12 dark:text-emerald-200"
-                    : "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                    ? "border-state-success bg-state-success-soft text-state-success dark:border-state-success/35 dark:bg-state-success/12 dark:text-state-success"
+                    : "border-border-l1 bg-surface-base text-text-muted dark:border-border-l1 dark:bg-surface-base dark:text-text-secondary"
                 }`}
               >
                 {profile.enabled ? t("settings.provider.enabled") : t("settings.provider.disabled")}
               </span>
             </span>
-            <span className="mt-2 flex items-center gap-1.5 truncate font-mono text-xs text-slate-500 dark:text-slate-400">
+            <span className="mt-2 flex items-center gap-1.5 truncate font-mono text-xs text-text-muted dark:text-text-muted">
               <ServerCog size={13} className="shrink-0" />
               <span className="truncate">{profile.base_url || t(providerDefaultEndpointLabelKey(profile))}</span>
             </span>
@@ -1155,13 +1155,13 @@ function ProviderProfileCard({
         </span>
 
         <span className="flex flex-wrap gap-1.5">
-          <span className="rounded-md bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-700 dark:bg-violet-500/12 dark:text-violet-100">
+          <span className="rounded-md bg-accent-soft px-2 py-1 text-[11px] font-medium text-accent dark:bg-accent/12 dark:text-accent">
             {t(providerTypeLabelKey(profile.provider_type))}
           </span>
           {profile.capabilities.map((capability) => (
             <span
               key={`${profile.id}-${capability}`}
-              className="rounded-md bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+              className="rounded-md bg-surface-subtle px-2 py-1 text-[11px] font-medium text-text-secondary dark:bg-surface-panel dark:text-text-secondary"
             >
               {t(providerCapabilityLabelKey(capability))}
             </span>
@@ -1172,8 +1172,8 @@ function ProviderProfileCard({
           <span
             className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${
               profile.has_api_key
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/35 dark:bg-emerald-500/12 dark:text-emerald-200"
-                : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-400/35 dark:bg-amber-500/12 dark:text-amber-200"
+                ? "border-state-success bg-state-success-soft text-state-success dark:border-state-success/35 dark:bg-state-success/12 dark:text-state-success"
+                : "border-state-warning bg-state-warning-soft text-state-warning dark:border-state-warning/35 dark:bg-state-warning/12 dark:text-state-warning"
             }`}
           >
             <KeyRound size={12} />
@@ -1183,13 +1183,13 @@ function ProviderProfileCard({
             usageLabelKeys.map((labelKey) => (
               <span
                 key={labelKey}
-                className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-medium text-indigo-700 dark:border-violet-400/35 dark:bg-violet-500/12 dark:text-violet-100"
+                className="rounded-full border border-accent bg-accent-soft px-2.5 py-1 text-[11px] font-medium text-accent dark:border-accent/35 dark:bg-accent/12 dark:text-accent"
               >
                 {t(labelKey)}
               </span>
             ))
           ) : (
-            <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+            <span className="rounded-full border border-border-l1 bg-surface-base px-2.5 py-1 text-[11px] font-medium text-text-muted dark:border-border-l1 dark:bg-surface-base dark:text-text-secondary">
               {t("settings.provider.usageNone")}
             </span>
           )}
@@ -1200,7 +1200,7 @@ function ProviderProfileCard({
         <button
           type="button"
           onClick={onEdit}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:border-indigo-200 hover:text-indigo-700 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-400 dark:hover:border-violet-300/50 dark:hover:text-violet-100"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border-l1 bg-surface-raised text-text-muted hover:border-accent hover:text-accent dark:border-border-l1 dark:bg-surface-panel dark:text-text-muted dark:hover:border-accent/50 dark:hover:text-accent"
           aria-label={t("settings.provider.editAria")}
           title={t("settings.provider.edit")}
         >
@@ -1210,7 +1210,7 @@ function ProviderProfileCard({
           type="button"
           onClick={onDelete}
           disabled={pending}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:border-red-200 hover:text-red-600 disabled:opacity-50 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-400 dark:hover:border-red-300/50 dark:hover:text-red-200"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border-l1 bg-surface-raised text-text-muted hover:border-state-error hover:text-state-error disabled:opacity-50 dark:border-border-l1 dark:bg-surface-panel dark:text-text-muted dark:hover:border-state-error/50 dark:hover:text-state-error"
           aria-label={t("settings.provider.deleteAria")}
           title={t("settings.provider.deleteAria")}
         >
@@ -1218,17 +1218,17 @@ function ProviderProfileCard({
         </button>
       </div>
 
-      <div className="mt-5 flex items-start justify-between gap-4 border-t border-slate-100 pt-4 dark:border-slate-800">
+      <div className="mt-5 flex items-start justify-between gap-4 border-t border-border-l2 pt-4 dark:border-border-l2">
         <div>
-          <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+          <div className="text-xs font-semibold text-text-secondary dark:text-text-primary">
             {t("settings.provider.enabledSwitchLabel")}
           </div>
           {switchHelp ? (
-            <p id={blockHelpId} className="mt-1 text-xs leading-5 text-amber-700 dark:text-amber-200">
+            <p id={blockHelpId} className="mt-1 text-xs leading-5 text-state-warning dark:text-state-warning">
               {switchHelp}
             </p>
           ) : (
-            <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+            <p className="mt-1 text-xs leading-5 text-text-muted dark:text-text-muted">
               {t("settings.provider.enabledSwitchHelp")}
             </p>
           )}
@@ -1262,15 +1262,15 @@ function ProviderCapabilityToggle({ option, selected, onToggle }: ProviderCapabi
       onClick={onToggle}
       className={`flex h-[46px] items-center gap-3 rounded-xl border px-3 text-left text-sm font-semibold transition ${
         selected
-          ? "border-indigo-500 bg-indigo-50 text-indigo-700 dark:border-violet-500 dark:bg-violet-500/12 dark:text-violet-50"
-          : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-[#171f30] dark:text-slate-300 dark:hover:border-slate-500"
+          ? "border-accent bg-accent-soft text-accent dark:border-accent dark:bg-accent/12 dark:text-accent"
+          : "border-border-l1 bg-surface-base text-text-secondary hover:border-border-l3 dark:border-border-l1 dark:bg-surface-subtle dark:text-text-secondary dark:hover:border-border-l3"
       }`}
     >
       <span
         className={`grid h-5 w-5 shrink-0 place-items-center rounded-[5px] transition ${
           selected
-            ? "bg-indigo-600 text-white dark:bg-violet-500"
-            : "bg-slate-200 dark:bg-slate-600"
+            ? "bg-accent text-accent-fg dark:bg-accent"
+            : "bg-surface-subtle dark:bg-surface-subtle"
         }`}
       >
         {selected ? <Check size={13} strokeWidth={3} /> : null}
@@ -1300,7 +1300,7 @@ function ProviderDrawerTextInput({
   return (
     <div className="relative">
       {icon ? (
-        <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500">
+        <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-text-muted dark:text-text-muted">
           {icon}
         </span>
       ) : null}
@@ -1336,17 +1336,17 @@ function ProviderDrawerEnableToggle({ checked, disabled, blocked = false, onTogg
         onClick={() => onToggle(!checked)}
         className={`flex h-[46px] w-full items-center gap-3 rounded-xl border px-3 text-left text-sm font-semibold transition ${
           checked
-            ? "border-indigo-300 bg-indigo-50 text-slate-900 dark:border-slate-700 dark:bg-[#171f30] dark:text-slate-100"
-            : "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-[#171f30] dark:text-slate-300"
+            ? "border-accent bg-accent-soft text-text-primary dark:border-border-l1 dark:bg-surface-subtle dark:text-text-primary"
+            : "border-border-l1 bg-surface-base text-text-secondary dark:border-border-l1 dark:bg-surface-subtle dark:text-text-secondary"
         } ${
           disabled || blocked
             ? "cursor-not-allowed opacity-60"
-            : "hover:border-indigo-300 dark:hover:border-violet-500/60"
+            : "hover:border-accent dark:hover:border-accent/60"
         }`}
       >
         <span
           className={`grid h-5 w-5 shrink-0 place-items-center rounded-md transition ${
-            checked ? "bg-indigo-600 text-white dark:bg-violet-500" : "bg-slate-200 dark:bg-slate-600"
+            checked ? "bg-accent text-accent-fg dark:bg-accent" : "bg-surface-subtle dark:bg-surface-subtle"
           }`}
         >
           {checked ? <Check size={13} strokeWidth={3} /> : null}
@@ -1354,7 +1354,7 @@ function ProviderDrawerEnableToggle({ checked, disabled, blocked = false, onTogg
         {t("settings.provider.enable")}
       </button>
       {blocked ? (
-        <p id={helpId} className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-200">
+        <p id={helpId} className="mt-2 text-xs leading-5 text-state-warning dark:text-state-warning">
           {t("settings.provider.disableBlocked")}
         </p>
       ) : null}
@@ -1427,12 +1427,12 @@ function ProviderProfileDrawer({
           openerRef.current?.focus();
         }}
       >
-        <div className="flex h-[74px] items-center justify-between border-b border-slate-200 px-6 dark:border-slate-800">
+        <div className="flex h-[74px] items-center justify-between border-b border-border-l1 px-6 dark:border-border-l2">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="text-indigo-600 dark:text-violet-400">
+            <span className="text-accent dark:text-accent">
               {editingProfileId ? <Pencil size={17} /> : <Plus size={18} />}
             </span>
-            <DialogTitle id={titleId} className="truncate text-lg font-bold text-slate-950 dark:text-white">
+            <DialogTitle id={titleId} className="truncate text-lg font-bold text-text-primary dark:text-white">
               {editingProfileId ? t("settings.provider.edit") : t("settings.provider.create")}
             </DialogTitle>
           </div>
@@ -1440,7 +1440,7 @@ function ProviderProfileDrawer({
             <button
               type="button"
               onClick={onClose}
-              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-slate-300 hover:text-slate-950 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:text-white lg:h-9 lg:w-9"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border-l1 text-text-muted transition hover:border-border-l3 hover:text-text-primary dark:border-border-l1 dark:text-text-muted dark:hover:border-border-l3 dark:hover:text-white lg:h-9 lg:w-9"
               aria-label={t("settings.provider.closeDrawer")}
               title={t("settings.provider.closeDrawer")}
             >
@@ -1457,7 +1457,7 @@ function ProviderProfileDrawer({
           }}
         >
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-6">
-            <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+            <div className="text-xs font-semibold text-text-muted dark:text-text-muted">
               {t("settings.provider.basicInfo")}
             </div>
             <SettingsFormField label={t("settings.provider.nameLabel")}>
@@ -1489,7 +1489,7 @@ function ProviderProfileDrawer({
                 />
               </SettingsFormField>
             ) : (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600 dark:border-slate-700 dark:bg-[#171f30] dark:text-slate-300">
+              <div className="rounded-xl border border-border-l1 bg-surface-base px-4 py-3 text-xs leading-5 text-text-secondary dark:border-border-l1 dark:bg-surface-subtle dark:text-text-secondary">
                 {t("settings.provider.googleBaseUrlUnsupported")}
               </div>
             )}
@@ -1508,7 +1508,7 @@ function ProviderProfileDrawer({
               />
             </SettingsFormField>
             <div className="grid gap-2">
-              <div className="text-xs font-medium text-slate-600 dark:text-slate-300">
+              <div className="text-xs font-medium text-text-secondary dark:text-text-secondary">
                 {t("settings.provider.capabilitiesLabel")}
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -1523,7 +1523,7 @@ function ProviderProfileDrawer({
               </div>
             </div>
 
-            <div className="border-t border-slate-200 pt-4 dark:border-slate-800">
+            <div className="border-t border-border-l1 pt-4 dark:border-border-l2">
               <ProviderDrawerEnableToggle
                 checked={form.enabled}
                 disabled={pending}
@@ -1533,11 +1533,11 @@ function ProviderProfileDrawer({
             </div>
           </div>
 
-          <div className="shrink-0 border-t border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-[#121722]">
+          <div className="shrink-0 border-t border-border-l1 bg-surface-raised px-6 py-5 dark:border-border-l2 dark:bg-surface-panel">
             <button
               type="submit"
               disabled={pending || !form.name.trim() || !form.capabilities.length}
-              className="inline-flex h-12 w-full items-center justify-center rounded-xl bg-indigo-600 px-5 text-sm font-bold text-white shadow-lg shadow-indigo-500/25 transition hover:bg-indigo-500 disabled:opacity-50 dark:bg-violet-500 dark:shadow-violet-950/30 dark:hover:bg-violet-400"
+              className="inline-flex h-12 w-full items-center justify-center rounded-xl bg-accent px-5 text-sm font-bold text-accent-fg shadow-lg transition hover:bg-accent disabled:opacity-50 dark:bg-accent dark:hover:bg-accent"
             >
               {pending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Save size={14} className="mr-2" />}
               {t("detail.save")}
@@ -1594,7 +1594,7 @@ function PromptBindingSection({ data, draft, pending, onChange, onSave }: Prompt
           placeholder={t("settings.provider.promptModelPlaceholder")}
         />
       </SettingsFormField>
-      <div className="flex justify-end border-t border-slate-100 pt-5 dark:border-slate-800">
+      <div className="flex justify-end border-t border-border-l2 pt-5 dark:border-border-l2">
         <button
           type="button"
           onClick={onSave}
@@ -1656,7 +1656,7 @@ function AgentBindingSection({ data, draft, pending, onChange, onSave }: AgentBi
           />
         </SettingsFormField>
       ) : (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-100">
+        <div className="rounded-lg border border-state-warning bg-state-warning-soft px-4 py-3 text-sm leading-6 text-state-warning dark:border-state-warning/35 dark:bg-state-warning/10 dark:text-state-warning">
           {t("settings.provider.agentDisabledDescription")}
         </div>
       )}
@@ -1669,7 +1669,7 @@ function AgentBindingSection({ data, draft, pending, onChange, onSave }: AgentBi
         />
       </SettingsFormField>
       {draft.provider_kind === "openai" ? (
-        <div className="grid gap-3 border-t border-slate-100 pt-5 sm:grid-cols-2 dark:border-slate-800">
+        <div className="grid gap-3 border-t border-border-l2 pt-5 sm:grid-cols-2 dark:border-border-l2">
           <SettingsFormField label={t("settings.provider.reasoningEffortLabel")}>
             <input
               value={draft.reasoning_effort}
@@ -1704,7 +1704,7 @@ function AgentBindingSection({ data, draft, pending, onChange, onSave }: AgentBi
           </SettingsFormField>
         </div>
       ) : null}
-      <div className="flex justify-end border-t border-slate-100 pt-5 dark:border-slate-800">
+      <div className="flex justify-end border-t border-border-l2 pt-5 dark:border-border-l2">
         <button
           type="button"
           onClick={onSave}
@@ -1833,14 +1833,14 @@ function ImageBindingSection({ data, draft, pending, onChange, onSave }: ImageBi
           </SettingsFormField>
         </div>
       ) : null}
-      <div className="flex flex-col gap-5 border-t border-slate-100 pt-5 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-5 border-t border-border-l2 pt-5 dark:border-border-l2 sm:flex-row sm:items-center sm:justify-between">
         {draft.provider_kind === "openai_responses" ? (
-          <label className="inline-flex items-center gap-3 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <label className="inline-flex items-center gap-3 text-sm font-medium text-text-secondary dark:text-text-secondary">
             <input
               type="checkbox"
               checked={draft.responses_background_enabled}
               onChange={(event) => onChange({ ...draft, responses_background_enabled: event.target.checked })}
-              className="h-4 w-4 rounded border-slate-300 accent-indigo-600 dark:border-slate-600"
+              className="h-4 w-4 rounded border-border-l3 accent-accent dark:border-border-l3"
             />
             {t("settings.provider.responsesBackground")}
           </label>
@@ -2227,7 +2227,7 @@ export function SettingsPage() {
   const genericSection = ["prompts", "upload", "queue", "security", "mail"].includes(activeSection);
 
   return (
-    <div className="flex min-h-screen flex-col bg-white dark:bg-[#060a12] dark:text-slate-100">
+    <div className="flex min-h-screen flex-col bg-surface-raised dark:bg-surface-base dark:text-text-primary">
       <TopNav
         breadcrumbs={t("settings.breadcrumb")}
         onHome={() => navigate("/home")}
@@ -2238,30 +2238,30 @@ export function SettingsPage() {
       <main className="mx-auto flex w-full max-w-[1440px] flex-1">
         <div className="w-full">
           {loadingMain ? (
-            <div className="flex justify-center py-20 text-zinc-400 dark:text-slate-500">
+            <div className="flex justify-center py-20 text-text-muted dark:text-text-muted">
               <Loader2 size={22} className="animate-spin" />
             </div>
           ) : configQuery.isError ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <div className="rounded-lg border border-state-error bg-state-error-soft px-4 py-3 text-sm text-state-error">
               {configQuery.error instanceof ApiError ? configQuery.error.detail : t("settings.loadFailed")}
             </div>
           ) : (
             <div className="grid min-h-full lg:grid-cols-[280px_minmax(0,1fr)]">
-              <aside className="border-b border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-[#0f1726] lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
-                <div className="border-b border-slate-200 px-5 py-7 dark:border-slate-800">
-                  <div className="flex items-center gap-3 text-lg font-semibold text-slate-950 dark:text-white">
-                    <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-violet-500/15 dark:text-violet-200">
+              <aside className="border-b border-border-l1 bg-surface-base/70 dark:border-border-l2 dark:bg-surface-panel lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
+                <div className="border-b border-border-l1 px-5 py-7 dark:border-border-l2">
+                  <div className="flex items-center gap-3 text-lg font-semibold text-text-primary dark:text-white">
+                    <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft text-accent dark:bg-accent/15 dark:text-accent">
                       <SettingsIcon size={20} />
                     </span>
                     {t("settings.title")}
                   </div>
-                  <label className="mt-6 flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-400 shadow-sm shadow-slate-200/30 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-500 dark:shadow-black/20">
+                  <label className="mt-6 flex h-10 items-center gap-2 rounded-lg border border-border-l1 bg-surface-base px-3 text-sm text-text-muted shadow-sm dark:border-border-l1 dark:bg-surface-panel dark:text-text-muted dark:shadow-black/20">
                     <Search size={16} />
                     <input
                       value={sectionSearch}
                       onChange={(event) => setSectionSearch(event.target.value)}
                       placeholder={t("settings.searchPlaceholder")}
-                      className="min-w-0 flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100 dark:placeholder:text-slate-500"
+                      className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted dark:text-text-primary dark:placeholder:text-text-muted"
                     />
                   </label>
                 </div>
@@ -2273,7 +2273,7 @@ export function SettingsPage() {
                     }
                     return (
                       <div key={group}>
-                        <div className="px-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                        <div className="px-2 text-xs font-semibold uppercase tracking-wide text-text-muted dark:text-text-muted">
                           {t(group)}
                         </div>
                         <div className="mt-2 space-y-1">
@@ -2287,11 +2287,11 @@ export function SettingsPage() {
                                 onClick={() => setActiveSection(section.id)}
                                 className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${
                                   active
-                                    ? "bg-indigo-50 font-semibold text-indigo-700 ring-1 ring-indigo-200 dark:bg-violet-500/18 dark:text-violet-100 dark:ring-violet-400/35"
-                                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-violet-500/12 dark:hover:text-white"
+                                    ? "bg-accent-soft font-semibold text-accent ring-1 ring-accent dark:bg-accent/18 dark:text-accent dark:ring-accent/35"
+                                    : "text-text-secondary hover:bg-surface-base hover:text-text-primary dark:text-text-secondary dark:hover:bg-accent/12 dark:hover:text-text-primary"
                                 }`}
                               >
-                                <Icon size={15} className={active ? "shrink-0 text-indigo-600 dark:text-violet-200" : "shrink-0 text-slate-400 dark:text-slate-500"} />
+                                <Icon size={15} className={active ? "shrink-0 text-accent dark:text-accent" : "shrink-0 text-text-muted dark:text-text-muted"} />
                                 <span className="truncate">{t(section.labelKey)}</span>
                               </button>
                             );
@@ -2302,7 +2302,7 @@ export function SettingsPage() {
                   })}
                 </nav>
                 <div className="p-4 lg:hidden">
-                  <label htmlFor="settings-section" className="mb-2 block text-xs font-semibold text-slate-500 dark:text-slate-400">
+                  <label htmlFor="settings-section" className="mb-2 block text-xs font-semibold text-text-muted dark:text-text-muted">
                     {t("settings.mobileSectionLabel")}
                   </label>
                   <SelectField
@@ -2320,18 +2320,18 @@ export function SettingsPage() {
                 </div>
               </aside>
 
-              <section className="min-w-0 bg-white px-5 pb-28 pt-8 dark:bg-[#0b1220] sm:px-8 lg:px-12 lg:py-12">
+              <section className="min-w-0 bg-surface-raised px-5 pb-28 pt-8 dark:bg-surface-panel sm:px-8 lg:px-12 lg:py-12">
                 <div className="mx-auto max-w-4xl">
                   <div className="mb-10">
-                    <div className="mb-3 flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400">
+                    <div className="mb-3 flex items-center gap-2 text-sm font-medium text-text-muted dark:text-text-muted">
                       <span>{t("settings.title")}</span>
                       <span>/</span>
                       <span>{t(activeMeta.labelKey)}</span>
                     </div>
-                    <h1 className="text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">
+                    <h1 className="text-3xl font-semibold tracking-tight text-text-primary dark:text-white">
                       {t(activeMeta.labelKey)}
                     </h1>
-                    <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+                    <p className="mt-3 max-w-3xl text-sm leading-6 text-text-muted dark:text-text-muted">
                       {t(activeMeta.descriptionKey)}
                     </p>
                   </div>
@@ -2359,12 +2359,12 @@ export function SettingsPage() {
                     />
                   ) : null}
                   {error ? (
-                    <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
+                    <div className="mb-5 rounded-md border border-state-error bg-state-error-soft px-4 py-3 text-sm text-state-error dark:border-state-error/35 dark:bg-state-error/10 dark:text-state-error">
                       {error}
                     </div>
                   ) : null}
                   {savedMessage ? (
-                    <div className="mb-5 flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-400/35 dark:bg-emerald-500/10 dark:text-emerald-200">
+                    <div className="mb-5 flex items-center rounded-md border border-state-success bg-state-success-soft px-4 py-3 text-sm text-state-success dark:border-state-success/35 dark:bg-state-success/10 dark:text-state-success">
                       <CheckCircle2 size={16} className="mr-2" />
                       {savedMessage}
                     </div>
@@ -2515,15 +2515,15 @@ export function SettingsPage() {
                             ))
                           )
                         ) : (
-                          <div className="rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+                          <div className="rounded-lg border border-dashed border-border-l3 px-4 py-10 text-center text-sm text-text-muted dark:border-border-l1 dark:text-text-muted">
                             {t("settings.section.empty")}
                           </div>
                         )}
-                        <div className="flex justify-end gap-3 border-t border-slate-100 pt-5 dark:border-slate-800">
+                        <div className="flex justify-end gap-3 border-t border-border-l2 pt-5 dark:border-border-l2">
                           <button
                             type="button"
                             onClick={() => resetDraftsFromConfig(configQuery.data)}
-                            className="px-4 py-2 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-slate-300 dark:hover:text-white"
+                            className="px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary dark:text-text-secondary dark:hover:text-white"
                           >
                             {t("settings.discard")}
                           </button>

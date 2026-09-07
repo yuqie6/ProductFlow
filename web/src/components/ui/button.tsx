@@ -13,7 +13,7 @@ const buttonVariants = cva(
         secondary:
           "border border-border-l1 bg-surface-raised text-text-primary hover:bg-surface-subtle",
         ghost: "text-text-secondary hover:bg-surface-subtle hover:text-text-primary",
-        danger: "bg-state-error text-white hover:brightness-110",
+        danger: "bg-state-error text-state-error-fg hover:brightness-110",
         dangerSoft:
           "border border-state-error/30 bg-state-error-soft text-state-error hover:border-state-error/50",
       },

@@ -134,26 +134,25 @@ export function LoginPage({ authenticated }: LoginPageProps) {
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center bg-zinc-50 dark:bg-[#060a12] dark:text-slate-100">
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#e4e4e7_1px,transparent_1px),linear-gradient(to_bottom,#e4e4e7_1px,transparent_1px)] bg-[size:4rem_4rem] opacity-50 [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)] dark:bg-[linear-gradient(to_right,rgba(71,85,105,0.34)_1px,transparent_1px),linear-gradient(to_bottom,rgb(71,85,105,0.34)_1px,transparent_1px)] dark:opacity-70" />
+    <div className="relative flex min-h-screen flex-col items-center justify-center bg-surface-base dark:bg-surface-base dark:text-text-primary">
 
       <div className="relative w-full max-w-sm px-6 py-8">
         <div className="mb-10">
-          <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-zinc-900 shadow-sm shadow-zinc-900/20 dark:border dark:border-violet-400/35 dark:bg-violet-500/18 dark:shadow-violet-950/30">
+          <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-text-muted shadow-sm dark:border dark:border-accent/35 dark:bg-accent/18">
             <LayoutGrid size={20} className="text-white" strokeWidth={2} />
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-white">ProductFlow</h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-slate-400">
+          <h1 className="text-2xl font-semibold tracking-tight text-text-primary dark:text-white">ProductFlow</h1>
+          <p className="mt-1 text-sm text-text-muted dark:text-text-muted">
             {needsBootstrap ? t("login.bootstrapSubtitle") : registering ? t("login.registerSubtitle") : t("login.subtitle")}
           </p>
         </div>
 
         {!needsBootstrap ? (
-          <div role="tablist" aria-label={t("login.accountAccess")} className="mb-6 grid grid-cols-2 border-b border-zinc-200 dark:border-slate-700">
+          <div role="tablist" aria-label={t("login.accountAccess")} className="mb-6 grid grid-cols-2 border-b border-border-l1 dark:border-border-l1">
             {(["login", "register"] as const).map((value) => (
               <button key={value} type="button" role="tab" aria-selected={mode === value} disabled={pending}
                 onClick={() => { formVersion.current += 1; setMode(value); setChallenge(null); setCode(""); setError(""); }}
-                className={`min-h-11 border-b-2 px-3 text-sm ${mode === value ? "border-zinc-900 text-zinc-900 dark:border-white dark:text-white" : "border-transparent text-zinc-500 dark:text-slate-400"}`}>
+                className={`min-h-11 border-b-2 px-3 text-sm ${mode === value ? "border-border-l3 text-text-primary dark:border-white dark:text-white" : "border-transparent text-text-muted dark:text-text-muted"}`}>
                 {t(value === "login" ? "login.submit" : "login.register")}
               </button>
             ))}
@@ -162,11 +161,11 @@ export function LoginPage({ authenticated }: LoginPageProps) {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {registering && !registrationAvailable ? (
-            <p role="status" className="text-sm text-amber-700 dark:text-amber-300">{t("login.registrationUnavailable")}</p>
+            <p role="status" className="text-sm text-state-warning dark:text-state-warning">{t("login.registrationUnavailable")}</p>
           ) : null}
           {needsBootstrap ? (
               <div>
-                <label htmlFor="auth-admin-key" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
+                <label htmlFor="auth-admin-key" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-text-muted dark:text-text-muted">
                   {t("login.adminKey")}
                 </label>
                 <input
@@ -174,7 +173,7 @@ export function LoginPage({ authenticated }: LoginPageProps) {
                   type="password"
                   value={adminKey}
                   onChange={(event) => setAdminKey(event.target.value)}
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 transition-shadow placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/25"
+                  className="w-full rounded-md border border-border-l1 bg-surface-raised px-3 py-2 text-sm text-text-primary transition-shadow placeholder:text-text-muted focus:border-border-l3 focus:outline-none focus:ring-1 focus:ring-border-l3 dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary dark:placeholder:text-text-muted dark:focus:border-accent dark:focus:ring-accent/25"
                   placeholder={t("login.adminKeyPlaceholder")}
                   autoComplete="off"
                   required
@@ -184,7 +183,7 @@ export function LoginPage({ authenticated }: LoginPageProps) {
           ) : null}
           {needsBootstrap || registering ? (
               <div>
-                <label htmlFor="auth-merchant-name" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
+                <label htmlFor="auth-merchant-name" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-text-muted dark:text-text-muted">
                   {t("login.merchantName")}
                 </label>
                 <input
@@ -192,7 +191,7 @@ export function LoginPage({ authenticated }: LoginPageProps) {
                   type="text"
                   value={merchantName}
                   onChange={(event) => setMerchantName(event.target.value)}
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 transition-shadow placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/25"
+                  className="w-full rounded-md border border-border-l1 bg-surface-raised px-3 py-2 text-sm text-text-primary transition-shadow placeholder:text-text-muted focus:border-border-l3 focus:outline-none focus:ring-1 focus:ring-border-l3 dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary dark:placeholder:text-text-muted dark:focus:border-accent dark:focus:ring-accent/25"
                   placeholder={t("login.merchantNamePlaceholder")}
                   autoComplete="organization"
                   required
@@ -202,7 +201,7 @@ export function LoginPage({ authenticated }: LoginPageProps) {
           ) : null}
 
           <div>
-            <label htmlFor="auth-email" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
+            <label htmlFor="auth-email" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-text-muted dark:text-text-muted">
               {t("login.email")}
             </label>
             <input
@@ -211,7 +210,7 @@ export function LoginPage({ authenticated }: LoginPageProps) {
               type="email"
               value={email}
               onChange={(event) => { formVersion.current += 1; setEmail(event.target.value); setChallenge(null); setCode(""); }}
-              className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 transition-shadow placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/25"
+              className="w-full rounded-md border border-border-l1 bg-surface-raised px-3 py-2 text-sm text-text-primary transition-shadow placeholder:text-text-muted focus:border-border-l3 focus:outline-none focus:ring-1 focus:ring-border-l3 dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary dark:placeholder:text-text-muted dark:focus:border-accent dark:focus:ring-accent/25"
               placeholder={t("login.emailPlaceholder")}
               autoComplete="username"
               required
@@ -221,28 +220,28 @@ export function LoginPage({ authenticated }: LoginPageProps) {
 
           {registering ? (
             <div>
-              <label htmlFor="registration-code" className="mb-1.5 block text-xs font-medium text-zinc-500 dark:text-slate-400">{t("login.verificationCode")}</label>
+              <label htmlFor="registration-code" className="mb-1.5 block text-xs font-medium text-text-muted dark:text-text-muted">{t("login.verificationCode")}</label>
               <div className="flex min-w-0 gap-2">
                 <input id="registration-code" value={code} onChange={(event) => setCode(event.target.value)}
                   inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required disabled={pending}
-                  className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100" />
+                  className="min-w-0 flex-1 rounded-md border border-border-l1 bg-surface-raised px-3 py-2 text-sm text-text-primary dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary" />
                 <button type="button" disabled={!registrationAvailable || pending || sendCodeMutation.isPending || sendSeconds > 0 || retrySeconds > 0}
                   onClick={() => {
                     if (!registrationAvailable || !emailInput.current?.reportValidity() || Date.now() < Math.max(sendRetryAt, retryAt)) return;
                     setError("");
                     sendCodeMutation.mutate({ email: email.trim().toLowerCase(), version: formVersion.current });
                   }}
-                  className="inline-flex min-h-11 max-w-[55%] items-center justify-center gap-2 rounded-md border border-zinc-300 px-3 text-xs text-zinc-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200">
+                  className="inline-flex min-h-11 max-w-[55%] items-center justify-center gap-2 rounded-md border border-border-l3 px-3 text-xs text-text-secondary disabled:opacity-50 dark:border-border-l3 dark:text-text-primary">
                   <Mail size={14} className="shrink-0" aria-hidden="true" />
                   <span>{sendSeconds > 0 ? t("login.resendAfter", { seconds: sendSeconds }) : t("login.sendCode")}</span>
                 </button>
               </div>
-              {challenge ? <p role="status" className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">{t("login.codeSent")}</p> : null}
+              {challenge ? <p role="status" className="mt-2 text-xs text-state-success dark:text-state-success">{t("login.codeSent")}</p> : null}
             </div>
           ) : null}
 
           <div>
-            <label htmlFor="auth-password" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-400">
+            <label htmlFor="auth-password" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-text-muted dark:text-text-muted">
               {t("login.password")}
             </label>
             <input
@@ -250,7 +249,7 @@ export function LoginPage({ authenticated }: LoginPageProps) {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-950 transition-shadow placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/25"
+              className="w-full rounded-md border border-border-l1 bg-surface-raised px-3 py-2 text-sm text-text-primary transition-shadow placeholder:text-text-muted focus:border-border-l3 focus:outline-none focus:ring-1 focus:ring-border-l3 dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary dark:placeholder:text-text-muted dark:focus:border-accent dark:focus:ring-accent/25"
               placeholder={t("login.passwordPlaceholder")}
               autoComplete={needsBootstrap || registering ? "new-password" : "current-password"}
               required
@@ -258,9 +257,9 @@ export function LoginPage({ authenticated }: LoginPageProps) {
             />
           </div>
 
-          {error ? <div role="alert" className="break-words text-xs font-medium text-red-500 dark:text-red-300">{error}</div> : null}
+          {error ? <div role="alert" className="break-words text-xs font-medium text-state-error dark:text-state-error">{error}</div> : null}
           {retrySeconds > 0 ? (
-            <p role="status" className="text-xs text-zinc-500 dark:text-slate-400">
+            <p role="status" className="text-xs text-text-muted dark:text-text-muted">
               {t("login.retryAfter", { seconds: retrySeconds })}
             </p>
           ) : null}
@@ -268,7 +267,7 @@ export function LoginPage({ authenticated }: LoginPageProps) {
           <button
             type="submit"
             disabled={pending || retrySeconds > 0 || (registering && (!registrationAvailable || !challenge || sendCodeMutation.isPending))}
-            className="flex w-full items-center justify-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-zinc-900/20 transition-colors hover:bg-zinc-800 disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:to-violet-500 dark:shadow-violet-900/35 dark:ring-1 dark:ring-violet-300/35"
+            className="flex w-full items-center justify-center rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-fg shadow-sm transition-colors hover:bg-accent-strong disabled:opacity-60 dark:ring-1 dark:ring-accent/35"
           >
             {needsBootstrap ? t("login.bootstrapSubmit") : registering ? t("login.registerSubmit") : t("login.submit")}{" "}
             <ArrowRight size={14} className="ml-2 opacity-70" />

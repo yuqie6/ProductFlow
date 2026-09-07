@@ -1,7 +1,6 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   Braces,
-  Check,
   Clock,
   FileText,
   Image as ImageIcon,
@@ -117,18 +116,10 @@ export function WorkflowNodePresentationCard({
   const Icon = theme.icon;
 
   const selectedClassName = primarySelected
-    ? "border-accent ring-2 ring-accent/40 shadow-elev-2"
+    ? "border-accent ring-2 ring-accent/40 shadow-elev-1"
     : secondarySelected || previewSelected
       ? "border-accent/50 ring-1 ring-accent/25 shadow-elev-1"
       : "border-border-l1";
-  const motionClassName = status === "running"
-    ? "border-accent/60 animate-status-pulse motion-reduce:animate-none"
-    : status === "queued"
-      ? "border-state-warning/60 animate-status-pulse motion-reduce:animate-none"
-      : "";
-
-  const selected = primarySelected || secondarySelected || previewSelected;
-
   return (
     <div
       ref={nodeRef}
@@ -136,32 +127,21 @@ export function WorkflowNodePresentationCard({
       data-node-kind={kind}
       onClick={onSelect}
       className={`nopan relative w-[248px] cursor-grab touch-none select-none rounded-surface border bg-surface-raised p-3 text-left shadow-elev-1 transition-[border-color,transform,box-shadow] duration-fast active:cursor-grabbing ${revealActive ? "animate-node-reveal motion-reduce:animate-none" : ""
-        } ${dragging ? "cursor-grabbing" : "hover:-translate-y-0.5 hover:border-border-l3 hover:shadow-elev-2 motion-reduce:hover:translate-y-0"
-        } ${selectedClassName} ${motionClassName}`}
+        } ${dragging ? "cursor-grabbing" : "hover:border-border-l3"
+        } ${selectedClassName}`}
     >
-      {selected ? (
-        <div
-          className={`pointer-events-none absolute right-2.5 top-2.5 z-20 flex h-5 w-5 items-center justify-center rounded-full border bg-surface-raised shadow-elev-1 ${primarySelected
-              ? "border-accent text-accent"
-              : "border-accent/40 text-accent"
-            }`}
-          aria-hidden="true"
-        >
-          <Check size={12} strokeWidth={2.5} />
-        </div>
-      ) : null}
 
       <div>
         <div className="mb-2 flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-panel border shadow-elev-1 ${theme.iconBox}`}>
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-control ${theme.iconBox}`}>
               <Icon size={15} />
             </span>
             <div className="min-w-0">
               <div className="truncate text-xs font-bold tracking-tight text-text-primary" title={title}>
                 {title}
               </div>
-              <span className={`mt-0.5 inline-block truncate rounded px-1.5 text-[9px] font-semibold ${theme.badge}`}>
+              <span className={`mt-0.5 inline-block truncate text-[11px] font-medium text-text-secondary`}>
                 {label}
               </span>
             </div>
@@ -189,7 +169,7 @@ export function WorkflowNodePresentationCard({
         ) : null}
 
         {activityText && !imageWaiting ? (
-          <div className="mb-2 flex items-start gap-2 rounded-control border border-border-l1 bg-surface-subtle px-2.5 py-1.5 text-xs leading-5 text-text-secondary">
+          <div className="mb-2 flex items-start gap-2 border-l-2 border-border-l1 pl-2.5 py-1.5 text-xs leading-5 text-text-secondary">
             <div className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-accent motion-safe:animate-pulse" aria-hidden="true" />
             <div className="min-w-0">
               <div className="text-xs font-semibold text-text-primary">{activityText}</div>
@@ -239,12 +219,12 @@ export function WorkflowNodePresentationCard({
         ) : null}
       </div>
 
-      <div className="mt-2.5 flex items-center gap-1.5 border-t border-border-l1/60 pt-1.5 text-[10px] text-text-muted">
+      {lastRunAt ? <div className="mt-2.5 flex items-center gap-1.5 border-t border-border-l1/60 pt-1.5 text-[10px] text-text-muted">
         <Clock size={11} className="shrink-0 opacity-70" />
         <span className="min-w-0 flex-1 truncate text-left leading-tight">
-          {lastRunAt ? t("detail.recent", { time: formatDateTime(lastRunAt, t.locale) }) : label}
+          {t("detail.recent", { time: formatDateTime(lastRunAt, t.locale) })}
         </span>
-      </div>
+      </div> : null}
     </div>
   );
 }

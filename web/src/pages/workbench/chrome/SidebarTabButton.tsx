@@ -26,8 +26,8 @@ export function SidebarTabButton({
         aria-pressed={active}
         aria-label={title}
         onClick={onClick}
-        className={`flex w-full flex-col items-center rounded-panel px-1 py-2 text-[10px] font-medium outline-none transition-[background-color,color,transform] duration-fast focus-visible:ring-2 focus-visible:ring-focus-ring motion-reduce:transition-none min-h-11 ${active
-            ? "bg-surface-raised text-accent shadow-elev-1 ring-1 ring-accent/30"
+        className={`flex w-full flex-col items-center rounded-panel px-1 py-2 text-[11px] font-medium outline-none transition-[background-color,color,transform] duration-fast focus-visible:ring-2 focus-visible:ring-focus-ring motion-reduce:transition-none min-h-11 ${active
+            ? "bg-surface-subtle text-text-primary ring-1 ring-border-l1"
             : "text-text-muted hover:bg-surface-subtle hover:text-text-primary"
           }`}
       >

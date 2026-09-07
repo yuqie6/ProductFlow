@@ -1116,7 +1116,7 @@ export function ImageChatPage() {
     : null;
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-100 text-slate-900 dark:bg-[#060a12] dark:text-slate-100 lg:h-screen lg:overflow-hidden">
+    <div className="flex min-h-screen flex-col bg-surface-subtle text-text-primary dark:bg-surface-base dark:text-text-primary lg:h-screen lg:overflow-hidden">
       <TopNav
         breadcrumbs={t("chat.breadcrumb")}
         onHome={() => navigate("/home")}
@@ -1128,7 +1128,7 @@ export function ImageChatPage() {
         onPointerDown={handleMobileEdgeSwipeStart}
       >
         <aside
-          className="relative hidden w-full shrink-0 flex-col border-b border-slate-200 bg-white/95 dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-[12px_0_36px_rgba(0,0,0,0.24)] dark:backdrop-blur-xl lg:flex lg:w-[var(--image-chat-left-panel-width)] lg:border-b-0 lg:border-r"
+          className="relative hidden w-full shrink-0 flex-col border-b border-border-l1 bg-surface-raised/95 dark:border-border-l1/80 dark:bg-surface-panel dark:shadow-[12px_0_36px_rgba(0,0,0,0.24)] dark:backdrop-blur-xl lg:flex lg:w-[var(--image-chat-left-panel-width)] lg:border-b-0 lg:border-r"
           style={leftPanelStyle}
         >
           <button
@@ -1136,21 +1136,21 @@ export function ImageChatPage() {
             aria-label={t("chat.resizeSessions")}
             title={t("chat.resizeSessionsTitle")}
             onPointerDown={(event) => handlePanelResizeStart("left", event)}
-            className="absolute right-[-5px] top-0 z-20 hidden h-full w-3 cursor-col-resize items-center justify-center transition-colors hover:bg-indigo-50/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:hover:bg-violet-500/15 lg:flex"
+            className="absolute right-[-5px] top-0 z-20 hidden h-full w-3 cursor-col-resize items-center justify-center transition-colors hover:bg-accent-soft/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:hover:bg-accent/15 lg:flex"
           >
-            <span className="h-12 w-1 rounded-full bg-slate-300 dark:bg-slate-600" />
+            <span className="h-12 w-1 rounded-full bg-surface-subtle dark:bg-surface-subtle" />
           </button>
-          <div className="border-b border-slate-200 px-4 py-4 dark:border-slate-800">
+          <div className="border-b border-border-l1 px-4 py-4 dark:border-border-l2">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-slate-950 dark:text-white">{t("chat.sessions")}</div>
-                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{t("chat.count", { count: sessionItems.length })}</div>
+                <div className="text-sm font-semibold text-text-primary dark:text-white">{t("chat.sessions")}</div>
+                <div className="mt-1 text-xs text-text-muted dark:text-text-muted">{t("chat.count", { count: sessionItems.length })}</div>
               </div>
               <button
                 type="button"
                 onClick={() => createSessionMutation.mutate()}
                 disabled={createSessionMutation.isPending}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm shadow-indigo-500/20 transition-colors hover:bg-indigo-500 disabled:opacity-60 dark:bg-gradient-to-br dark:from-indigo-500 dark:to-violet-500 dark:shadow-violet-900/35 dark:ring-1 dark:ring-violet-300/30"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-accent text-accent-fg shadow-sm transition-colors hover:bg-accent disabled:opacity-60 dark:ring-1 dark:ring-accent/30"
                 aria-label={t("chat.newSession")}
               >
                 {createSessionMutation.isPending ? <Loader2 size={15} className="animate-spin" /> : <Plus size={16} />}
@@ -1174,7 +1174,7 @@ export function ImageChatPage() {
           />
         </aside>
 
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-slate-100 dark:bg-[#0b1220] lg:overflow-hidden">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface-subtle dark:bg-surface-panel lg:overflow-hidden">
           <div className="flex min-h-0 flex-1 flex-col p-3 pb-2">
             <div className="mb-3 flex items-center justify-between gap-1.5 lg:hidden">
               <button
@@ -1182,7 +1182,7 @@ export function ImageChatPage() {
                 type="button"
                 onClick={() => setMobileSessionDrawerOpen(true)}
                 aria-label={t("chat.openSessionDrawer")}
-                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors active:scale-[0.98] hover:border-indigo-200 hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-200 dark:hover:border-violet-400/60 dark:hover:text-violet-100"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border-l1 bg-surface-raised text-text-secondary shadow-sm transition-colors active:scale-[0.98] hover:border-accent hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-primary dark:hover:border-accent/60 dark:hover:text-accent"
               >
                 <Menu size={18} />
               </button>
@@ -1202,11 +1202,11 @@ export function ImageChatPage() {
                     }}
                     disabled={renameSessionMutation.isPending}
                     aria-label={t("chat.rename")}
-                    className="h-10 w-full rounded-xl border border-indigo-200 bg-white px-3 text-center text-sm font-semibold text-slate-950 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50 disabled:text-slate-500 dark:border-violet-400/45 dark:bg-slate-950/80 dark:text-white dark:focus:border-violet-300 dark:focus:ring-violet-400/20"
+                    className="h-10 w-full rounded-xl border border-accent bg-surface-raised px-3 text-center text-sm font-semibold text-text-primary shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:bg-surface-base disabled:text-text-muted dark:border-accent/45 dark:bg-surface-base/80 dark:text-white dark:focus:border-accent dark:focus:ring-accent/20"
                   />
                 ) : (
                   <>
-                    <div className="truncate text-sm font-semibold text-slate-950 dark:text-white">
+                    <div className="truncate text-sm font-semibold text-text-primary dark:text-white">
                       {imageSession?.title ?? t("chat.workbench")}
                     </div>
                   </>
@@ -1224,7 +1224,7 @@ export function ImageChatPage() {
                   }}
                   disabled={!selectedSessionId || renameSessionMutation.isPending}
                   aria-label={renameEnabled ? t("chat.saveSessionName") : t("chat.rename")}
-                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:border-indigo-200 hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-300 dark:hover:border-violet-400/55 dark:hover:text-violet-100"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-border-l1 bg-surface-raised text-text-secondary shadow-sm transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-secondary dark:hover:border-accent/55 dark:hover:text-accent"
                 >
                   {renameSessionMutation.isPending ? (
                     <Loader2 size={17} className="animate-spin" />
@@ -1239,7 +1239,7 @@ export function ImageChatPage() {
                   type="button"
                   onClick={() => setMobileHistoryDrawerOpen(true)}
                   aria-label={t("chat.openHistoryDrawer")}
-                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:border-indigo-200 hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-300 dark:hover:border-violet-400/55 dark:hover:text-violet-100"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-border-l1 bg-surface-raised text-text-secondary shadow-sm transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-secondary dark:hover:border-accent/55 dark:hover:text-accent"
                 >
                   <History size={17} />
                 </button>
@@ -1247,25 +1247,25 @@ export function ImageChatPage() {
             </div>
             <div className="mb-3 hidden flex-col gap-3 lg:flex lg:flex-row lg:items-center lg:justify-between">
               <div className="min-w-0">
-                <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-300">
-                  <span className="inline-flex h-7 items-center rounded-full bg-white px-3 shadow-sm ring-1 ring-slate-200 dark:border dark:border-violet-400/30 dark:bg-slate-950/70 dark:text-violet-100 dark:ring-violet-400/20">
+                <div className="flex items-center gap-2 text-xs font-medium text-text-muted dark:text-text-secondary">
+                  <span className="inline-flex h-7 items-center rounded-full bg-surface-raised px-3 shadow-sm ring-1 ring-border-l1 dark:border dark:border-accent/30 dark:bg-surface-base/70 dark:text-accent dark:ring-accent/20">
                     {t("chat.currentResult")}
                   </span>
                   {branchBaseRound ? (
-                    <span className="inline-flex h-7 items-center gap-1 rounded-full bg-indigo-600 px-3 text-white shadow-sm shadow-indigo-500/20 dark:bg-violet-500/20 dark:text-violet-100 dark:ring-1 dark:ring-violet-400/40">
+                    <span className="inline-flex h-7 items-center gap-1 rounded-full bg-accent px-3 text-accent-fg shadow-sm dark:bg-accent/20 dark:text-accent dark:ring-1 dark:ring-accent/40">
                       <Layers3 size={12} /> {t("chat.baseSelected")}
                     </span>
                   ) : null}
                 </div>
-                <h1 className="mt-2 text-xl font-semibold tracking-tight text-slate-950 dark:text-white">
+                <h1 className="mt-2 text-xl font-semibold tracking-tight text-text-primary dark:text-white">
                   {imageSession?.title ?? t("chat.workbench")}
                 </h1>
                 {selectedRound ? (
-                  <div className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400 md:hidden">
+                  <div className="mt-1 text-xs font-medium text-text-muted dark:text-text-muted md:hidden">
                     {imageRoundSizeLabel(selectedRound, t)} · {t("chat.candidate", { index: selectedRound.candidate_index, count: selectedRound.candidate_count })}
                   </div>
                 ) : selectedPlaceholder ? (
-                  <div className="mt-1 text-xs font-medium text-slate-500 dark:text-slate-400 md:hidden">
+                  <div className="mt-1 text-xs font-medium text-text-muted dark:text-text-muted md:hidden">
                     {placeholderStatusLabel(selectedPlaceholder, t)} · {t("chat.candidate", { index: selectedPlaceholder.candidate_index, count: selectedPlaceholder.candidate_count })}
                   </div>
                 ) : null}
@@ -1273,7 +1273,7 @@ export function ImageChatPage() {
               <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
                 {selectedRound ? (
                   <>
-                    <span className="hidden rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-200 md:inline-flex">
+                    <span className="hidden rounded-full border border-border-l1 bg-surface-raised px-3 py-1.5 text-xs text-text-secondary shadow-sm dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-primary md:inline-flex">
                       {imageRoundSizeLabel(selectedRound, t)} · {t("chat.candidate", { index: selectedRound.candidate_index, count: selectedRound.candidate_count })}
                     </span>
                     <a
@@ -1282,7 +1282,7 @@ export function ImageChatPage() {
                       rel="noreferrer"
                       title={t("chat.downloadCurrent")}
                       aria-label={t("chat.downloadCurrent")}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors hover:border-indigo-200 hover:text-indigo-700 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-200 dark:hover:border-violet-400/60 dark:hover:text-violet-100"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border-l1 bg-surface-raised text-text-secondary shadow-sm transition-colors hover:border-accent hover:text-accent dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-primary dark:hover:border-accent/60 dark:hover:text-accent"
                     >
                       <Download size={15} />
                     </a>
@@ -1292,7 +1292,7 @@ export function ImageChatPage() {
                       disabled={saveMediaLibraryMutation.isPending}
                       title={t("chat.saveSelectedMediaLibrary")}
                       aria-label={t("chat.saveSelectedMediaLibrary")}
-                      className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm shadow-indigo-500/20 ring-1 ring-indigo-500 transition-colors hover:bg-indigo-700 disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:to-violet-500 dark:shadow-violet-900/35 dark:ring-violet-300/35"
+                      className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-accent px-4 text-sm font-semibold text-accent-fg shadow-sm ring-1 ring-accent transition-colors hover:bg-accent disabled:opacity-60 dark:ring-accent/35"
                     >
                       {saveMediaLibraryMutation.isPending ? (
                         <Loader2 size={16} className="mr-2 animate-spin" />
@@ -1324,17 +1324,17 @@ export function ImageChatPage() {
               t={t}
             />
             {selectedRound?.provider_notes.length ? (
-              <div className="mt-2 flex flex-wrap gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200">
+              <div className="mt-2 flex flex-wrap gap-2 rounded-2xl border border-state-warning bg-state-warning-soft px-3 py-2 text-xs text-state-warning dark:border-state-warning/35 dark:bg-state-warning/10 dark:text-state-warning">
                 {selectedRound.provider_notes.map((note) => (
                   <span key={note}>{note}</span>
                 ))}
               </div>
             ) : selectedPlaceholder?.failure_reason ? (
-              <div className="mt-2 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
+              <div className="mt-2 rounded-2xl border border-state-error bg-state-error-soft px-3 py-2 text-xs text-state-error dark:border-state-error/35 dark:bg-state-error/10 dark:text-state-error">
                 {selectedPlaceholder.failure_reason}
               </div>
             ) : selectedPlaceholder?.provider_notes.length ? (
-              <div className="mt-2 flex flex-wrap gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200">
+              <div className="mt-2 flex flex-wrap gap-2 rounded-2xl border border-state-warning bg-state-warning-soft px-3 py-2 text-xs text-state-warning dark:border-state-warning/35 dark:bg-state-warning/10 dark:text-state-warning">
                 {selectedPlaceholder.provider_notes.map((note) => (
                   <span key={note}>{note}</span>
                 ))}
@@ -1361,7 +1361,7 @@ export function ImageChatPage() {
         </section>
 
         <aside
-          className="relative hidden w-full shrink-0 flex-col border-t border-slate-200 bg-white dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-[-12px_0_36px_rgba(0,0,0,0.24)] dark:backdrop-blur-xl lg:flex lg:w-[var(--image-chat-right-panel-width)] lg:border-l lg:border-t-0"
+          className="relative hidden w-full shrink-0 flex-col border-t border-border-l1 bg-surface-raised dark:border-border-l1/80 dark:bg-surface-panel dark:shadow-[-12px_0_36px_rgba(0,0,0,0.24)] dark:backdrop-blur-xl lg:flex lg:w-[var(--image-chat-right-panel-width)] lg:border-l lg:border-t-0"
           style={rightPanelStyle}
         >
           <button
@@ -1369,22 +1369,22 @@ export function ImageChatPage() {
             aria-label={t("chat.resizeSettings")}
             title={t("chat.resizeSettingsTitle")}
             onPointerDown={(event) => handlePanelResizeStart("right", event)}
-            className="absolute left-[-5px] top-0 z-20 hidden h-full w-3 cursor-col-resize items-center justify-center transition-colors hover:bg-indigo-50/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:hover:bg-violet-500/15 lg:flex"
+            className="absolute left-[-5px] top-0 z-20 hidden h-full w-3 cursor-col-resize items-center justify-center transition-colors hover:bg-accent-soft/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:hover:bg-accent/15 lg:flex"
           >
-            <span className="h-12 w-1 rounded-full bg-slate-300 dark:bg-slate-600" />
+            <span className="h-12 w-1 rounded-full bg-surface-subtle dark:bg-surface-subtle" />
           </button>
           <div className="min-h-0 flex-1 px-4 py-5 lg:overflow-y-auto lg:px-5">
             <div className="mb-5">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-950 dark:text-white">
+                  <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-text-primary dark:text-white">
                     <Settings size={15} /> {t("chat.generationSettings")}
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setRenameEnabled((current) => !current)}
-                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 px-2.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-300 dark:hover:border-violet-400/50 dark:hover:text-violet-100"
+                  className="inline-flex h-8 items-center rounded-lg border border-border-l1 px-2.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-l3 hover:text-text-primary dark:border-border-l1 dark:bg-surface-base/60 dark:text-text-secondary dark:hover:border-accent/50 dark:hover:text-accent"
                 >
                   <Pencil size={12} className="mr-1.5" /> {t("chat.rename")}
                 </button>
@@ -1394,13 +1394,13 @@ export function ImageChatPage() {
                   value={titleDraft}
                   onChange={(event) => setTitleDraft(event.target.value)}
                   disabled={!renameEnabled || renameSessionMutation.isPending}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50 disabled:text-slate-500 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100 dark:focus:border-violet-400 dark:focus:ring-violet-400/20 dark:disabled:bg-slate-900 dark:disabled:text-slate-500"
+                  className="w-full rounded-xl border border-border-l1 bg-surface-raised px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent disabled:bg-surface-base disabled:text-text-muted dark:border-border-l1 dark:bg-surface-base/70 dark:text-text-primary dark:focus:border-accent dark:focus:ring-accent/20 dark:disabled:bg-surface-base dark:disabled:text-text-muted"
                 />
                 {renameEnabled ? (
                   <button
                     type="button"
                     onClick={handleRename}
-                    className="inline-flex items-center rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 dark:bg-violet-500 dark:hover:bg-violet-400"
+                    className="inline-flex items-center rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-accent-fg transition-colors hover:bg-accent dark:bg-accent dark:hover:bg-accent"
                     aria-label={t("chat.saveSessionName")}
                   >
                     {renameSessionMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
@@ -1442,7 +1442,7 @@ export function ImageChatPage() {
                   />
 
                   <div>
-                    <label className="mb-2 block text-sm font-semibold text-slate-950 dark:text-white" htmlFor="image-chat-prompt">
+                    <label className="mb-2 block text-sm font-semibold text-text-primary dark:text-white" htmlFor="image-chat-prompt">
                       {t("chat.prompt")}
                     </label>
                     <textarea
@@ -1451,7 +1451,7 @@ export function ImageChatPage() {
                       onChange={(event) => setDraft(event.target.value)}
                       rows={6}
                       placeholder={t("chat.freePromptPlaceholder")}
-                      className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/20"
+                      className="w-full resize-none rounded-2xl border border-border-l1 px-3 py-3 text-sm leading-6 text-text-primary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent dark:border-border-l1 dark:bg-surface-base/70 dark:text-text-primary dark:placeholder:text-text-muted dark:focus:border-accent dark:focus:ring-accent/20"
                     />
                   </div>
 
@@ -1477,29 +1477,29 @@ export function ImageChatPage() {
 
             <div className="space-y-4">
               {successMessage ? (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-400/35 dark:bg-emerald-500/10 dark:text-emerald-200">
+                <div className="rounded-xl border border-state-success bg-state-success-soft px-3 py-2 text-sm text-state-success dark:border-state-success/35 dark:bg-state-success/10 dark:text-state-success">
                   {successMessage}
                 </div>
               ) : null}
               {errorMessage ? (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">{errorMessage}</div>
+                <div className="rounded-xl border border-state-error bg-state-error-soft px-3 py-2 text-sm text-state-error dark:border-state-error/35 dark:bg-state-error/10 dark:text-state-error">{errorMessage}</div>
               ) : null}
             </div>
           </div>
 
-          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-[0_-8px_24px_rgba(15,23,42,0.10)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/90 dark:shadow-[0_-18px_40px_rgba(0,0,0,0.32)] lg:sticky lg:inset-x-auto lg:bottom-0 lg:p-4">
+          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border-l1 bg-surface-raised/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-[0_-8px_24px_rgba(15,23,42,0.10)] backdrop-blur dark:border-border-l2 dark:bg-surface-base/90 dark:shadow-[0_-18px_40px_rgba(0,0,0,0.32)] lg:sticky lg:inset-x-auto lg:bottom-0 lg:p-4">
             {baseRequirementMessage ? (
-              <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200">
+              <div className="mb-2 rounded-xl border border-state-warning bg-state-warning-soft px-3 py-2 text-xs font-medium text-state-warning dark:border-state-warning/35 dark:bg-state-warning/10 dark:text-state-warning">
                 {baseRequirementMessage}
               </div>
             ) : null}
             {quotaPriceReady && generateQuotaPrice.status === "ok" ? (
-              <div className="mb-2 text-center text-xs font-medium text-slate-500 dark:text-slate-400">
+              <div className="mb-2 text-center text-xs font-medium text-text-muted dark:text-text-muted">
                 {t("chat.quota.estimate", { units: generateQuotaPrice.estimatedUnits })}
               </div>
             ) : !merchantId || quotaPriceQuery.isLoading || (quotaPriceQuery.isFetching && !quotaPriceQuery.data) ? null : (
               <div
-                className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200"
+                className="mb-2 rounded-xl border border-state-warning bg-state-warning-soft px-3 py-2 text-xs font-medium text-state-warning dark:border-state-warning/35 dark:bg-state-warning/10 dark:text-state-warning"
                 role="status"
               >
                 {t("chat.quota.priceUnavailable")}
@@ -1509,7 +1509,7 @@ export function ImageChatPage() {
               type="button"
               onClick={handleGenerate}
               disabled={generateDisabled}
-              className="inline-flex w-full items-center justify-center rounded-2xl bg-indigo-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500 disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:via-violet-500 dark:to-fuchsia-500 dark:shadow-violet-900/45 dark:ring-1 dark:ring-violet-300/35"
+              className="inline-flex w-full items-center justify-center rounded-2xl bg-accent px-4 py-3.5 text-sm font-semibold text-accent-fg shadow-lg transition-colors hover:bg-accent disabled:opacity-60 dark:ring-1 dark:ring-accent/35"
             >
               {generateMutation.isPending ? (
                 <Loader2 size={15} className="mr-2 animate-spin" />
@@ -1536,23 +1536,23 @@ export function ImageChatPage() {
         }}
       >
         <Drawer.Portal>
-          <Drawer.Overlay className="fixed inset-0 z-[70] bg-slate-950/45 backdrop-blur-[2px] lg:hidden" />
+          <Drawer.Overlay className="fixed inset-0 z-[70] bg-overlay backdrop-blur-[2px] lg:hidden" />
           <Drawer.Content
             onPointerDown={handleMobileSessionDrawerSwipeBackStart}
-            className="fixed inset-y-0 left-0 z-[71] flex w-[min(86vw,360px)] flex-col border-r border-slate-200 bg-white shadow-2xl outline-none dark:border-slate-700 dark:bg-[#0f1726] lg:hidden"
+            className="fixed inset-y-0 left-0 z-[71] flex w-[min(86vw,360px)] flex-col border-r border-border-l1 bg-surface-raised shadow-2xl outline-none dark:border-border-l1 dark:bg-surface-panel lg:hidden"
           >
             <Drawer.Title className="sr-only">{t("chat.mobileSessionDrawer")}</Drawer.Title>
-            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-800">
+            <div className="flex items-center justify-between gap-3 border-b border-border-l1 px-4 py-4 dark:border-border-l2">
               <div>
-                <div className="text-sm font-semibold text-slate-950 dark:text-white">{t("chat.sessions")}</div>
-                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">{t("chat.count", { count: sessionItems.length })}</div>
+                <div className="text-sm font-semibold text-text-primary dark:text-white">{t("chat.sessions")}</div>
+                <div className="mt-1 text-xs text-text-muted dark:text-text-muted">{t("chat.count", { count: sessionItems.length })}</div>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => createSessionMutation.mutate()}
                   disabled={createSessionMutation.isPending}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-sm shadow-indigo-500/20 transition-colors active:scale-[0.98] hover:bg-indigo-500 disabled:opacity-60 dark:bg-gradient-to-br dark:from-indigo-500 dark:to-violet-500 dark:shadow-violet-900/35 dark:ring-1 dark:ring-violet-300/30"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-accent text-accent-fg shadow-sm transition-colors active:scale-[0.98] hover:bg-accent disabled:opacity-60 dark:ring-1 dark:ring-accent/30"
                   aria-label={t("chat.newSession")}
                 >
                   {createSessionMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Plus size={18} />}
@@ -1564,7 +1564,7 @@ export function ImageChatPage() {
                     setMobileSessionDrawerOpen(false);
                     mobileSessionButtonRef.current?.focus();
                   }}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 transition-colors active:scale-[0.98] hover:border-slate-300 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-300 dark:hover:border-violet-400/55 dark:hover:text-violet-100"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-border-l1 bg-surface-raised text-text-secondary transition-colors active:scale-[0.98] hover:border-border-l3 hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-secondary dark:hover:border-accent/55 dark:hover:text-accent"
                 >
                   <X size={18} />
                 </button>
@@ -1599,12 +1599,12 @@ export function ImageChatPage() {
         }}
       >
         <Drawer.Portal>
-          <Drawer.Overlay className="fixed inset-0 z-[70] bg-slate-950/45 backdrop-blur-[2px] lg:hidden" />
-          <Drawer.Content className="fixed inset-y-0 right-0 z-[71] flex w-[7.75rem] flex-col border-l border-slate-200 bg-white shadow-2xl outline-none dark:border-slate-700 dark:bg-[#0f1726] lg:hidden">
+          <Drawer.Overlay className="fixed inset-0 z-[70] bg-overlay backdrop-blur-[2px] lg:hidden" />
+          <Drawer.Content className="fixed inset-y-0 right-0 z-[71] flex w-[7.75rem] flex-col border-l border-border-l1 bg-surface-raised shadow-2xl outline-none dark:border-border-l1 dark:bg-surface-panel lg:hidden">
             <Drawer.Title className="sr-only">{t("chat.mobileHistoryDrawer")}</Drawer.Title>
-            <div className="flex items-center justify-between gap-1 border-b border-slate-200 px-2 py-3 dark:border-slate-800">
+            <div className="flex items-center justify-between gap-1 border-b border-border-l1 px-2 py-3 dark:border-border-l2">
               <div className="min-w-0 px-1">
-                <div className="text-sm font-semibold text-slate-950 dark:text-white">{t("chat.history")}</div>
+                <div className="text-sm font-semibold text-text-primary dark:text-white">{t("chat.history")}</div>
               </div>
               <button
                 type="button"
@@ -1613,7 +1613,7 @@ export function ImageChatPage() {
                   setMobileHistoryDrawerOpen(false);
                   mobileHistoryButtonRef.current?.focus();
                 }}
-                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 transition-colors active:scale-[0.98] hover:border-slate-300 hover:text-slate-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-300 dark:hover:border-violet-400/55 dark:hover:text-violet-100"
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-border-l1 bg-surface-raised text-text-secondary transition-colors active:scale-[0.98] hover:border-border-l3 hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-secondary dark:hover:border-accent/55 dark:hover:text-accent"
               >
                 <X size={18} />
               </button>
@@ -1638,7 +1638,7 @@ export function ImageChatPage() {
       </Drawer.Root>
 
       <div className="fixed inset-x-0 z-40 px-3 lg:hidden" style={{ bottom: "calc(4.1rem + env(safe-area-inset-bottom))" }}>
-        <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_-6px_18px_rgba(15,23,42,0.12)] dark:border-slate-700 dark:bg-slate-950 dark:shadow-[0_-12px_28px_rgba(0,0,0,0.30)]">
+        <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-2xl border border-border-l1 bg-surface-raised p-2 shadow-[0_-6px_18px_rgba(15,23,42,0.12)] dark:border-border-l1 dark:bg-surface-base dark:shadow-[0_-12px_28px_rgba(0,0,0,0.30)]">
           {selectedRound ? (
             <div className="flex shrink-0 items-center gap-1.5">
               <a
@@ -1647,7 +1647,7 @@ export function ImageChatPage() {
                 rel="noreferrer"
                 title={t("chat.downloadCurrent")}
                 aria-label={t("chat.downloadCurrent")}
-                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm transition-colors active:scale-[0.98] hover:border-indigo-200 hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-200 dark:hover:border-violet-400/60 dark:hover:text-violet-100 dark:focus-visible:ring-violet-400"
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border-l1 bg-surface-raised px-2.5 text-xs font-semibold text-text-secondary shadow-sm transition-colors active:scale-[0.98] hover:border-accent hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-primary dark:hover:border-accent/60 dark:hover:text-accent dark:focus-visible:ring-accent"
               >
                 <Download size={15} className="shrink-0" />
                 <span>{t("chat.downloadShort")}</span>
@@ -1658,7 +1658,7 @@ export function ImageChatPage() {
                 disabled={saveMediaLibraryMutation.isPending}
                 title={t("chat.saveSelectedMediaLibrary")}
                 aria-label={t("chat.saveSelectedMediaLibrary")}
-                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 text-xs font-semibold text-indigo-700 shadow-sm transition-colors active:scale-[0.98] hover:border-indigo-300 hover:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60 dark:border-violet-400/35 dark:bg-violet-500/15 dark:text-violet-100 dark:hover:border-violet-300/55 dark:hover:bg-violet-500/25 dark:focus-visible:ring-violet-400"
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-accent bg-accent-soft px-2.5 text-xs font-semibold text-accent shadow-sm transition-colors active:scale-[0.98] hover:border-accent hover:bg-accent-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60 dark:border-accent/35 dark:bg-accent/15 dark:text-accent dark:hover:border-accent/55 dark:hover:bg-accent/25 dark:focus-visible:ring-accent"
               >
                 {saveMediaLibraryMutation.isPending ? <Loader2 size={15} className="shrink-0 animate-spin" /> : <Images size={15} className="shrink-0" />}
                 <span>{t("chat.sendMediaLibraryShort")}</span>
@@ -1669,7 +1669,7 @@ export function ImageChatPage() {
             ref={mobileSettingsButtonRef}
             type="button"
             onClick={() => setMobileGenerationSheetOpen(true)}
-            className={`flex min-h-11 min-w-0 items-center rounded-xl bg-indigo-600 text-left text-white shadow-md shadow-indigo-600/16 transition-colors hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-violet-600 dark:shadow-violet-900/35 dark:ring-1 dark:ring-violet-300/35 dark:focus-visible:ring-violet-300 ${
+            className={`flex min-h-11 min-w-0 items-center rounded-xl bg-accent text-left text-accent-fg shadow-md  transition-colors hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:bg-accent  dark:ring-1 dark:ring-accent/35 dark:focus-visible:ring-accent ${
               selectedRound ? "flex-1 px-2.5" : "w-full px-3"
             }`}
             aria-label={t("chat.openGenerationSheet")}
@@ -1678,7 +1678,7 @@ export function ImageChatPage() {
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold leading-5">{t("chat.mobileGenerate")}</span>
             </span>
-            <ChevronRight size={17} className="ml-2 shrink-0 text-indigo-100 dark:text-violet-100" />
+            <ChevronRight size={17} className="ml-2 shrink-0 text-accent dark:text-accent" />
           </button>
         </div>
       </div>
@@ -1695,11 +1695,11 @@ export function ImageChatPage() {
         }}
       >
         <Drawer.Portal>
-          <Drawer.Overlay className="fixed inset-0 z-[70] bg-slate-950/42 lg:hidden" />
-          <Drawer.Content className="mobile-generation-sheet fixed inset-x-0 bottom-0 z-[71] flex max-h-[80dvh] flex-col rounded-t-[1.5rem] border-t border-slate-200 bg-white shadow-[0_-12px_34px_rgba(15,23,42,0.16)] outline-none dark:border-slate-700 dark:bg-[#0f1726] dark:shadow-[0_-18px_42px_rgba(0,0,0,0.34)] lg:hidden">
+          <Drawer.Overlay className="fixed inset-0 z-[70] bg-overlay lg:hidden" />
+          <Drawer.Content className="mobile-generation-sheet fixed inset-x-0 bottom-0 z-[71] flex max-h-[80dvh] flex-col rounded-t-[1.5rem] border-t border-border-l1 bg-surface-raised shadow-[0_-12px_34px_rgba(15,23,42,0.16)] outline-none dark:border-border-l1 dark:bg-surface-panel dark:shadow-[0_-18px_42px_rgba(0,0,0,0.34)] lg:hidden">
             <Drawer.Title className="sr-only">{t("chat.mobileGenerationSheet")}</Drawer.Title>
-            <Drawer.Handle className="mx-auto mt-2 flex h-7 w-24 items-center justify-center rounded-full text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-slate-500 dark:focus-visible:ring-violet-400">
-              <span className="h-1.5 w-12 rounded-full bg-slate-300 dark:bg-slate-600" />
+            <Drawer.Handle className="mx-auto mt-2 flex h-7 w-24 items-center justify-center rounded-full text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:text-text-muted dark:focus-visible:ring-accent">
+              <span className="h-1.5 w-12 rounded-full bg-surface-subtle dark:bg-surface-subtle" />
             </Drawer.Handle>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2">
 
@@ -1736,7 +1736,7 @@ export function ImageChatPage() {
                     />
 
                     <div>
-                      <label className="mb-2 block text-sm font-semibold text-slate-950 dark:text-white" htmlFor="image-chat-prompt-mobile">
+                      <label className="mb-2 block text-sm font-semibold text-text-primary dark:text-white" htmlFor="image-chat-prompt-mobile">
                         {t("chat.prompt")}
                       </label>
                       <textarea
@@ -1745,7 +1745,7 @@ export function ImageChatPage() {
                         onChange={(event) => setDraft(event.target.value)}
                         rows={6}
                         placeholder={t("chat.freePromptPlaceholder")}
-                        className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/20"
+                        className="w-full resize-none rounded-2xl border border-border-l1 px-3 py-3 text-sm leading-6 text-text-primary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent dark:border-border-l1 dark:bg-surface-base/70 dark:text-text-primary dark:placeholder:text-text-muted dark:focus:border-accent dark:focus:ring-accent/20"
                       />
                     </div>
 
@@ -1771,28 +1771,28 @@ export function ImageChatPage() {
 
               <div className="mt-4 space-y-3">
                 {successMessage ? (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-400/35 dark:bg-emerald-500/10 dark:text-emerald-200">
+                  <div className="rounded-xl border border-state-success bg-state-success-soft px-3 py-2 text-sm text-state-success dark:border-state-success/35 dark:bg-state-success/10 dark:text-state-success">
                     {successMessage}
                   </div>
                 ) : null}
                 {errorMessage ? (
-                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">{errorMessage}</div>
+                  <div className="rounded-xl border border-state-error bg-state-error-soft px-3 py-2 text-sm text-state-error dark:border-state-error/35 dark:bg-state-error/10 dark:text-state-error">{errorMessage}</div>
                 ) : null}
               </div>
             </div>
-            <div className="border-t border-slate-200 bg-white/96 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] dark:border-slate-800 dark:bg-slate-950/94">
+            <div className="border-t border-border-l1 bg-surface-raised/96 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] dark:border-border-l2 dark:bg-surface-base/94">
               {baseRequirementMessage ? (
-                <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200">
+                <div className="mb-2 rounded-xl border border-state-warning bg-state-warning-soft px-3 py-2 text-xs font-medium text-state-warning dark:border-state-warning/35 dark:bg-state-warning/10 dark:text-state-warning">
                   {baseRequirementMessage}
                 </div>
               ) : null}
               {quotaPriceReady && generateQuotaPrice.status === "ok" ? (
-                <div className="mb-2 text-center text-xs font-medium text-slate-500 dark:text-slate-400">
+                <div className="mb-2 text-center text-xs font-medium text-text-muted dark:text-text-muted">
                   {t("chat.quota.estimate", { units: generateQuotaPrice.estimatedUnits })}
                 </div>
               ) : !merchantId || quotaPriceQuery.isLoading || (quotaPriceQuery.isFetching && !quotaPriceQuery.data) ? null : (
                 <div
-                  className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200"
+                  className="mb-2 rounded-xl border border-state-warning bg-state-warning-soft px-3 py-2 text-xs font-medium text-state-warning dark:border-state-warning/35 dark:bg-state-warning/10 dark:text-state-warning"
                   role="status"
                 >
                   {t("chat.quota.priceUnavailable")}
@@ -1802,7 +1802,7 @@ export function ImageChatPage() {
                 type="button"
                 onClick={handleGenerate}
                 disabled={generateDisabled}
-                className="inline-flex min-h-12 w-full items-center justify-center rounded-2xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-colors active:scale-[0.98] hover:bg-indigo-500 disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:via-violet-500 dark:to-fuchsia-500 dark:shadow-violet-900/45 dark:ring-1 dark:ring-violet-300/35"
+                className="inline-flex min-h-12 w-full items-center justify-center rounded-2xl bg-accent px-4 text-sm font-semibold text-accent-fg shadow-lg transition-colors active:scale-[0.98] hover:bg-accent disabled:opacity-60 dark:ring-1 dark:ring-accent/35"
               >
                 {generateMutation.isPending ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Sparkles size={15} className="mr-2" />}
                 {generateMutation.isPending

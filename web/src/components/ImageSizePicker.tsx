@@ -73,27 +73,27 @@ export function ImageSizePicker({ value, presets, onChange, disabled = false, ma
               title={formatImageSizeValue(option.value)}
               className={`flex h-24 flex-col items-center justify-center rounded-xl border px-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                 active
-                  ? "border-indigo-500 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-100 dark:border-violet-400 dark:bg-violet-500/18 dark:text-violet-50 dark:ring-violet-400/45"
-                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-950/62 dark:text-slate-300 dark:hover:border-violet-400/50 dark:hover:text-violet-100"
+                  ? "border-accent bg-accent-soft text-accent ring-2 ring-accent dark:border-accent dark:bg-accent/18 dark:text-accent dark:ring-accent/45"
+                  : "border-border-l1 bg-surface-raised text-text-secondary hover:border-border-l3 hover:text-text-primary dark:border-border-l1 dark:bg-surface-base/62 dark:text-text-secondary dark:hover:border-accent/50 dark:hover:text-accent"
               }`}
             >
               <ImageRatioFrame aspectRatio={option.aspect} label={display.tierLabel} className="mb-1.5" />
               <span>{display.aspectLabel}</span>
-              <span className="mt-0.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">{display.dimensionLabel}</span>
+              <span className="mt-0.5 text-[10px] font-medium text-text-muted dark:text-text-muted">{display.dimensionLabel}</span>
             </button>
           );
         })}
       </div>
-      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950/50">
+      <div className="rounded-xl border border-border-l1 bg-surface-base p-3 dark:border-border-l1 dark:bg-surface-base/50">
         <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="text-xs font-semibold text-slate-700 dark:text-slate-100">{t("imageSize.custom")}</div>
-          <div className="shrink-0 text-[11px] font-medium text-slate-400 dark:text-slate-500">
+          <div className="text-xs font-semibold text-text-secondary dark:text-text-primary">{t("imageSize.custom")}</div>
+          <div className="shrink-0 text-[11px] font-medium text-text-muted dark:text-text-muted">
             {t("imageSize.current", { size: normalizedValue ? formatImageSizeValue(normalizedValue) : t("imageSize.unset") })}
           </div>
         </div>
         <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
           <label className="block min-w-0">
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-text-muted dark:text-text-muted">
               {t("imageSize.width")}
             </span>
             <input
@@ -102,13 +102,13 @@ export function ImageSizePicker({ value, presets, onChange, disabled = false, ma
               pattern="[0-9]*"
               onChange={(event) => updateCustom(event.target.value, height)}
               disabled={disabled}
-              className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900 outline-none transition-colors focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100 dark:focus:border-violet-400 dark:focus:ring-violet-400/20 dark:disabled:bg-slate-950"
+              className="h-9 w-full rounded-lg border border-border-l1 bg-surface-raised px-2 text-xs text-text-primary outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent disabled:bg-surface-subtle dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-primary dark:focus:border-accent dark:focus:ring-accent/20 dark:disabled:bg-surface-base"
               placeholder="2048"
             />
           </label>
-          <span className="pb-2 text-xs text-slate-400 dark:text-slate-500">×</span>
+          <span className="pb-2 text-xs text-text-muted dark:text-text-muted">×</span>
           <label className="block min-w-0">
-            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-widest text-text-muted dark:text-text-muted">
               {t("imageSize.height")}
             </span>
             <input
@@ -117,12 +117,12 @@ export function ImageSizePicker({ value, presets, onChange, disabled = false, ma
               pattern="[0-9]*"
               onChange={(event) => updateCustom(width, event.target.value)}
               disabled={disabled}
-              className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900 outline-none transition-colors focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100 dark:focus:border-violet-400 dark:focus:ring-violet-400/20 dark:disabled:bg-slate-950"
+              className="h-9 w-full rounded-lg border border-border-l1 bg-surface-raised px-2 text-xs text-text-primary outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent disabled:bg-surface-subtle dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-primary dark:focus:border-accent dark:focus:ring-accent/20 dark:disabled:bg-surface-base"
               placeholder="2048"
             />
           </label>
         </div>
-        <div className="mt-2 text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+        <div className="mt-2 text-[11px] leading-5 text-text-muted dark:text-text-muted">
           {customResolution ? (
             <>
               {t("imageSize.output", { size: formatImageSizeValue(customResolution.value) })}

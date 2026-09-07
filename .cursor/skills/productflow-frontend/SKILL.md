@@ -26,7 +26,11 @@ description: Design new or substantially restyled ProductFlow UI using existing 
 
 围绕用户在当前界面完成的任务安排信息和操作。只调整本次范围内影响该任务的内容，不为完成设计练习扩大清理范围。
 
-不要新开色板、字体、布局壳、节点卡皮肤。accent 只有一套（亮 indigo / 暗 violet）。字体是 Inter + 中文回退。
+视觉变量由 `web/src/index.css` 统一拥有。使用低饱和灰绿强调色、Inter + 中文回退；页面不自建色阶或紫色渐变。主操作、焦点和必要选中标记使用 accent，普通标题与固定导航优先使用文字层级。
+
+固定相邻区域使用 surface-base / surface-panel 与接缝，独立对象使用 surface-raised，临时浮层使用明确的边框与 elevation。表单分组用标题、留白和分隔线；商品、素材、节点和一次运行可以使用对象卡片。
+
+视觉治理必须保留字段、操作、状态、校验与手动入口；删除重复说明前核实显示条件，上传限制、保存冲突、费用及删除影响在决策处保留。组件与调用方统一修改，禁止通过删除业务内容降低画面密度。
 
 ## 文案
 

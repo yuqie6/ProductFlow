@@ -1204,7 +1204,7 @@ function ProductSourceEditor({
           {factsImpact ? (
             <div
               data-facts-impact-preview
-              className="space-y-2 border border-border-l1 bg-surface-muted/40 px-3 py-2.5 text-xs leading-5 text-text-secondary"
+              className="space-y-2 border border-border-l1 bg-surface-subtle/40 px-3 py-2.5 text-xs leading-5 text-text-secondary"
             >
               <p className="font-semibold text-text-primary">{t("graph.inspector.productFactsImpactTitle")}</p>
               <p>{t("graph.inspector.productFactsImpactHint")}</p>

@@ -131,7 +131,7 @@ export function ProductListPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50 dark:!bg-[#0b0c0e]">
+    <div className="flex min-h-screen flex-col bg-surface-base dark:bg-surface-base">
       <TopNav
         onHome={() => navigate("/home")}
         onLogout={() => logoutMutation.mutate()}

@@ -811,11 +811,11 @@ function searchDocPages(query: string, pages: DocPage[]): SearchResult[] {
 
 function renderBlock(block: SectionBlock) {
   if (block.type === "paragraph") {
-    return <p className="text-[15px] leading-7 text-slate-700 dark:text-slate-300">{block.text}</p>;
+    return <p className="text-[15px] leading-7 text-text-secondary dark:text-text-secondary">{block.text}</p>;
   }
   if (block.type === "list") {
     return (
-      <ul className="list-disc space-y-2 pl-5 text-[15px] leading-7 text-slate-700 marker:text-indigo-500 dark:text-slate-300 dark:marker:text-violet-300">
+      <ul className="list-disc space-y-2 pl-5 text-[15px] leading-7 text-text-secondary marker:text-accent dark:text-text-secondary dark:marker:text-accent">
         {block.items.map((item) => <li key={item}>{item}</li>)}
       </ul>
     );
@@ -824,8 +824,8 @@ function renderBlock(block: SectionBlock) {
     return (
       <ol className="space-y-3">
         {block.items.map((item, index) => (
-          <li key={item} className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 text-[15px] leading-7 text-slate-700 dark:text-slate-300">
-            <span className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 bg-white text-xs font-semibold text-slate-600 dark:border-violet-400/35 dark:bg-violet-500/15 dark:text-violet-100">
+          <li key={item} className="grid grid-cols-[1.75rem_minmax(0,1fr)] gap-3 text-[15px] leading-7 text-text-secondary dark:text-text-secondary">
+            <span className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-border-l3 bg-surface-raised text-xs font-semibold text-text-secondary dark:border-accent/35 dark:bg-accent/15 dark:text-accent">
               {index + 1}
             </span>
             <span>{item}</span>
@@ -835,9 +835,9 @@ function renderBlock(block: SectionBlock) {
     );
   }
   return (
-    <div className="rounded-lg border border-indigo-100 bg-indigo-50/70 px-4 py-3 dark:border-violet-400/35 dark:bg-violet-500/10">
-      <div className="text-sm font-semibold text-indigo-950 dark:text-violet-100">{block.title}</div>
-      <p className="mt-1 text-sm leading-6 text-indigo-950/80 dark:text-slate-300">{block.text}</p>
+    <div className="rounded-lg border border-accent bg-accent-soft/70 px-4 py-3 dark:border-accent/35 dark:bg-accent/10">
+      <div className="text-sm font-semibold text-accent dark:text-accent">{block.title}</div>
+      <p className="mt-1 text-sm leading-6 text-accent/80 dark:text-text-secondary">{block.text}</p>
     </div>
   );
 }
@@ -865,35 +865,35 @@ export function HelpPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-white dark:bg-[#060a12] dark:text-slate-100">
+    <div className="flex min-h-screen flex-col bg-surface-raised dark:bg-surface-base dark:text-text-primary">
       <TopNav breadcrumbs={t("help.breadcrumb")} onHome={() => navigate("/home")} />
 
       <main className="mx-auto grid w-full max-w-[1440px] flex-1 grid-cols-1 lg:grid-cols-[248px_minmax(0,1fr)_208px]">
-        <aside className="border-b border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-[#0f1726] lg:border-r lg:border-b-0">
-          <div className="border-b border-slate-200 px-4 py-5 dark:border-slate-800">
-            <button type="button" onClick={() => openPage("overview")} className="flex items-center gap-2 text-left text-base font-semibold text-slate-950 dark:text-white">
-              <BookOpen size={18} className="text-indigo-600 dark:text-violet-300" />
+        <aside className="border-b border-border-l1 bg-surface-base/70 dark:border-border-l2 dark:bg-surface-panel lg:border-r lg:border-b-0">
+          <div className="border-b border-border-l1 px-4 py-5 dark:border-border-l2">
+            <button type="button" onClick={() => openPage("overview")} className="flex items-center gap-2 text-left text-base font-semibold text-text-primary dark:text-white">
+              <BookOpen size={18} className="text-accent dark:text-accent" />
               {t("help.title")}
             </button>
             <div className="relative mt-4">
               <label htmlFor="help-search" className="sr-only">{t("help.search")}</label>
-              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
               <input
                 id="help-search"
                 type="search"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder={t("help.search")}
-                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-9 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100 dark:focus:border-violet-400 dark:focus:ring-violet-400/20"
+                className="h-9 w-full rounded-lg border border-border-l1 bg-surface-raised px-9 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent focus:ring-2 focus:ring-accent dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary dark:focus:border-accent dark:focus:ring-accent/20"
               />
               {searchQuery.trim() ? (
-                <div className="absolute left-0 right-0 top-11 z-20 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-[#151f33]">
+                <div className="absolute left-0 right-0 top-11 z-20 overflow-hidden rounded-lg border border-border-l1 bg-surface-raised shadow-lg dark:border-border-l1 dark:bg-surface-panel">
                   {searchResults.length ? searchResults.map((result) => (
-                    <button key={result.page.slug} type="button" onClick={() => openPage(result.page.slug)} className="block w-full border-b border-slate-100 px-3 py-2.5 text-left last:border-b-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-violet-500/10">
-                      <div className="truncate text-sm font-semibold text-slate-950 dark:text-white">{result.page.title}</div>
-                      <div className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{result.preview}</div>
+                    <button key={result.page.slug} type="button" onClick={() => openPage(result.page.slug)} className="block w-full border-b border-border-l2 px-3 py-2.5 text-left last:border-b-0 hover:bg-surface-base dark:border-border-l2 dark:hover:bg-accent/10">
+                      <div className="truncate text-sm font-semibold text-text-primary dark:text-white">{result.page.title}</div>
+                      <div className="mt-1 line-clamp-2 text-xs leading-5 text-text-muted dark:text-text-muted">{result.preview}</div>
                     </button>
-                  )) : <div className="px-3 py-3 text-sm text-slate-500 dark:text-slate-400">{t("help.noSearchResults")}</div>}
+                  )) : <div className="px-3 py-3 text-sm text-text-muted dark:text-text-muted">{t("help.noSearchResults")}</div>}
                 </div>
               ) : null}
             </div>
@@ -902,15 +902,15 @@ export function HelpPage() {
           <nav className="hidden space-y-5 px-3 py-5 lg:block" aria-label={t("help.nav")}>
             {navGroups.map((group) => (
               <div key={group.title}>
-                <div className="px-2 text-xs font-semibold text-slate-500 dark:text-slate-400">{group.title}</div>
+                <div className="px-2 text-xs font-semibold text-text-muted dark:text-text-muted">{group.title}</div>
                 <div className="mt-2 space-y-1">
                   {group.pages.map((slug) => {
                     const item = pagesBySlug.get(slug)!;
                     const Icon = item.icon;
                     const active = item.slug === page.slug;
                     return (
-                      <button key={item.slug} type="button" onClick={() => openPage(item.slug)} aria-current={active ? "page" : undefined} className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${active ? "bg-white font-semibold text-indigo-700 shadow-sm ring-1 ring-slate-200 dark:bg-violet-500/15 dark:text-violet-100 dark:ring-violet-400/35" : "text-slate-600 hover:bg-white hover:text-slate-950 dark:text-slate-300 dark:hover:bg-violet-500/10 dark:hover:text-white"}`}>
-                        <Icon size={15} className={active ? "text-indigo-600 dark:text-violet-200" : "text-slate-400"} />
+                      <button key={item.slug} type="button" onClick={() => openPage(item.slug)} aria-current={active ? "page" : undefined} className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${active ? "bg-surface-raised font-semibold text-accent shadow-sm ring-1 ring-border-l1 dark:bg-accent/15 dark:text-accent dark:ring-accent/35" : "text-text-secondary hover:bg-surface-raised hover:text-text-primary dark:text-text-secondary dark:hover:bg-accent/10 dark:hover:text-text-primary"}`}>
+                        <Icon size={15} className={active ? "text-accent dark:text-accent" : "text-text-muted"} />
                         <span className="min-w-0 truncate">{item.title}</span>
                       </button>
                     );
@@ -921,7 +921,7 @@ export function HelpPage() {
           </nav>
 
           <div className="p-4 lg:hidden">
-            <label htmlFor="doc-page" className="mb-2 block text-xs font-semibold text-slate-500 dark:text-slate-400">{t("help.pageSelect")}</label>
+            <label htmlFor="doc-page" className="mb-2 block text-xs font-semibold text-text-muted dark:text-text-muted">{t("help.pageSelect")}</label>
             <SelectField
               id="doc-page"
               value={page.slug}
@@ -934,43 +934,43 @@ export function HelpPage() {
           </div>
         </aside>
 
-        <article className="min-w-0 bg-white px-5 py-8 dark:bg-[#0b1220] sm:px-8 lg:px-10 lg:py-10">
+        <article className="min-w-0 bg-surface-raised px-5 py-8 dark:bg-surface-panel sm:px-8 lg:px-10 lg:py-10">
           <header className="max-w-3xl">
-            <div className="mb-4 flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+            <div className="mb-4 flex items-center gap-2 text-sm text-text-muted dark:text-text-muted">
               <span>{page.category}</span><ChevronRight size={14} /><span>{page.title}</span>
             </div>
-            <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-indigo-600 dark:border-violet-400/35 dark:bg-violet-500/15 dark:text-violet-100"><PageIcon size={20} /></div>
-            <h1 className="text-3xl font-semibold text-slate-950 dark:text-white">{page.title}</h1>
-            <p className="mt-3 text-base leading-7 text-slate-600 dark:text-slate-300">{page.description}</p>
+            <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border-l1 bg-surface-base text-accent dark:border-accent/35 dark:bg-accent/15 dark:text-accent"><PageIcon size={20} /></div>
+            <h1 className="text-3xl font-semibold text-text-primary dark:text-white">{page.title}</h1>
+            <p className="mt-3 text-base leading-7 text-text-secondary dark:text-text-secondary">{page.description}</p>
           </header>
 
           <div className="mt-9 max-w-3xl space-y-9">
             {page.sections.map((section) => (
               <section key={section.id} id={section.id} className="scroll-mt-6">
-                <h2 className="text-xl font-semibold text-slate-950 dark:text-white">{section.title}</h2>
+                <h2 className="text-xl font-semibold text-text-primary dark:text-white">{section.title}</h2>
                 <div className="mt-4 space-y-4">{section.blocks.map((block, index) => <div key={`${section.id}-${index}`}>{renderBlock(block)}</div>)}</div>
               </section>
             ))}
           </div>
 
-          <footer className="mt-12 grid max-w-3xl gap-3 border-t border-slate-200 pt-6 dark:border-slate-800 sm:grid-cols-2">
-            {previousPage ? <button type="button" onClick={() => openPage(previousPage.slug)} className="rounded-lg border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 dark:border-slate-700 dark:bg-[#0f1726] dark:hover:bg-violet-500/10"><div className="text-xs text-slate-500">{t("help.previous")}</div><div className="mt-1 text-sm font-semibold text-slate-950 dark:text-white">{previousPage.title}</div></button> : <div />}
-            {nextPage ? <button type="button" onClick={() => openPage(nextPage.slug)} className="rounded-lg border border-slate-200 px-4 py-3 text-left hover:bg-slate-50 dark:border-slate-700 dark:bg-[#0f1726] dark:hover:bg-violet-500/10 sm:text-right"><div className="text-xs text-slate-500">{t("help.next")}</div><div className="mt-1 inline-flex items-center text-sm font-semibold text-indigo-700 dark:text-violet-200">{nextPage.title}<ArrowRight size={14} className="ml-1" /></div></button> : null}
+          <footer className="mt-12 grid max-w-3xl gap-3 border-t border-border-l1 pt-6 dark:border-border-l2 sm:grid-cols-2">
+            {previousPage ? <button type="button" onClick={() => openPage(previousPage.slug)} className="rounded-lg border border-border-l1 px-4 py-3 text-left hover:bg-surface-base dark:border-border-l1 dark:bg-surface-panel dark:hover:bg-accent/10"><div className="text-xs text-text-muted">{t("help.previous")}</div><div className="mt-1 text-sm font-semibold text-text-primary">{previousPage.title}</div></button> : <div />}
+            {nextPage ? <button type="button" onClick={() => openPage(nextPage.slug)} className="rounded-lg border border-border-l1 px-4 py-3 text-left hover:bg-surface-base dark:border-border-l1 dark:bg-surface-panel dark:hover:bg-accent/10 sm:text-right"><div className="text-xs text-text-muted">{t("help.next")}</div><div className="mt-1 inline-flex items-center text-sm font-semibold text-accent dark:text-accent">{nextPage.title}<ArrowRight size={14} className="ml-1" /></div></button> : null}
           </footer>
         </article>
 
-        <aside className="hidden border-l border-slate-200 bg-slate-50/70 px-4 py-10 dark:border-slate-800 dark:bg-[#0f1726] lg:block">
+        <aside className="hidden border-l border-border-l1 bg-surface-base/70 px-4 py-10 dark:border-border-l2 dark:bg-surface-panel lg:block">
           <div className="sticky top-8">
-            <div className="text-sm font-semibold text-slate-950 dark:text-white">{t("help.onThisPage")}</div>
+            <div className="text-sm font-semibold text-text-primary dark:text-white">{t("help.onThisPage")}</div>
             <nav className="mt-3 space-y-2" aria-label={t("help.onThisPage")}>
-              {page.sections.map((section) => <a key={section.id} href={`#${section.id}`} className="block border-l border-slate-200 pl-3 text-sm leading-5 text-slate-500 hover:border-indigo-400 hover:text-slate-950 dark:border-slate-700 dark:text-slate-400 dark:hover:border-violet-400 dark:hover:text-white">{section.title}</a>)}
+              {page.sections.map((section) => <a key={section.id} href={`#${section.id}`} className="block border-l border-border-l1 pl-3 text-sm leading-5 text-text-muted hover:border-accent hover:text-text-primary dark:border-border-l1 dark:text-text-muted dark:hover:border-accent dark:hover:text-white">{section.title}</a>)}
             </nav>
-            <div className="mt-8 border-t border-slate-200 pt-5 dark:border-slate-800">
-              <div className="flex items-center gap-2 text-sm font-semibold text-slate-950 dark:text-white"><CircleHelp size={15} className="text-indigo-600 dark:text-violet-300" />{t("help.needAction")}</div>
+            <div className="mt-8 border-t border-border-l1 pt-5 dark:border-border-l2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-text-primary dark:text-white"><CircleHelp size={15} className="text-accent dark:text-accent" />{t("help.needAction")}</div>
               <div className="mt-3 grid gap-2">
-                <button type="button" onClick={() => navigate("/products")} className="rounded-md bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-violet-500 dark:hover:bg-violet-400">{t("help.openProducts")}</button>
-                <button type="button" onClick={() => navigate("/media-library")} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:text-slate-950 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300 dark:hover:bg-violet-500/10 dark:hover:text-white"><Images size={14} className="mr-1.5 inline" />{t("help.openMediaLibrary")}</button>
-                <button type="button" onClick={() => navigate("/image-chat")} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:text-slate-950 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300 dark:hover:bg-violet-500/10 dark:hover:text-white"><GalleryHorizontalEnd size={14} className="mr-1.5 inline" />{t("help.openImageChat")}</button>
+                <button type="button" onClick={() => navigate("/products")} className="rounded-md bg-accent px-3 py-2 text-sm font-semibold text-accent-fg hover:bg-accent-strong dark:bg-accent dark:hover:bg-accent">{t("help.openProducts")}</button>
+                <button type="button" onClick={() => navigate("/media-library")} className="rounded-md border border-border-l1 bg-surface-raised px-3 py-2 text-sm font-semibold text-text-secondary hover:text-text-primary dark:border-border-l1 dark:bg-surface-panel dark:text-text-secondary dark:hover:bg-accent/10 dark:hover:text-text-primary"><Images size={14} className="mr-1.5 inline" />{t("help.openMediaLibrary")}</button>
+                <button type="button" onClick={() => navigate("/image-chat")} className="rounded-md border border-border-l1 bg-surface-raised px-3 py-2 text-sm font-semibold text-text-secondary hover:text-text-primary dark:border-border-l1 dark:bg-surface-panel dark:text-text-secondary dark:hover:bg-accent/10 dark:hover:text-text-primary"><GalleryHorizontalEnd size={14} className="mr-1.5 inline" />{t("help.openImageChat")}</button>
               </div>
             </div>
           </div>

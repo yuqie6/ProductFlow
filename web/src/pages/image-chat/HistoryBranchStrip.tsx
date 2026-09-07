@@ -42,7 +42,7 @@ export function HistoryBranchStrip({
   if (variant === "mobileDrawer") {
     return (
       <div className="flex flex-col items-center gap-2">
-        <div className="inline-flex min-h-7 max-w-[5.75rem] items-center gap-1 rounded-full border border-slate-200 bg-white px-2 text-[11px] font-semibold text-slate-800 shadow-sm dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100">
+        <div className="inline-flex min-h-7 max-w-[5.75rem] items-center gap-1 rounded-full border border-border-l1 bg-surface-raised px-2 text-[11px] font-semibold text-text-primary shadow-sm dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary">
           {branch.depth > 0 ? <Layers3 size={12} /> : <History size={12} />}
           <span className="truncate">{branchLabel}</span>
         </div>
@@ -67,24 +67,24 @@ export function HistoryBranchStrip({
 
   return (
     <div
-      className="relative flex w-max shrink-0 snap-start flex-col gap-1 rounded-2xl lg:ml-[var(--branch-depth-offset)] lg:h-full lg:flex-row lg:gap-2 lg:border lg:border-slate-200 lg:bg-slate-50/80 lg:p-2 lg:dark:border-slate-700/80 lg:dark:bg-[#151f33]"
+      className="relative flex w-max shrink-0 snap-start flex-col gap-1 rounded-2xl lg:ml-[var(--branch-depth-offset)] lg:h-full lg:flex-row lg:gap-2 lg:border lg:border-border-l1 lg:bg-surface-base/80 lg:p-2 lg:dark:border-border-l1/80 lg:dark:bg-surface-panel"
       style={{ "--branch-depth-offset": `${depthOffset}px` } as CSSProperties}
     >
       {branch.depth > 0 ? (
-        <div className="pointer-events-none absolute -left-3 top-1/2 hidden h-px w-3 bg-slate-300 dark:bg-slate-700 lg:block" />
+        <div className="pointer-events-none absolute -left-3 top-1/2 hidden h-px w-3 bg-surface-subtle dark:bg-surface-subtle lg:block" />
       ) : null}
-      <div className="flex w-max items-center gap-1 px-0.5 text-[11px] text-slate-500 dark:text-slate-400 lg:hidden">
-        <div className="flex min-w-0 items-center gap-1 rounded-full border border-slate-200 bg-white/86 px-1.5 py-0.5 shadow-sm dark:border-slate-700 dark:bg-[#0b1220]/88">
-          <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-slate-200 bg-white px-1.5 font-semibold text-slate-700 shadow-sm dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100">
+      <div className="flex w-max items-center gap-1 px-0.5 text-[11px] text-text-muted dark:text-text-muted lg:hidden">
+        <div className="flex min-w-0 items-center gap-1 rounded-full border border-border-l1 bg-surface-raised/86 px-1.5 py-0.5 shadow-sm dark:border-border-l1 dark:bg-surface-panel/88">
+          <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-border-l1 bg-surface-raised px-1.5 font-semibold text-text-secondary shadow-sm dark:border-border-l1 dark:bg-surface-panel dark:text-text-primary">
             {branch.depth > 0 ? <Layers3 size={12} /> : <History size={12} />}
             {branchLabel}
           </span>
           <span className="pr-1">{t("chat.imageCount", { count: branch.candidates.length })}</span>
         </div>
       </div>
-      <div className="hidden w-28 shrink-0 flex-col justify-between rounded-xl bg-white p-2 text-xs text-slate-500 ring-1 ring-slate-200 dark:bg-[#0b1220] dark:text-slate-400 dark:ring-slate-600/80 lg:flex">
+      <div className="hidden w-28 shrink-0 flex-col justify-between rounded-xl bg-surface-raised p-2 text-xs text-text-muted ring-1 ring-border-l1 dark:bg-surface-panel dark:text-text-muted dark:ring-border-l3/80 lg:flex">
         <div>
-          <div className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-100">
+          <div className="flex items-center gap-1.5 font-semibold text-text-primary dark:text-text-primary">
             {branch.depth > 0 ? <Layers3 size={12} /> : <History size={12} />}
             {branchLabel}
           </div>
@@ -93,7 +93,7 @@ export function HistoryBranchStrip({
         <button
           type="button"
           onClick={() => onPreviewPrompt(promptPreview)}
-          className="hidden rounded-md text-left text-[11px] leading-4 text-slate-400 transition-colors hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-slate-500 dark:hover:text-violet-200 lg:line-clamp-3"
+          className="hidden rounded-md text-left text-[11px] leading-4 text-text-muted transition-colors hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:text-text-muted dark:hover:text-accent lg:line-clamp-3"
         >
           {branch.prompt}
         </button>
@@ -139,15 +139,15 @@ function HistoryCandidateCard({
   t,
 }: HistoryCandidateCardProps) {
   const cardClassName = (active: boolean, asBase = false) =>
-    `group/card relative shrink-0 overflow-hidden rounded-xl border bg-white transition-all dark:bg-[#0b1220] ${
+    `group/card relative shrink-0 overflow-hidden rounded-xl border bg-surface-raised transition-all dark:bg-surface-panel ${
       variant === "mobileDrawer"
         ? "aspect-square min-h-[5.75rem] w-full"
         : "h-[5.5rem] w-[5.5rem] lg:aspect-square lg:h-full lg:w-auto lg:min-w-[7rem] lg:rounded-2xl"
     } ${
       active
-        ? "border-indigo-400 ring-2 ring-indigo-200 dark:border-violet-400 dark:ring-violet-400/45"
-        : "border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-violet-400/45"
-    } ${asBase ? "shadow-md shadow-indigo-200/70 dark:shadow-violet-950/40" : ""}`;
+        ? "border-accent ring-2 ring-accent dark:border-accent dark:ring-accent/45"
+        : "border-border-l1 hover:border-border-l3 dark:border-border-l1 dark:hover:border-accent/45"
+    } ${asBase ? "shadow-md  " : ""}`;
 
   if (candidate.kind === "placeholder") {
     const active = candidate.id === selectedTaskPlaceholderId;
@@ -163,16 +163,16 @@ function HistoryCandidateCard({
             <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${placeholderStatusClass(candidate)}`}>
               {candidate.candidate_index}/{candidate.candidate_count}
             </span>
-            {active ? <Check size={13} className="shrink-0 text-indigo-600" /> : null}
+            {active ? <Check size={13} className="shrink-0 text-accent" /> : null}
           </div>
           <div className="flex flex-1 items-center justify-center">
-            <div className="relative flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-50 text-indigo-600 ring-1 ring-slate-200 dark:bg-violet-500/12 dark:text-violet-200 dark:ring-violet-400/30 lg:h-12 lg:w-12">
+            <div className="relative flex h-10 w-10 items-center justify-center rounded-2xl bg-surface-base text-accent ring-1 ring-border-l1 dark:bg-accent/12 dark:text-accent dark:ring-accent/30 lg:h-12 lg:w-12">
               {running ? <Loader2 size={19} className="animate-spin" /> : <Sparkles size={19} />}
             </div>
           </div>
           <div>
-            <div className="truncate text-[11px] font-semibold text-slate-700 dark:text-slate-100">{placeholderStatusLabel(candidate, t)}</div>
-            <div className="mt-0.5 hidden text-[10px] leading-3 text-slate-400 dark:text-slate-500 lg:line-clamp-2">{candidate.prompt}</div>
+            <div className="truncate text-[11px] font-semibold text-text-secondary dark:text-text-primary">{placeholderStatusLabel(candidate, t)}</div>
+            <div className="mt-0.5 hidden text-[10px] leading-3 text-text-muted dark:text-text-muted lg:line-clamp-2">{candidate.prompt}</div>
           </div>
         </button>
       </div>
@@ -185,7 +185,7 @@ function HistoryCandidateCard({
   const candidateLabel =
     round.candidate_count > 1 ? `${round.candidate_index}/${round.candidate_count}` : imageRoundSizeLabel(round, t);
   return (
-    <div className={`${cardClassName(active, asBase)} ${asBase ? "" : "shadow-sm shadow-slate-200/60 dark:shadow-slate-950/30"}`}>
+    <div className={`${cardClassName(active, asBase)} ${asBase ? "" : "shadow-sm  "}`}>
       <button type="button" onClick={() => onSelectRound(round.generated_asset.id)} className="block h-full w-full text-left">
         <img
           src={api.toApiUrl(round.generated_asset.thumbnail_url)}
@@ -194,7 +194,7 @@ function HistoryCandidateCard({
           decoding="async"
           className="h-full w-full object-cover"
         />
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/80 via-slate-950/24 to-transparent px-1.5 pb-1 pt-5 text-white lg:p-1.5 lg:pt-8">
+        <div className="absolute inset-x-0 bottom-0 bg-accent from-slate-950/80 via-slate-950/24 to-transparent px-1.5 pb-1 pt-5 text-accent-fg lg:p-1.5 lg:pt-8">
           <div className="flex items-center justify-between gap-2 text-[11px] font-medium">
             <span className="min-w-0 truncate">{candidateLabel}</span>
             {active ? <Check size={13} className="shrink-0" /> : null}
@@ -202,7 +202,7 @@ function HistoryCandidateCard({
         </div>
       </button>
       {asBase ? (
-        <div className="absolute left-1.5 top-1.5 max-w-[calc(100%-2.75rem)] truncate rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm dark:bg-violet-500/85 dark:ring-1 dark:ring-violet-200/30">
+        <div className="absolute left-1.5 top-1.5 max-w-[calc(100%-2.75rem)] truncate rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-accent-fg shadow-sm dark:bg-accent/85 dark:ring-1 dark:ring-accent/30">
           {t("chat.baseImage")}
         </div>
       ) : null}

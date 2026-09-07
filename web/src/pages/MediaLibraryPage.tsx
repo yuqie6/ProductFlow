@@ -482,7 +482,7 @@ export function MediaLibraryPage() {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className="relative min-h-screen bg-slate-50 text-slate-950 dark:bg-[#060a12] dark:text-slate-100"
+      className="relative min-h-screen bg-surface-base text-text-primary dark:bg-surface-base dark:text-text-primary"
     >
       <input
         ref={uploadInputRef}
@@ -495,27 +495,27 @@ export function MediaLibraryPage() {
 
       {/* 上传进度悬浮指示器 */}
       {uploadProgress ? (
-        <div className="fixed bottom-6 right-6 z-[160] flex w-80 flex-col gap-2 rounded-xl border border-slate-200 bg-white/95 p-3.5 shadow-2xl backdrop-blur-md dark:border-slate-700 dark:bg-slate-900/95">
-          <div className="flex items-center justify-between text-xs font-semibold text-slate-800 dark:text-slate-100">
+        <div className="fixed bottom-6 right-6 z-[160] flex w-80 flex-col gap-2 rounded-xl border border-border-l1 bg-surface-raised/95 p-3.5 shadow-2xl backdrop-blur-md dark:border-border-l1 dark:bg-surface-base/95">
+          <div className="flex items-center justify-between text-xs font-semibold text-text-primary dark:text-text-primary">
             <span className="flex items-center gap-1.5">
-              <Loader2 size={13} className="animate-spin text-indigo-600 dark:text-violet-400" />
+              <Loader2 size={13} className="animate-spin text-accent dark:text-accent" />
               {t("mediaLibrary.uploadProgress", {
                 current: uploadProgress.completed,
                 total: uploadProgress.total,
               })}
             </span>
-            <span className="text-[11px] tabular-nums text-slate-400">
+            <span className="text-[11px] tabular-nums text-text-muted">
               {Math.round((uploadProgress.completed / uploadProgress.total) * 100)}%
             </span>
           </div>
           {uploadProgress.currentFileName ? (
-            <div className="truncate text-[11px] text-slate-400">
+            <div className="truncate text-[11px] text-text-muted">
               {uploadProgress.currentFileName}
             </div>
           ) : null}
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-subtle dark:bg-surface-panel">
             <div
-              className="h-full bg-indigo-600 transition-all duration-200 dark:bg-violet-500"
+              className="h-full bg-accent transition-all duration-200 dark:bg-accent"
               style={{ width: `${(uploadProgress.completed / uploadProgress.total) * 100}%` }}
             />
           </div>
@@ -551,9 +551,9 @@ export function MediaLibraryPage() {
       </Dialog>
 
       {isDragging ? (
-        <div className="pointer-events-none fixed inset-0 z-[150] flex flex-col items-center justify-center bg-indigo-950/60 p-6 backdrop-blur-md dark:bg-violet-950/60">
-          <div className="flex flex-col items-center rounded-2xl border-2 border-dashed border-white/60 bg-slate-900/60 px-8 py-10 text-center text-white shadow-2xl">
-            <Upload size={44} className="animate-bounce text-indigo-300 dark:text-violet-300" />
+        <div className="pointer-events-none fixed inset-0 z-[150] flex flex-col items-center justify-center bg-accent/60 p-6 backdrop-blur-md dark:bg-accent/60">
+          <div className="flex flex-col items-center rounded-2xl border-2 border-dashed border-white/60 bg-media-backdrop/60 px-8 py-10 text-center text-white shadow-2xl">
+            <Upload size={44} className="animate-bounce text-accent dark:text-accent" />
             <h2 className="mt-4 text-lg font-bold">{t("mediaLibrary.dropToUpload")}</h2>
             <p className="mt-1 text-xs text-white/70">{t("mediaLibrary.uploadHint")}</p>
           </div>
@@ -562,19 +562,19 @@ export function MediaLibraryPage() {
 
       <TopNav breadcrumbs={t("mediaLibrary.title")} onHome={() => navigate("/home")} />
       <main className="mx-auto flex min-h-[calc(100svh-4.5rem)] max-w-[1600px] flex-col px-3 py-3 sm:px-5 lg:px-7 lg:py-5">
-        <header className="flex flex-wrap items-start gap-4 border-b border-slate-200 pb-4 dark:border-slate-800">
+        <header className="flex flex-wrap items-start gap-4 border-b border-border-l1 pb-4 dark:border-border-l2">
           <div className="flex min-w-0 flex-1 items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm dark:bg-violet-500">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-fg shadow-sm dark:bg-accent">
               <Images size={19} />
             </span>
             <div className="min-w-0">
-              <h1 className="truncate text-xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-2xl">
+              <h1 className="truncate text-xl font-bold tracking-tight text-text-primary dark:text-white sm:text-2xl">
                 {t("mediaLibrary.title")}
               </h1>
-              <p className="mt-1 max-w-2xl text-sm text-slate-500 dark:text-slate-400">{t("mediaLibrary.subtitle")}</p>
+
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+          <div className="flex shrink-0 items-center gap-2 text-xs font-semibold text-text-muted dark:text-text-muted">
             <Metric label={t("mediaLibrary.activeCount")} value={bootstrap?.active_count ?? 0} />
             <Metric label={t("mediaLibrary.archivedCount")} value={bootstrap?.archived_count ?? 0} muted />
             <button
@@ -582,7 +582,7 @@ export function MediaLibraryPage() {
               onClick={() => uploadInputRef.current?.click()}
               disabled={Boolean(uploadProgress)}
               title={t("mediaLibrary.uploadHint")}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-fg shadow-sm hover:bg-accent disabled:opacity-50 dark:bg-accent dark:hover:bg-accent"
             >
               {uploadProgress ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
               {uploadProgress ? t("mediaLibrary.uploading") : t("mediaLibrary.upload")}
@@ -591,11 +591,11 @@ export function MediaLibraryPage() {
         </header>
 
         <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4 lg:grid lg:grid-cols-[230px_minmax(0,1fr)]">
-          <aside className="min-w-0 rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-[#0d131e]">
+          <aside className="min-w-0 border-b border-border-l1 py-3 lg:border-b-0 lg:border-r lg:pr-4">
             <div className="flex items-center justify-between px-2 pb-2">
-              <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">{t("mediaLibrary.scope")}</h2>
+              <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-text-muted dark:text-text-muted">{t("mediaLibrary.scope")}</h2>
               {(search || sourceType || folderId || tag || includeArchived) ? (
-                <button type="button" onClick={clearFilters} className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 dark:text-violet-300">
+                <button type="button" onClick={clearFilters} className="text-[11px] font-semibold text-accent hover:text-accent dark:text-accent">
                   {t("mediaLibrary.clearFilters")}
                 </button>
               ) : null}
@@ -603,10 +603,10 @@ export function MediaLibraryPage() {
             <FilterButton active={!folderId && !tag && !sourceType && !includeArchived} label={t("mediaLibrary.allAssets")} count={bootstrap?.active_count ?? 0} onClick={clearFilters} />
             <FilterButton active={Boolean(!folderId && !tag && !sourceType && includeArchived)} label={t("mediaLibrary.archived")} count={bootstrap?.archived_count ?? 0} onClick={() => { clearFilters(); setIncludeArchived(true); }} />
 
-            <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-800">
+            <div className="mt-4 border-t border-border-l2 pt-3 dark:border-border-l2">
               <div className="flex items-center justify-between px-2 pb-1.5">
-                <div className="text-[11px] font-semibold text-slate-400">{t("mediaLibrary.folders")}</div>
-                <button type="button" onClick={() => setDialog({ kind: "create-folder" })} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-indigo-700 dark:hover:bg-slate-800 dark:hover:text-violet-200" aria-label={t("mediaLibrary.createFolder")} title={t("mediaLibrary.createFolder")}>
+                <div className="text-[11px] font-semibold text-text-muted">{t("mediaLibrary.folders")}</div>
+                <button type="button" onClick={() => setDialog({ kind: "create-folder" })} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-surface-subtle hover:text-accent dark:hover:bg-surface-panel dark:hover:text-accent" aria-label={t("mediaLibrary.createFolder")} title={t("mediaLibrary.createFolder")}>
                   <FolderPlus size={14} />
                 </button>
               </div>
@@ -621,13 +621,13 @@ export function MediaLibraryPage() {
                   onDelete={() => setDialog({ kind: "delete-folder", folder })}
                 />
               ))}
-              {bootstrap?.folders.length === 0 ? <div className="px-2 py-2 text-[11px] text-slate-400">{t("mediaLibrary.noFolders")}</div> : null}
+              {bootstrap?.folders.length === 0 ? <div className="px-2 py-2 text-[11px] text-text-muted">{t("mediaLibrary.noFolders")}</div> : null}
             </div>
 
-            <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-800">
+            <div className="mt-4 border-t border-border-l2 pt-3 dark:border-border-l2">
               <div className="flex items-center justify-between px-2 pb-1.5">
-                <div className="text-[11px] font-semibold text-slate-400">{t("mediaLibrary.tags")}</div>
-                <button type="button" onClick={() => setDialog({ kind: "create-tag" })} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-indigo-700 dark:hover:bg-slate-800 dark:hover:text-violet-200" aria-label={t("mediaLibrary.createTag")} title={t("mediaLibrary.createTag")}>
+                <div className="text-[11px] font-semibold text-text-muted">{t("mediaLibrary.tags")}</div>
+                <button type="button" onClick={() => setDialog({ kind: "create-tag" })} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-surface-subtle hover:text-accent dark:hover:bg-surface-panel dark:hover:text-accent" aria-label={t("mediaLibrary.createTag")} title={t("mediaLibrary.createTag")}>
                   <Plus size={14} />
                 </button>
               </div>
@@ -642,64 +642,64 @@ export function MediaLibraryPage() {
                   onDelete={() => setDialog({ kind: "delete-tag", tag: item })}
                 />
               ))}
-              {bootstrap?.tags.length === 0 ? <div className="px-2 py-2 text-[11px] text-slate-400">{t("mediaLibrary.noTags")}</div> : null}
+              {bootstrap?.tags.length === 0 ? <div className="px-2 py-2 text-[11px] text-text-muted">{t("mediaLibrary.noTags")}</div> : null}
             </div>
           </aside>
 
           <section className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-[#0d131e]">
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border-l1 bg-surface-raised p-2 shadow-sm dark:border-border-l2 dark:bg-surface-panel">
               <label className="relative min-w-[190px] flex-1">
                 <span className="sr-only">{t("mediaLibrary.search")}</span>
-                <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} type="search" placeholder={t("mediaLibrary.search")} className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950/50 dark:text-white dark:focus:border-violet-400 dark:focus:ring-violet-500/15" />
+                <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                <input value={searchInput} onChange={(event) => setSearchInput(event.target.value)} type="search" placeholder={t("mediaLibrary.search")} className="h-9 w-full rounded-lg border border-border-l1 bg-surface-base pl-9 pr-3 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent dark:border-border-l1 dark:bg-surface-base/50 dark:text-white dark:focus:border-accent dark:focus:ring-accent/15" />
               </label>
-              <select value={sourceType} onChange={(event) => setSourceType(event.target.value as MediaLibrarySourceType | "")} className="h-9 max-w-[170px] rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 outline-none focus:border-indigo-400 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-200 dark:focus:border-violet-400">
+              <select value={sourceType} onChange={(event) => setSourceType(event.target.value as MediaLibrarySourceType | "")} className="h-9 max-w-[170px] rounded-lg border border-border-l1 bg-surface-raised px-2.5 text-xs font-medium text-text-secondary outline-none focus:border-accent dark:border-border-l1 dark:bg-surface-base/60 dark:text-text-primary dark:focus:border-accent">
                 <option value="">{t("mediaLibrary.allSources")}</option>
                 <option value="direct_upload">{t("mediaLibrary.source.upload")}</option>
                 <option value="product_asset">{t("mediaLibrary.source.product")}</option>
                 <option value="image_session_generated">{t("mediaLibrary.source.session")}</option>
               </select>
-              <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-2.5 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300">
-                <input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} className="h-3.5 w-3.5 accent-indigo-600" />
+              <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-border-l1 px-2.5 text-xs font-medium text-text-secondary dark:border-border-l1 dark:text-text-secondary">
+                <input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} className="h-3.5 w-3.5 accent-accent" />
                 {t("mediaLibrary.showArchived")}
               </label>
-              <div className="flex h-9 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+              <div className="flex h-9 overflow-hidden rounded-lg border border-border-l1 dark:border-border-l1">
                 <ViewButton active={view === "grid"} label={t("detail.library.gridView")} onClick={() => setView("grid")}><Grid2X2 size={15} /></ViewButton>
                 <ViewButton active={view === "list"} label={t("detail.library.listView")} onClick={() => setView("list")}><List size={15} /></ViewButton>
               </div>
             </div>
 
             {selectedAssets.length ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800 shadow-sm dark:border-violet-400/30 dark:bg-violet-500/10 dark:text-violet-100">
+              <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-accent bg-accent-soft px-3 py-2 text-xs text-accent shadow-sm dark:border-accent/30 dark:bg-accent/10 dark:text-accent">
                 <span className="mr-auto font-semibold">{t("mediaLibrary.selected", { count: selectedAssets.length })}</span>
-                <button type="button" onClick={() => setDialog({ kind: "move" })} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-white px-2.5 font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                <button type="button" onClick={() => setDialog({ kind: "move" })} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-surface-raised px-2.5 font-semibold text-text-secondary shadow-sm hover:bg-surface-base dark:bg-surface-base dark:text-text-primary dark:hover:bg-surface-panel">
                   <FolderInput size={13} />{t("detail.library.move")}
                 </button>
-                <button type="button" onClick={() => setDialog({ kind: "tags" })} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-white px-2.5 font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                <button type="button" onClick={() => setDialog({ kind: "tags" })} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-surface-raised px-2.5 font-semibold text-text-secondary shadow-sm hover:bg-surface-base dark:bg-surface-base dark:text-text-primary dark:hover:bg-surface-panel">
                   <Tag size={13} />{t("mediaLibrary.editTags")}
                 </button>
                 {hasActiveSelected ? (
-                  <button type="button" onClick={() => setDialog({ kind: "batch-archive", assets: selectedAssets.filter((a) => !a.is_archived) })} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-white px-2.5 font-semibold text-slate-700 shadow-sm hover:bg-red-50 hover:text-red-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-red-900/30 dark:hover:text-red-300">
+                  <button type="button" onClick={() => setDialog({ kind: "batch-archive", assets: selectedAssets.filter((a) => !a.is_archived) })} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-surface-raised px-2.5 font-semibold text-text-secondary shadow-sm hover:bg-state-error-soft hover:text-state-error dark:bg-surface-base dark:text-text-primary dark:hover:bg-state-error/30 dark:hover:text-state-error">
                     <Archive size={13} />{t("mediaLibrary.batchArchive")}
                   </button>
                 ) : null}
                 {hasArchivedSelected ? (
-                  <button type="button" onClick={() => setDialog({ kind: "batch-restore", assets: selectedAssets.filter((a) => a.is_archived) })} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-white px-2.5 font-semibold text-slate-700 shadow-sm hover:bg-indigo-50 hover:text-indigo-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-violet-900/30 dark:hover:text-violet-300">
+                  <button type="button" onClick={() => setDialog({ kind: "batch-restore", assets: selectedAssets.filter((a) => a.is_archived) })} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-surface-raised px-2.5 font-semibold text-text-secondary shadow-sm hover:bg-accent-soft hover:text-accent dark:bg-surface-base dark:text-text-primary dark:hover:bg-accent/30 dark:hover:text-accent">
                     <ArchiveRestore size={13} />{t("mediaLibrary.batchRestore")}
                   </button>
                 ) : null}
-                <button type="button" onClick={() => { setSelectedIds(new Set()); setLastSelectedAssetId(null); }} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-white dark:hover:bg-slate-900" aria-label={t("mediaLibrary.clearSelection")} title={t("mediaLibrary.clearSelection")}>
+                <button type="button" onClick={() => { setSelectedIds(new Set()); setLastSelectedAssetId(null); }} className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-surface-raised dark:hover:bg-surface-base" aria-label={t("mediaLibrary.clearSelection")} title={t("mediaLibrary.clearSelection")}>
                   <X size={14} />
                 </button>
               </div>
             ) : null}
 
-            {operationError ? <div role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">{operationError instanceof ApiError ? operationError.detail : operationError.message}</div> : null}
+            {operationError ? <div role="alert" className="mt-3 rounded-lg border border-state-error bg-state-error-soft px-3 py-2 text-xs text-state-error dark:border-state-error/30 dark:bg-state-error/10 dark:text-state-error">{operationError instanceof ApiError ? operationError.detail : operationError.message}</div> : null}
 
-            <div className="mt-3 flex items-center justify-between px-1 text-xs text-slate-500 dark:text-slate-400">
+            <div className="mt-3 flex items-center justify-between px-1 text-xs text-text-muted dark:text-text-muted">
               <span>{t("mediaLibrary.resultCount", { count: assets.length })}</span>
               {assets.length ? (
-                <button type="button" onClick={toggleSelectAll} className="font-semibold text-indigo-600 hover:text-indigo-800 dark:text-violet-300 dark:hover:text-violet-200">
+                <button type="button" onClick={toggleSelectAll} className="font-semibold text-accent hover:text-accent dark:text-accent dark:hover:text-accent">
                   {isAllLoadedSelected ? t("mediaLibrary.deselectLoaded") : t("mediaLibrary.selectLoaded")}
                 </button>
               ) : null}
@@ -731,7 +731,7 @@ export function MediaLibraryPage() {
                 ))}
               </div>
             ) : (
-              <div className="mt-2 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-[#0d131e]">
+              <div className="mt-2 divide-y divide-border-l2 overflow-hidden rounded-xl border border-border-l1 bg-surface-raised dark:divide-border-l2 dark:border-border-l2 dark:bg-surface-panel">
                 {assets.map((asset) => (
                   <MediaLibraryRow
                     key={asset.id}
@@ -746,7 +746,7 @@ export function MediaLibraryPage() {
                 ))}
               </div>
             )}
-            {assetsQuery.hasNextPage ? <button type="button" onClick={() => assetsQuery.fetchNextPage()} disabled={assetsQuery.isFetchingNextPage} className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950/50 dark:text-slate-200">{assetsQuery.isFetchingNextPage ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : null}{t("detail.library.loadMore")}</button> : null}
+            {assetsQuery.hasNextPage ? <button type="button" onClick={() => assetsQuery.fetchNextPage()} disabled={assetsQuery.isFetchingNextPage} className="mt-3 inline-flex h-9 w-full items-center justify-center rounded-lg border border-border-l1 bg-surface-raised text-xs font-semibold text-text-secondary hover:bg-surface-base disabled:opacity-50 dark:border-border-l1 dark:bg-surface-base/50 dark:text-text-primary">{assetsQuery.isFetchingNextPage ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : null}{t("detail.library.loadMore")}</button> : null}
           </section>
         </div>
       </main>
@@ -867,9 +867,9 @@ export function MediaLibraryPage() {
 
 function Metric({ label, value, muted = false }: { label: string; value: number; muted?: boolean }) {
   return (
-    <div className={`rounded-lg border px-2.5 py-1.5 ${muted ? "border-slate-200/70 dark:border-slate-700/70" : "border-indigo-100 bg-indigo-50 dark:border-violet-400/20 dark:bg-violet-500/10"}`}>
+    <div className={`rounded-lg border px-2.5 py-1.5 ${muted ? "border-border-l1/70 dark:border-border-l1/70" : "border-accent bg-accent-soft dark:border-accent/20 dark:bg-accent/10"}`}>
       <div className="text-[10px] font-medium">{label}</div>
-      <div className="mt-0.5 text-sm font-bold tabular-nums text-slate-800 dark:text-slate-200">{value}</div>
+      <div className="mt-0.5 text-sm font-bold tabular-nums text-text-primary dark:text-text-primary">{value}</div>
     </div>
   );
 }
@@ -880,12 +880,12 @@ function FilterButton({ active, label, count, onClick }: { active: boolean; labe
       type="button"
       onClick={onClick}
       className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs font-medium transition-colors ${active
-          ? "bg-indigo-50 text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200"
-          : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/70"
+          ? "bg-accent-soft text-accent dark:bg-accent/15 dark:text-accent"
+          : "text-text-secondary hover:bg-surface-base dark:text-text-secondary dark:hover:bg-surface-panel/70"
         }`}
     >
       <span className="min-w-0 flex-1 truncate">{label}</span>
-      <span className="shrink-0 text-[10px] tabular-nums text-slate-400">{count}</span>
+      <span className="shrink-0 text-[10px] tabular-nums text-text-muted">{count}</span>
     </button>
   );
 }
@@ -909,8 +909,8 @@ function SidebarItem({
     <div
       onClick={onClick}
       className={`group flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors select-none ${active
-          ? "bg-indigo-50 text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200"
-          : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800/70"
+          ? "bg-accent-soft text-accent dark:bg-accent/15 dark:text-accent"
+          : "text-text-secondary hover:bg-surface-base dark:text-text-secondary dark:hover:bg-surface-panel/70"
         }`}
     >
       <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -921,7 +921,7 @@ function SidebarItem({
             e.stopPropagation();
             onRename();
           }}
-          className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+          className="inline-flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-surface-subtle hover:text-text-secondary dark:hover:bg-surface-subtle dark:hover:text-text-primary"
           title="Rename"
         >
           <Pencil size={11} />
@@ -932,13 +932,13 @@ function SidebarItem({
             e.stopPropagation();
             onDelete();
           }}
-          className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400"
+          className="inline-flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-state-error-soft hover:text-state-error dark:hover:bg-state-error dark:hover:text-state-error"
           title="Delete"
         >
           <Trash2 size={11} />
         </button>
       </div>
-      <span className="shrink-0 text-[10px] tabular-nums text-slate-400">{count}</span>
+      <span className="shrink-0 text-[10px] tabular-nums text-text-muted">{count}</span>
     </div>
   );
 }
@@ -952,8 +952,8 @@ function ViewButton({ active, label, onClick, children }: { active: boolean; lab
       title={label}
       aria-pressed={active}
       className={`inline-flex h-full w-9 items-center justify-center transition-colors ${active
-          ? "bg-indigo-50 text-indigo-700 dark:bg-violet-500/20 dark:text-violet-100"
-          : "text-slate-400 hover:text-slate-800 dark:text-slate-500 dark:hover:text-white"
+          ? "bg-accent-soft text-accent dark:bg-accent/20 dark:text-accent"
+          : "text-text-muted hover:text-text-primary dark:text-text-muted dark:hover:text-white"
         }`}
     >
       {children}
@@ -980,12 +980,12 @@ function MediaLibraryCard({
   return (
     <article
       onClick={(e) => onToggle(e)}
-      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-white shadow-sm transition-all select-none hover:shadow-md dark:bg-[#0d131e] ${selected
-          ? "border-indigo-500 ring-2 ring-indigo-500/20 dark:border-violet-400 dark:ring-violet-500/25"
-          : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700"
+      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-surface-raised shadow-sm transition-all select-none hover:shadow-md dark:bg-surface-panel ${selected
+          ? "border-accent ring-2 ring-accent/20 dark:border-accent dark:ring-accent/25"
+          : "border-border-l1 hover:border-border-l3 dark:border-border-l2 dark:hover:border-border-l1"
         }`}
     >
-      <div className="relative aspect-square overflow-hidden bg-slate-100 dark:bg-slate-900">
+      <div className="relative aspect-square overflow-hidden bg-surface-subtle dark:bg-surface-base">
         <img
           src={api.toApiUrl(asset.thumbnail_url)}
           alt={asset.display_name}
@@ -1004,8 +1004,8 @@ function MediaLibraryCard({
           aria-pressed={selected}
           aria-label={asset.display_name}
           className={`absolute left-2.5 top-2.5 z-10 flex h-6 w-6 items-center justify-center rounded-md border shadow-md backdrop-blur-md transition-all ${selected
-              ? "border-indigo-600 bg-indigo-600 text-white opacity-100 dark:border-violet-500 dark:bg-violet-500"
-              : "border-white/40 bg-slate-950/40 text-transparent opacity-75 group-hover:opacity-100 hover:border-white hover:bg-slate-950/70 hover:text-white/80 dark:border-white/30 dark:bg-slate-900/60"
+              ? "border-accent bg-accent text-accent-fg opacity-100 dark:border-accent dark:bg-accent"
+              : "border-white/40 bg-media-backdrop/40 text-transparent opacity-75 group-hover:opacity-100 hover:border-white hover:bg-media-backdrop/70 hover:text-white/80 dark:border-white/30 dark:bg-surface-base/60"
             }`}
         >
           <Check size={13} strokeWidth={selected ? 2.5 : 2} />
@@ -1018,7 +1018,7 @@ function MediaLibraryCard({
             e.stopPropagation();
             onPreview();
           }}
-          className="absolute right-2.5 top-2.5 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-white/30 bg-slate-950/50 text-white opacity-0 shadow-md backdrop-blur-md transition-all group-hover:opacity-100 hover:scale-105 hover:bg-slate-950/80 focus:opacity-100"
+          className="absolute right-2.5 top-2.5 z-10 flex h-7 w-7 items-center justify-center rounded-md border border-white/30 bg-media-backdrop/50 text-white opacity-0 shadow-md backdrop-blur-md transition-all group-hover:opacity-100 hover:scale-105 hover:bg-media-backdrop/80 focus:opacity-100"
           aria-label={t("mediaLibrary.previewLabel")}
           title={t("mediaLibrary.previewLabel")}
         >
@@ -1026,7 +1026,7 @@ function MediaLibraryCard({
         </button>
 
         {asset.is_archived ? (
-          <span className="absolute bottom-2 left-2.5 rounded-md bg-slate-950/80 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+          <span className="absolute bottom-2 left-2.5 rounded-md bg-media-backdrop/80 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
             {t("mediaLibrary.archived")}
           </span>
         ) : null}
@@ -1034,10 +1034,10 @@ function MediaLibraryCard({
 
       <div className="flex min-w-0 items-center gap-2 p-2.5">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-semibold text-slate-800 dark:text-slate-100" title={asset.display_name}>
+          <div className="truncate text-xs font-semibold text-text-primary dark:text-text-primary" title={asset.display_name}>
             {asset.display_name}
           </div>
-          <div className="mt-0.5 truncate text-[10px] text-slate-400">
+          <div className="mt-0.5 truncate text-[10px] text-text-muted">
             {asset.folder_name ?? t("mediaLibrary.unorganized")} · {sourceLabel(asset.source_type, t)}
           </div>
         </div>
@@ -1048,7 +1048,7 @@ function MediaLibraryCard({
             onArchive();
           }}
           disabled={busy}
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-indigo-700 disabled:opacity-40 dark:hover:bg-slate-800 dark:hover:text-violet-200"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-subtle hover:text-accent disabled:opacity-40 dark:hover:bg-surface-panel dark:hover:text-accent"
           aria-label={asset.is_archived ? t("mediaLibrary.restore") : t("mediaLibrary.archive")}
           title={asset.is_archived ? t("mediaLibrary.restore") : t("mediaLibrary.archive")}
         >
@@ -1080,7 +1080,7 @@ function MediaLibraryRow({
   return (
     <div
       onClick={(e) => onToggle(e)}
-      className={`group flex min-w-0 cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors select-none ${selected ? "bg-indigo-50/70 dark:bg-violet-500/10" : "hover:bg-slate-50/70 dark:hover:bg-slate-900/50"
+      className={`group flex min-w-0 cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors select-none ${selected ? "bg-accent-soft/70 dark:bg-accent/10" : "hover:bg-surface-base/70 dark:hover:bg-surface-base/50"
         }`}
     >
       <button
@@ -1092,8 +1092,8 @@ function MediaLibraryRow({
         aria-pressed={selected}
         aria-label={asset.display_name}
         className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-all ${selected
-            ? "border-indigo-600 bg-indigo-600 text-white dark:border-violet-400 dark:bg-violet-500"
-            : "border-slate-300 bg-white text-transparent group-hover:border-slate-400 dark:border-slate-600 dark:bg-slate-950"
+            ? "border-accent bg-accent text-accent-fg dark:border-accent dark:bg-accent"
+            : "border-border-l3 bg-surface-raised text-transparent group-hover:border-border-l3 dark:border-border-l3 dark:bg-surface-base"
           }`}
       >
         <Check size={13} strokeWidth={selected ? 2.5 : 2} />
@@ -1104,7 +1104,7 @@ function MediaLibraryRow({
           e.stopPropagation();
           onPreview();
         }}
-        className="group/img relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-slate-100 dark:bg-slate-900"
+        className="group/img relative h-12 w-12 shrink-0 overflow-hidden rounded-md bg-surface-subtle dark:bg-surface-base"
         aria-label={t("mediaLibrary.previewLabel")}
       >
         <img
@@ -1114,13 +1114,13 @@ function MediaLibraryRow({
           className={`h-full w-full object-cover transition-transform duration-150 group-hover/img:scale-105 ${asset.is_archived ? "opacity-55 grayscale" : ""
             }`}
         />
-        <span className="absolute inset-0 flex items-center justify-center bg-slate-950/40 text-white opacity-0 transition-opacity group-hover/img:opacity-100">
+        <span className="absolute inset-0 flex items-center justify-center bg-media-backdrop/40 text-white opacity-0 transition-opacity group-hover/img:opacity-100">
           <Maximize2 size={13} />
         </span>
       </button>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-xs font-semibold text-slate-800 dark:text-slate-100">{asset.display_name}</div>
-        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-slate-400">
+        <div className="truncate text-xs font-semibold text-text-primary dark:text-text-primary">{asset.display_name}</div>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-text-muted">
           <span>{asset.folder_name ?? t("mediaLibrary.unorganized")}</span>
           <span>{sourceLabel(asset.source_type, t)}</span>
           <span>{formatDateTime(asset.created_at, locale)}</span>
@@ -1128,7 +1128,7 @@ function MediaLibraryRow({
       </div>
       <div className="hidden max-w-[220px] flex-wrap justify-end gap-1 sm:flex">
         {asset.tags.slice(0, 3).map((item) => (
-          <span key={item.id} className="rounded bg-slate-100 px-1.5 py-1 text-[10px] text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+          <span key={item.id} className="rounded bg-surface-subtle px-1.5 py-1 text-[10px] text-text-muted dark:bg-surface-panel dark:text-text-secondary">
             {item.name}
           </span>
         ))}
@@ -1140,7 +1140,7 @@ function MediaLibraryRow({
           onArchive();
         }}
         disabled={busy}
-        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-indigo-700 disabled:opacity-40 dark:hover:bg-slate-800 dark:hover:text-violet-200"
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-subtle hover:text-accent disabled:opacity-40 dark:hover:bg-surface-panel dark:hover:text-accent"
         aria-label={asset.is_archived ? t("mediaLibrary.restore") : t("mediaLibrary.archive")}
         title={asset.is_archived ? t("mediaLibrary.restore") : t("mediaLibrary.archive")}
       >
@@ -1159,11 +1159,11 @@ function sourceLabel(source: MediaLibrarySourceType, t: ReturnType<typeof useI18
 
 function LibraryState({ icon, text, action, onAction }: { icon?: React.ReactNode; text: string; action?: string; onAction?: () => void }) {
   return (
-    <div className="mt-3 flex min-h-[260px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-white px-5 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-[#0d131e] dark:text-slate-400">
-      {icon ? <span className="text-slate-400">{icon}</span> : null}
+    <div className="mt-3 flex min-h-[260px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border-l1 bg-surface-raised px-5 text-center text-sm text-text-muted dark:border-border-l2 dark:bg-surface-panel dark:text-text-muted">
+      {icon ? <span className="text-text-muted">{icon}</span> : null}
       <span>{text}</span>
       {action && onAction ? (
-        <button type="button" onClick={onAction} className="font-semibold text-indigo-600 hover:text-indigo-800 dark:text-violet-300">
+        <button type="button" onClick={onAction} className="font-semibold text-accent hover:text-accent dark:text-accent">
           {action}
         </button>
       ) : null}

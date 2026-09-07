@@ -1631,14 +1631,14 @@ export function TaskBoard({
       title: t("globalAgent.taskBoard.colSucceeded"),
       tasks: tasks.filter((task) => task.status === "succeeded"),
       headerTone: "border-state-success/30 bg-state-success/10",
-      badgeTone: "bg-state-success text-white font-semibold",
+      badgeTone: "bg-state-success text-state-success-fg font-semibold",
     },
     {
       id: "failed",
       title: t("globalAgent.taskBoard.colFailed"),
       tasks: tasks.filter((task) => task.status === "failed" || task.status === "canceled"),
       headerTone: "border-state-error/30 bg-state-error/10",
-      badgeTone: "bg-state-error text-white font-semibold",
+      badgeTone: "bg-state-error text-state-error-fg font-semibold",
     },
   ];
 
