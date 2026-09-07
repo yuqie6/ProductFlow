@@ -259,6 +259,8 @@ func (e Executor) runClaimedNode(ctx context.Context, runID, nodeRunID, expected
 			ImageTypeKey:         imgReq.ImageTypeKey,
 			HasIdentityReference: hasProductIdentityReference(imgReq.References),
 			PromptTexts:          collectPromptAuditTexts(promptPayload, imgReq.VariationInstruction),
+			// 本路径交付字节仍来自 GenerateImage；未置 SubjectPreserveDeliveryFromCompose，
+			// 故 appearance_may_change 不得为 false（参考提取/合成 ≠ 成片已保留主体）。
 		}))
 		// IQ-CF-04：subject_preserve 生成路径自动 Apply 主体提取+合成；失败强制 route_qualified=false。
 		routeRec = gateImageProduceRouteWithSubjectExtract(imgReq.References, routeRec)

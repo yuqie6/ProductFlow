@@ -44,6 +44,9 @@ type ProduceRouteInput struct {
 	PromptTexts           []string
 	SubjectPreserveFailed bool
 	FailureReasons        []string
+	// SubjectPreserveDeliveryFromCompose 为 true 表示交付字节来自主体合成产物，而非生成式 provider。
+	// 未置位时不得声明 appearance_may_change=false（参考提取/合成元数据 ≠ 成片已保留主体）。
+	SubjectPreserveDeliveryFromCompose bool
 }
 
 // DefaultProduceRoute 按图种给默认路线：主图/细节/SKU 保留主体，场景等走生成式。
@@ -92,11 +95,13 @@ func BuildProduceRouteRecord(in ProduceRouteInput) ProduceRouteRecord {
 		route = DefaultProduceRoute(in.ImageTypeKey)
 	}
 	rec := ProduceRouteRecord{
-		SchemaVersion:       produceRouteSchemaVersion,
-		Route:               route,
-		ImageTypeKey:        strings.TrimSpace(in.ImageTypeKey),
-		AppearanceMayChange: route == ProduceRouteGenerative,
-		RouteQualified:      true,
+		SchemaVersion: produceRouteSchemaVersion,
+		Route:         route,
+		ImageTypeKey:  strings.TrimSpace(in.ImageTypeKey),
+		// 生成式必然可能改外观；保留主体仅在合成产物作为交付字节时才可声明不变。
+		AppearanceMayChange: route == ProduceRouteGenerative ||
+			(route == ProduceRouteSubjectPreserve && !in.SubjectPreserveDeliveryFromCompose),
+		RouteQualified: true,
 	}
 	var unresolved []string
 	if route == ProduceRouteGenerative {

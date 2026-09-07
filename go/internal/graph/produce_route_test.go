@@ -59,14 +59,26 @@ func TestBuildProduceRouteRecordGenerativeAppearanceAndBan(t *testing.T) {
 }
 
 func TestBuildProduceRouteRecordSubjectPreserveFailureUnresolved(t *testing.T) {
+	// 未交付合成字节时：可因参考齐全而 route_qualified，但不得声明外观不变。
 	pass := BuildProduceRouteRecord(ProduceRouteInput{
 		Route:                ProduceRouteSubjectPreserve,
 		ImageTypeKey:         "hero",
 		HasIdentityReference: true,
 		PromptTexts:          []string{"棚拍主图"},
 	})
-	if !pass.RouteQualified || pass.AppearanceMayChange {
-		t.Fatalf("clean subject_preserve: %+v", pass)
+	if !pass.RouteQualified || !pass.AppearanceMayChange {
+		t.Fatalf("subject_preserve without compose delivery must allow change: %+v", pass)
+	}
+
+	composed := BuildProduceRouteRecord(ProduceRouteInput{
+		Route:                              ProduceRouteSubjectPreserve,
+		ImageTypeKey:                       "hero",
+		HasIdentityReference:               true,
+		PromptTexts:                        []string{"棚拍主图"},
+		SubjectPreserveDeliveryFromCompose: true,
+	})
+	if !composed.RouteQualified || composed.AppearanceMayChange {
+		t.Fatalf("compose delivery may claim appearance stable: %+v", composed)
 	}
 
 	fail := BuildProduceRouteRecord(ProduceRouteInput{
