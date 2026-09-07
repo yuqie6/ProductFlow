@@ -137,7 +137,7 @@ describe("GraphResultsView", () => {
     expect(markup).toContain('data-graph-results-section-kind="evidence"');
   });
 
-  it("exposes locate, history, run, and edit entry points without adoption copy", () => {
+  it("exposes locate, history, run, and edit entry points; adoption stays opt-in", () => {
     const markup = renderResults({ selectedNodeIds: ["node-fail"] });
     expect(markup).toContain("data-graph-result-locate");
     expect(markup).toContain("data-graph-result-history");
@@ -145,8 +145,19 @@ describe("GraphResultsView", () => {
     expect(markup).toContain("data-graph-result-edit");
     expect(markup).toContain('data-graph-result-stale="true"');
     expect(markup).toContain("上游缺少输入");
-    expect(markup).not.toContain("采用");
-    expect(markup).not.toContain("交付快照");
+    expect(markup).not.toContain("data-graph-result-adopt");
+    expect(markup).not.toContain("data-graph-results-export-adoption");
+  });
+
+  it("shows delivery adoption controls when handlers and adopted map are provided", () => {
+    const markup = renderResults({
+      adoptedAssetBySlot: new Map([["node-ok", "asset-1"]]),
+      onAdoptItem: vi.fn(),
+      onExportAdoption: vi.fn(),
+    });
+    expect(markup).toContain('data-graph-result-delivery-adopted="true"');
+    expect(markup).toContain("data-graph-result-adopt");
+    expect(markup).toContain("data-graph-results-export-adoption");
   });
 
   it("keeps evidence bind entry and omits run for evidence items", () => {

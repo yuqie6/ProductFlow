@@ -35,6 +35,9 @@ import type {
   DeliveryPresetCatalog,
   DeliveryRenditionJob,
   DeliveryRenditionJobListResponse,
+  DeliveryAdoptionListResponse,
+  DeliveryAdoptionVersion,
+  DeliveryAdoptionPreview,
   ImageSessionDetail,
   ImageSessionHistoryPage,
   ImageSessionListResponse,
@@ -1346,6 +1349,73 @@ export const api = {
     return request(`/api/v2/delivery-rendition-jobs/${encodeURIComponent(jobId)}/retry`, {
       method: "POST",
     });
+  },
+  listDeliveryAdoptions(productId: string): Promise<DeliveryAdoptionListResponse> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/delivery-adoptions`);
+  },
+  getCurrentDeliveryAdoption(productId: string): Promise<DeliveryAdoptionVersion> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/delivery-adoptions/current`);
+  },
+  getDeliveryAdoption(productId: string, versionId: string): Promise<DeliveryAdoptionVersion> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/delivery-adoptions/${encodeURIComponent(versionId)}`,
+    );
+  },
+  createDeliveryAdoption(
+    productId: string,
+    body: {
+      slots: Array<{
+        slot_key: string;
+        sort_order: number;
+        image_type_key?: string | null;
+        source_asset_id: string;
+        source_node_id?: string | null;
+        delivery_spec: WorkflowDeliverySpec;
+        quality_status?: "pass" | "fail" | "unchecked";
+        quality_detail?: string | null;
+        text_overflow?: boolean;
+      }>;
+      graph_id?: string | null;
+      graph_revision?: number | null;
+      fact_set_version_id?: string | null;
+      visual_system_version_id?: string | null;
+      notes?: string | null;
+    },
+  ): Promise<DeliveryAdoptionVersion> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/delivery-adoptions`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  previewDeliveryAdoption(
+    productId: string,
+    versionId: string,
+    options: { allow_partial?: boolean; qualified_only?: boolean } = {},
+  ): Promise<DeliveryAdoptionPreview> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/delivery-adoptions/${encodeURIComponent(versionId)}/preview`,
+      { method: "POST", body: JSON.stringify(options) },
+    );
+  },
+  ensureDeliveryAdoptionRenditions(
+    productId: string,
+    versionId: string,
+    options: { qualified_only?: boolean } = {},
+  ): Promise<{ preview: DeliveryAdoptionPreview }> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/delivery-adoptions/${encodeURIComponent(versionId)}/renditions`,
+      { method: "POST", body: JSON.stringify(options) },
+    );
+  },
+  downloadDeliveryAdoptionExport(
+    productId: string,
+    versionId: string,
+    options: { allow_partial?: boolean; qualified_only?: boolean } = {},
+  ): Promise<Blob> {
+    return requestBlob(
+      `/api/v3/products/${encodeURIComponent(productId)}/delivery-adoptions/${encodeURIComponent(versionId)}/export`,
+      { method: "POST", body: JSON.stringify(options) },
+    );
   },
   async getLocalImageEditCapability(): Promise<LocalImageEditCapability> {
     const parsed = parseLocalImageEditCapability(await request<unknown>("/api/v3/local-image-edits/capability"));

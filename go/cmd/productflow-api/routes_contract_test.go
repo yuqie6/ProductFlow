@@ -58,6 +58,13 @@ var goOpsExtras = map[string]bool{
 	"POST /api/v3/products/{}/workflows/{}/nodes/{}/candidate/discard":                  true,
 	"POST /api/v3/products/{}/workflows/{}/runs/preview":                                true,
 	"POST /api/v2/product-source-notes/generate":                                        true,
+	"GET /api/v3/products/{}/delivery-adoptions":                                        true,
+	"POST /api/v3/products/{}/delivery-adoptions":                                       true,
+	"GET /api/v3/products/{}/delivery-adoptions/current":                                true,
+	"GET /api/v3/products/{}/delivery-adoptions/{}":                                     true,
+	"POST /api/v3/products/{}/delivery-adoptions/{}/preview":                            true,
+	"POST /api/v3/products/{}/delivery-adoptions/{}/renditions":                         true,
+	"POST /api/v3/products/{}/delivery-adoptions/{}/export":                             true,
 }
 
 // Historical snapshot still lists retired Agent effects, single events and manual fidelity checks.

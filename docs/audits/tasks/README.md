@@ -23,7 +23,7 @@
 | [merchant-root-ownership.md](merchant-root-ownership.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-root-ownership | 2026-09-07T12:31:30+08:00 |
 | [release-backup-restore.md](release-backup-restore.md) | 平台可靠性 | 实现 | 认领 | sub-release/release-backup-restore | 2026-09-07T12:37:30+08:00 |
 | [compete-facts-text-trace.md](compete-facts-text-trace.md) | 图片质量 | 实现 | 开放 | — | — |
-| [delivery-adoption-snapshot.md](delivery-adoption-snapshot.md) | 工作流体验 | 实现 | 认领 | sub-delivery/delivery-adoption-snapshot | 2026-09-07T12:26:00+08:00 |
+| [brand-visual-reuse.md](brand-visual-reuse.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |

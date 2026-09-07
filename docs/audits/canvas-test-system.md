@@ -8,7 +8,7 @@
 
 ## 组职责与交接
 
-2026-09-07 正式版职责校准：本组负责 [总纲第 5 节](../ROADMAP.md#5-正常体验的最低要求) 的创建、成果浏览、修图、采用、交付和复用体验。[完整成果投影](tasks/archive/delivery-workbench-projection.md) 已交付，保留现有画布默认与手动入口；是否切换默认由后续走查证据决定。后续 [采用/交付快照](tasks/delivery-adoption-snapshot.md) 与品牌复用是新增合同，基础配方 preview/原子确认、局部编辑和 ZIP 已有实现，不重复发布。
+2026-09-07 正式版职责校准：本组负责 [总纲第 5 节](../ROADMAP.md#5-正常体验的最低要求) 的创建、成果浏览、修图、采用、交付和复用体验。[完整成果投影](tasks/archive/delivery-workbench-projection.md) 与 [采用/交付快照](tasks/archive/delivery-adoption-snapshot.md) 已交付，保留现有画布默认与手动入口；是否切换默认由后续走查证据决定。下一项 [品牌视觉复用](tasks/brand-visual-reuse.md)；基础配方 preview/原子确认、局部编辑和 ZIP 已有实现，不重复发布。
 
 当前没有真实商户用户，内部走查只说明工程可用性。商家平台负责权限语义；本组按其固定合同提供清楚的商家上下文和角色操作入口。二维组合或品牌版本等跨层实现由协调者指定唯一主任务及排他范围，图片质量提供固定质量合同。
 
@@ -94,7 +94,8 @@ O1-O7 保留历史引用。业务裁判是用户文稿与明确采用意图；�
 | 资产与片段配方复用 | [canvas-asset-recipe-proof](tasks/archive/canvas-asset-recipe-proof.md)：固定结果后再生成不换绑定，图库拖到 reference 端口，片段保存/取消/确认及目标配置保留；Recipe PG 12 passed | 专属浏览器门 3 passed / 1 skipped；跳过项是单独启用的未解决入口诊断，不计通过。未覆盖全部拖放组合或商家效率 |
 | 完整配方创建入口 | [canvas-full-recipe-entry](tasks/archive/canvas-full-recipe-entry.md)：创建页只读预览、取消无写入、同事务创建首图、丢响应重试不重复；PG 59、Web 650、浏览器 7 passed | 1440/1024/390 业务操作，24 组语言/主题布局；来源身份、资产与结果不继承。素材占位需重新选图，文稿须按新商品审阅；未代替商家效率或真实 provider 验收 |
 | 局部编辑 | [canvas-local-edit-flow](tasks/archive/canvas-local-edit-flow.md)：隔离 mock Chromium 2 passed，20.2s；providers/localedit Go 通过 | 核检查器入口、谱系、采用/撤销、提交失败不覆盖；未覆盖真实 OpenAI/Gemini 质量或商家任务耗时。现有 filmstrip 不等于镜头列表主界面 |
-| 成果工作视图 | [delivery-workbench-projection](tasks/archive/delivery-workbench-projection.md)：投影/视图 Vitest 16 passed；`just web-build`/`docs-check` 通过；开发站 1440/1280/390 走查切换、定位、`scope=node` 运行 | 默认仍为流程视图；opt-in E2E 未跑；不证明商户效率或应改默认；无采用/交付快照 |
+| 成果工作视图 | [delivery-workbench-projection](tasks/archive/delivery-workbench-projection.md)：投影/视图 Vitest 16 passed；`just web-build`/`docs-check` 通过；开发站 1440/1280/390 走查切换、定位、`scope=node` 运行 | 默认仍为流程视图；opt-in E2E 未跑；不证明商户效率或应改默认 |
+| 交付采用快照 | [delivery-adoption-snapshot](tasks/archive/delivery-adoption-snapshot.md)：Go 采用/并发/导出一致；成果视图采用/导出接线；schema `delivery_adoption_*`；Vitest 14 | 浏览器整链 opt-in 未跑；质量判据仍依赖图片质量组判定输入；不宣称 R2 全部通过 |
 
 两项新浏览器交付未修改生产业务代码，分别提交于 `daa4672c` 与 `f7e70e1e`。当时完整 Web 回归为 91 files / 647 tests passed，lint、build 通过，build 保留既有大 chunk 警告。Go delivery 为带 PostgreSQL 的 24 项实际通过，无跳过；不扩展为全部 Go 包通过。
 

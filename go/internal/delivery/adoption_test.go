@@ -1,0 +1,279 @@
+package delivery
+
+import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/yuqie6/productflow/internal/platform/clockid"
+)
+
+func TestDeliveryAdoptionCreatesImmutableVersionsAndExportMatchesPreview(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	productID := created.Product.ID
+	assetID := created.CreatedAssets[0].ID
+	graphID, _, _ := ds.attachArtifactLineage(t, productID, assetID)
+
+	spec := map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"}
+	create := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+		"slots": []map[string]any{{
+			"slot_key": "hero-1", "sort_order": 0, "image_type_key": "hero",
+			"source_asset_id": assetID, "source_node_id": "node-hero",
+			"delivery_spec": spec, "quality_status": "pass",
+		}},
+	})
+	ds.mustStatus(t, create, http.StatusCreated)
+	var version1 AdoptionVersionResponse
+	ds.decode(t, create, &version1)
+	if version1.Version != 1 || !version1.IsCurrent || len(version1.Slots) != 1 {
+		t.Fatalf("%+v", version1)
+	}
+	if !version1.Slots[0].Qualified || version1.Slots[0].SourceAssetID != assetID {
+		t.Fatalf("slot %+v", version1.Slots[0])
+	}
+
+	rejected := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+		"slots": []map[string]any{{
+			"slot_key": "hero-1", "sort_order": 0, "source_asset_id": assetID,
+			"delivery_spec": spec, "quality_status": "fail",
+		}},
+	})
+	ds.mustStatus(t, rejected, http.StatusBadRequest)
+	rejected.Body.Close()
+
+	overflow := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+		"slots": []map[string]any{{
+			"slot_key": "hero-1", "sort_order": 0, "source_asset_id": assetID,
+			"delivery_spec": spec, "quality_status": "pass", "text_overflow": true,
+		}},
+	})
+	ds.mustStatus(t, overflow, http.StatusBadRequest)
+	overflow.Body.Close()
+
+	extra := ds.uploadExtraAsset(t, productID)
+	ds.attachArtifactOnGraph(t, productID, graphID, extra)
+	create2 := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+		"slots": []map[string]any{{
+			"slot_key": "hero-1", "sort_order": 0, "image_type_key": "hero",
+			"source_asset_id": extra, "delivery_spec": spec, "quality_status": "pass",
+		}},
+	})
+	ds.mustStatus(t, create2, http.StatusCreated)
+	var version2 AdoptionVersionResponse
+	ds.decode(t, create2, &version2)
+	if version2.Version != 2 || version2.Slots[0].SourceAssetID != extra {
+		t.Fatalf("%+v", version2)
+	}
+
+	old := ds.do(t, http.MethodGet, "/api/v3/products/"+productID+"/delivery-adoptions/"+version1.ID, nil, "")
+	ds.mustStatus(t, old, http.StatusOK)
+	var still AdoptionVersionResponse
+	ds.decode(t, old, &still)
+	if still.Slots[0].SourceAssetID != assetID || still.IsCurrent {
+		t.Fatalf("rerun must not mutate adopted version: %+v", still)
+	}
+
+	current := ds.do(t, http.MethodGet, "/api/v3/products/"+productID+"/delivery-adoptions/current", nil, "")
+	ds.mustStatus(t, current, http.StatusOK)
+	var cur AdoptionVersionResponse
+	ds.decode(t, current, &cur)
+	if cur.ID != version2.ID {
+		t.Fatalf("current %+v", cur)
+	}
+
+	ensure := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions/"+version1.ID+"/renditions", map[string]any{})
+	ds.mustStatus(t, ensure, http.StatusAccepted)
+	var ensured AdoptionRenditionsResponse
+	ds.decode(t, ensure, &ensured)
+	if len(ensured.Preview.Items) != 1 || ensured.Preview.Items[0].RenditionJobID == nil {
+		t.Fatalf("%+v", ensured)
+	}
+	jobID := *ensured.Preview.Items[0].RenditionJobID
+	if err := (Executor{DB: ds.db, Media: ds.media}).Execute(context.Background(), jobID); err != nil {
+		t.Fatal(err)
+	}
+
+	preview := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions/"+version1.ID+"/preview", map[string]any{})
+	ds.mustStatus(t, preview, http.StatusOK)
+	var previewBody AdoptionPreviewResponse
+	ds.decode(t, preview, &previewBody)
+	if !previewBody.ExportReady || len(previewBody.Items) != 1 || previewBody.Items[0].SourceAssetID != assetID {
+		t.Fatalf("%+v", previewBody)
+	}
+
+	export := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions/"+version1.ID+"/export", map[string]any{})
+	ds.mustStatus(t, export, http.StatusOK)
+	raw, err := io.ReadAll(export.Body)
+	export.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, f := range zr.File {
+		names[f.Name] = true
+	}
+	if !names["manifest.json"] || !names[previewBody.Items[0].Filename] {
+		t.Fatalf("zip names %v want %s", names, previewBody.Items[0].Filename)
+	}
+	manifestFile, err := zr.Open("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestRaw, err := io.ReadAll(manifestFile)
+	manifestFile.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := manifest["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("manifest items %v", items)
+	}
+	item, _ := items[0].(map[string]any)
+	source, _ := item["source_asset"].(map[string]any)
+	if source["id"] != assetID {
+		t.Fatalf("export must keep adopted source %v", source)
+	}
+}
+
+func TestDeliveryAdoptionConcurrentCreatesBumpVersions(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	productID := created.Product.ID
+	assetID := created.CreatedAssets[0].ID
+	ds.attachArtifact(t, productID, assetID)
+	spec := map[string]any{"width": 32, "height": 32, "format": "png", "fit": "contain"}
+
+	var wg sync.WaitGroup
+	results := make(chan int, 2)
+	errs := make(chan string, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			resp := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+				"slots": []map[string]any{{
+					"slot_key": fmt.Sprintf("slot-%d", i), "sort_order": 0,
+					"source_asset_id": assetID, "delivery_spec": spec, "quality_status": "unchecked",
+				}},
+			})
+			if resp.StatusCode != http.StatusCreated {
+				raw, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				errs <- fmt.Sprintf("status %d %s", resp.StatusCode, raw)
+				return
+			}
+			var body AdoptionVersionResponse
+			ds.decode(t, resp, &body)
+			results <- body.Version
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for msg := range errs {
+		t.Fatal(msg)
+	}
+	seen := map[int]bool{}
+	for v := range results {
+		if seen[v] {
+			t.Fatalf("duplicate version %d", v)
+		}
+		seen[v] = true
+	}
+	if !seen[1] || !seen[2] {
+		t.Fatalf("versions %v", seen)
+	}
+
+	listed := ds.do(t, http.MethodGet, "/api/v3/products/"+productID+"/delivery-adoptions", nil, "")
+	ds.mustStatus(t, listed, http.StatusOK)
+	var list AdoptionListResponse
+	ds.decode(t, listed, &list)
+	if len(list.Items) != 2 || list.CurrentVersionID == nil {
+		t.Fatalf("%+v", list)
+	}
+}
+
+func (ds *deliveryServer) uploadExtraAsset(t *testing.T, productID string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, err := w.CreateFormFile("images", "extra.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(pngBytes(t, 24, 24)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	resp := ds.do(t, http.MethodPost, "/api/v2/products/"+productID+"/image-assets", &buf, w.FormDataContentType())
+	ds.mustStatus(t, resp, http.StatusCreated)
+	var body struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	ds.decode(t, resp, &body)
+	if len(body.Items) != 1 {
+		t.Fatalf("%+v", body)
+	}
+	return body.Items[0].ID
+}
+
+func (ds *deliveryServer) attachArtifactOnGraph(t *testing.T, productID, graphID, assetID string) {
+	t.Helper()
+	nodeID := clockid.New()
+	runID := clockid.New()
+	nodeRunID := clockid.New()
+	artifactID := clockid.New()
+	digest := strings.Repeat("c", 64)
+	hash := strings.Repeat("d", 64)
+	if _, err := ds.pool.Exec(context.Background(), `
+		INSERT INTO workflow_graph_nodes (
+			id, graph_id, node_type, title, position_x, position_y, config_json, created_at, updated_at
+		) VALUES ($1, $2, 'image_generation', '出图2', 40, 0, '{}'::jsonb, NOW(), NOW())
+	`, nodeID, graphID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ds.pool.Exec(context.Background(), `
+		INSERT INTO workflow_graph_runs (
+			id, graph_id, status, run_scope, graph_revision, snapshot_json, is_retryable, started_at, finished_at
+		) VALUES ($1, $2, 'succeeded', 'graph', 1, '{}'::json, TRUE, NOW(), NOW())
+	`, runID, graphID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ds.pool.Exec(context.Background(), `
+		INSERT INTO workflow_graph_node_runs (
+			id, graph_run_id, node_id, status, sort_order, started_at, finished_at
+		) VALUES ($1, $2, $3, 'succeeded', 1, NOW(), NOW())
+	`, nodeRunID, runID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ds.pool.Exec(context.Background(), `
+		INSERT INTO workflow_graph_artifacts (
+			id, graph_id, node_id, node_run_id, artifact_type, schema_version, graph_revision,
+			payload_json, payload_hash, input_digest, product_image_asset_id, created_at
+		) VALUES ($1, $2, $3, $4, 'image', 3, 1, '{}'::jsonb, $5, $6, $7, NOW())
+	`, artifactID, graphID, nodeID, nodeRunID, hash, digest, assetID); err != nil {
+		t.Fatal(err)
+	}
+	_ = productID
+}

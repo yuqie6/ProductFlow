@@ -657,6 +657,80 @@ export interface DeliveryRenditionJobListResponse {
   items: DeliveryRenditionJob[];
 }
 
+export type DeliveryAdoptionQualityStatus = "pass" | "fail" | "unchecked";
+
+export interface DeliveryAdoptionSlot {
+  id: string;
+  slot_key: string;
+  sort_order: number;
+  image_type_key: string | null;
+  source_asset_id: string;
+  source_node_id: string | null;
+  delivery_spec: WorkflowDeliverySpec;
+  delivery_spec_hash: string;
+  quality_status: DeliveryAdoptionQualityStatus;
+  quality_detail: string | null;
+  text_overflow: boolean;
+  qualified: boolean;
+}
+
+export interface DeliveryAdoptionVersion {
+  id: string;
+  product_id: string;
+  version: number;
+  is_current: boolean;
+  graph_id: string | null;
+  graph_revision: number | null;
+  fact_set_version_id: string | null;
+  visual_system_version_id: string | null;
+  notes: string | null;
+  slots: DeliveryAdoptionSlot[];
+  created_at: string;
+}
+
+export interface DeliveryAdoptionVersionSummary {
+  id: string;
+  product_id: string;
+  version: number;
+  is_current: boolean;
+  slot_count: number;
+  created_at: string;
+}
+
+export interface DeliveryAdoptionListResponse {
+  current_version_id: string | null;
+  items: DeliveryAdoptionVersionSummary[];
+}
+
+export interface DeliveryAdoptionIssue {
+  code: string;
+  slot_key: string;
+  message: string;
+  job_id?: string | null;
+}
+
+export interface DeliveryAdoptionPreviewItem {
+  slot_key: string;
+  sort_order: number;
+  filename: string;
+  source_asset_id: string;
+  delivery_spec_hash: string;
+  qualified: boolean;
+  rendition_job_id: string | null;
+  rendition_status: string | null;
+  result_asset_id: string | null;
+}
+
+export interface DeliveryAdoptionPreview {
+  version_id: string;
+  product_id: string;
+  complete: boolean;
+  issues: DeliveryAdoptionIssue[];
+  items: DeliveryAdoptionPreviewItem[];
+  export_ready: boolean;
+  allow_partial: boolean;
+}
+
 export type WorkflowRecipeKind = "workflow_recipe" | "recipe_fragment";
 export type WorkflowRecipeSourceType = "workflow" | "group" | "selection";
 export type WorkflowRecipeOrigin = "official" | "user";

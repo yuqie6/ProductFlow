@@ -45,6 +45,13 @@ func (h HTTP) Register(engine *gin.Engine) {
 	v3 := engine.Group("/api/v3", admin)
 	v3.GET("/delivery-presets", h.presets)
 	v3.POST("/products/:product_id/delivery-exports", h.exportZip)
+	v3.GET("/products/:product_id/delivery-adoptions", h.listAdoptions)
+	v3.POST("/products/:product_id/delivery-adoptions", h.createAdoption)
+	v3.GET("/products/:product_id/delivery-adoptions/current", h.getCurrentAdoption)
+	v3.GET("/products/:product_id/delivery-adoptions/:version_id", h.getAdoption)
+	v3.POST("/products/:product_id/delivery-adoptions/:version_id/preview", h.previewAdoption)
+	v3.POST("/products/:product_id/delivery-adoptions/:version_id/renditions", h.ensureAdoptionRenditions)
+	v3.POST("/products/:product_id/delivery-adoptions/:version_id/export", h.exportAdoption)
 }
 
 // presets 是 GET /api/v3/delivery-presets：200 返回 PresetCatalog。
@@ -109,6 +116,102 @@ func (h HTTP) exportZip(c *gin.Context) {
 		return
 	}
 	archive, err := h.Service.Export(c.Request.Context(), c.Param("product_id"), req.RenditionJobIDs, req.AllowPartial)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	defer os.Remove(archive.Path)
+	c.Header("Content-Type", "application/zip")
+	c.FileAttachment(archive.Path, archive.Filename)
+}
+
+// listAdoptions 是 GET /api/v3/products/:product_id/delivery-adoptions：200 返回 AdoptionListResponse。
+func (h HTTP) listAdoptions(c *gin.Context) {
+	out, err := h.Service.ListAdoptions(c.Request.Context(), c.Param("product_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// createAdoption 是 POST /api/v3/products/:product_id/delivery-adoptions：201 返回新版本。
+func (h HTTP) createAdoption(c *gin.Context) {
+	var req CreateAdoptionRequest
+	if err := bindJSON(c, &req); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.CreateAdoption(c.Request.Context(), c.Param("product_id"), req)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, out)
+}
+
+// getCurrentAdoption 是 GET .../delivery-adoptions/current：200 返回当前版本。
+func (h HTTP) getCurrentAdoption(c *gin.Context) {
+	out, err := h.Service.GetAdoption(c.Request.Context(), c.Param("product_id"), "current")
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// getAdoption 是 GET .../delivery-adoptions/:version_id：200 返回指定版本。
+func (h HTTP) getAdoption(c *gin.Context) {
+	out, err := h.Service.GetAdoption(c.Request.Context(), c.Param("product_id"), c.Param("version_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// previewAdoption 是 POST .../preview：200 返回与导出一致的文件计划与问题。
+func (h HTTP) previewAdoption(c *gin.Context) {
+	var req AdoptionExportRequest
+	if err := bindJSON(c, &req); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.PreviewAdoption(c.Request.Context(), c.Param("product_id"), c.Param("version_id"), req)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// ensureAdoptionRenditions 是 POST .../renditions：202 确保派生任务后返回预览。
+func (h HTTP) ensureAdoptionRenditions(c *gin.Context) {
+	var req AdoptionExportRequest
+	if c.Request.ContentLength != 0 {
+		if err := bindJSON(c, &req); err != nil {
+			httpx.AbortErr(c, err)
+			return
+		}
+	}
+	out, err := h.Service.EnsureAdoptionRenditions(
+		c.Request.Context(), c.Param("product_id"), c.Param("version_id"), req.QualifiedOnly,
+	)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, out)
+}
+
+// exportAdoption 是 POST .../export：200 写出采用快照 ZIP。
+func (h HTTP) exportAdoption(c *gin.Context) {
+	var req AdoptionExportRequest
+	if err := bindJSON(c, &req); err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	archive, err := h.Service.ExportAdoption(c.Request.Context(), c.Param("product_id"), c.Param("version_id"), req)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

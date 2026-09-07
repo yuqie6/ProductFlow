@@ -2,9 +2,11 @@
  * 懒加载成果集成：切换器与成果层同块，主壳只保留 flow 默认与选择同步入口。
  */
 
-import { Suspense, useCallback, useMemo } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ListChecks } from "lucide-react";
 
+import { ApiError, api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type {
   GraphNodeCatalog,
@@ -15,6 +17,10 @@ import type {
 } from "../../../lib/types";
 import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
 import { graphEdgeRoleLabelKey, missingRequiredRunNodes, missingRunNodesSummary } from "./graphCatalog";
+import {
+  adoptedAssetBySlot,
+  buildAdoptionSlotsReplacingNode,
+} from "./deliveryAdoption";
 import { projectGraphResults, type GraphResultItem } from "./resultProjection";
 import { GraphResultsView } from "./GraphResultsView";
 
@@ -72,6 +78,7 @@ export function WorkbenchResultsViewSwitcher({
 }
 
 export function WorkbenchResultsLayer({
+  productId,
   graph,
   catalog,
   runs,
@@ -92,6 +99,7 @@ export function WorkbenchResultsLayer({
   onPreviewImage,
   onBindNode,
 }: {
+  productId: string;
   graph: GraphProjection;
   catalog: GraphNodeCatalog | null;
   runs: readonly GraphRunLike[] | undefined;
@@ -113,7 +121,24 @@ export function WorkbenchResultsLayer({
   onBindNode?: (nodeId: string) => void;
 }) {
   const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [operationError, setOperationError] = useState<unknown>(null);
   const sections = useMemo(() => projectGraphResults(graph, runs ?? EMPTY_RUNS), [graph, runs]);
+  const adoptionQuery = useQuery({
+    queryKey: ["delivery-adoption-current", productId],
+    queryFn: async () => {
+      try {
+        return await api.getCurrentDeliveryAdoption(productId);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+  });
+  const adoptedMap = useMemo(
+    () => adoptedAssetBySlot(adoptionQuery.data ?? null),
+    [adoptionQuery.data],
+  );
   const blockedReasons = useMemo(() => {
     const reasons: Record<string, string> = {};
     for (const node of graph.nodes) {
@@ -157,6 +182,60 @@ export function WorkbenchResultsLayer({
     onBindNode?.(item.nodeId);
   }, [onBindNode]);
 
+  const adoptMutation = useMutation({
+    mutationFn: async (item: GraphResultItem) => {
+      if (!item.currentAssetId) throw new ApiError(400, t("graph.results.adoptNeedImage"));
+      const slots = buildAdoptionSlotsReplacingNode({
+        graph,
+        current: adoptionQuery.data ?? null,
+        nodeId: item.nodeId,
+        sourceAssetId: item.currentAssetId,
+        qualityStatus: "unchecked",
+      });
+      if ("error" in slots) {
+        if (slots.error === "missing_delivery_spec") {
+          throw new ApiError(400, t("graph.results.adoptNeedSpec"));
+        }
+        throw new ApiError(400, t("graph.results.adoptNeedImage"));
+      }
+      return api.createDeliveryAdoption(productId, {
+        slots,
+        graph_id: graph.id,
+        graph_revision: graph.revision,
+      });
+    },
+    onSuccess: async () => {
+      setOperationError(null);
+      await queryClient.invalidateQueries({ queryKey: ["delivery-adoption-current", productId] });
+    },
+    onError: (error) => setOperationError(error),
+  });
+
+  const exportMutation = useMutation({
+    mutationFn: async () => {
+      const current = adoptionQuery.data;
+      if (!current) throw new ApiError(404, t("graph.results.exportNeedAdoption"));
+      await api.ensureDeliveryAdoptionRenditions(productId, current.id);
+      const preview = await api.previewDeliveryAdoption(productId, current.id);
+      if (!preview.export_ready) {
+        const first = preview.issues[0]?.message ?? t("graph.results.exportNotReady");
+        throw new ApiError(409, first);
+      }
+      return api.downloadDeliveryAdoptionExport(productId, current.id);
+    },
+    onSuccess: async (blob) => {
+      setOperationError(null);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "delivery-adoption.zip";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      await queryClient.invalidateQueries({ queryKey: ["delivery-adoption-current", productId] });
+    },
+    onError: (error) => setOperationError(error),
+  });
+
   return (
     <Suspense
       fallback={(
@@ -170,8 +249,9 @@ export function WorkbenchResultsLayer({
         runsLoading={runsLoading}
         runsFetching={runsFetching}
         runsError={runsError}
+        operationError={operationError ?? adoptionQuery.error}
         onRetryRuns={onRetryRuns}
-        busy={busy}
+        busy={busy || adoptMutation.isPending || exportMutation.isPending}
         runningNodeId={runningNodeId}
         selectedNodeIds={selectedNodeIds}
         plannedActions={plannedActions}
@@ -185,6 +265,11 @@ export function WorkbenchResultsLayer({
         onOpenLocalEdit={onOpenLocalEdit ? openLocalEdit : undefined}
         onPreviewImage={onPreviewImage ? previewImage : undefined}
         onBindEvidence={onBindNode ? bindEvidence : undefined}
+        adoptedAssetBySlot={adoptedMap}
+        adoptingNodeId={adoptMutation.isPending ? adoptMutation.variables?.nodeId ?? null : null}
+        exportingAdoption={exportMutation.isPending}
+        onAdoptItem={(item) => adoptMutation.mutate(item)}
+        onExportAdoption={adoptionQuery.data ? () => exportMutation.mutate() : undefined}
       />
     </Suspense>
   );

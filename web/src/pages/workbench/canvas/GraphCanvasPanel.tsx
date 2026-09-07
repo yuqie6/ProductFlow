@@ -1350,6 +1350,7 @@ export function GraphCanvasPanel({
           ) : (
             <Suspense fallback={null}>
               <WorkbenchResultsLayer
+                productId={productId}
                 graph={graph}
                 catalog={catalog}
                 runs={runsQuery.data?.items}

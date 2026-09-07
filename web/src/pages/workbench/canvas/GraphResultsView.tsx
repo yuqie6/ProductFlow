@@ -4,10 +4,12 @@
 
 import {
   AlertCircle,
+  Check,
   History,
   Images,
   Loader2,
   LocateFixed,
+  Package,
   Pencil,
   Play,
   RefreshCw,
@@ -46,6 +48,12 @@ export interface GraphResultsViewProps {
   onOpenLocalEdit?: (item: GraphResultItem) => void;
   onPreviewImage?: (item: GraphResultItem) => void;
   onBindEvidence?: (item: GraphResultItem) => void;
+  /** slot_key（通常为 nodeId）→ 已采用资产 id；当前产物不等于交付采用。 */
+  adoptedAssetBySlot?: ReadonlyMap<string, string>;
+  adoptingNodeId?: string | null;
+  exportingAdoption?: boolean;
+  onAdoptItem?: (item: GraphResultItem) => void;
+  onExportAdoption?: () => void;
 }
 
 export function GraphResultsView({
@@ -69,6 +77,11 @@ export function GraphResultsView({
   onOpenLocalEdit,
   onPreviewImage,
   onBindEvidence,
+  adoptedAssetBySlot,
+  adoptingNodeId = null,
+  exportingAdoption = false,
+  onAdoptItem,
+  onExportAdoption,
 }: GraphResultsViewProps) {
   const { t } = useI18n();
   const error = operationError ?? runsError;
@@ -104,6 +117,19 @@ export function GraphResultsView({
         <span className="shrink-0 text-[11px] font-medium text-text-muted">
           {t("graph.results.count", { count: itemCount })}
         </span>
+        {onExportAdoption ? (
+          <IconButton
+            label={t("graph.results.exportAdoption")}
+            size="sm"
+            data-graph-results-export-adoption
+            disabled={busy || exportingAdoption}
+            onClick={onExportAdoption}
+          >
+            {exportingAdoption
+              ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              : <Package size={13} aria-hidden="true" />}
+          </IconButton>
+        ) : null}
         {runsFetching ? (
           <Loader2 size={14} className="shrink-0 animate-spin text-text-muted motion-reduce:animate-none" aria-hidden="true" />
         ) : null}
@@ -154,6 +180,9 @@ export function GraphResultsView({
               onOpenLocalEdit={onOpenLocalEdit}
               onPreviewImage={onPreviewImage}
               onBindEvidence={onBindEvidence}
+              adoptedAssetBySlot={adoptedAssetBySlot}
+              adoptingNodeId={adoptingNodeId}
+              onAdoptItem={onAdoptItem}
             />
           ))}
         </div>
@@ -179,6 +208,9 @@ function ResultSection({
   onOpenLocalEdit,
   onPreviewImage,
   onBindEvidence,
+  adoptedAssetBySlot,
+  adoptingNodeId,
+  onAdoptItem,
 }: {
   section: GraphResultSection;
   selectedSet: ReadonlySet<string>;
@@ -196,6 +228,9 @@ function ResultSection({
   onOpenLocalEdit?: (item: GraphResultItem) => void;
   onPreviewImage?: (item: GraphResultItem) => void;
   onBindEvidence?: (item: GraphResultItem) => void;
+  adoptedAssetBySlot?: ReadonlyMap<string, string>;
+  adoptingNodeId: string | null;
+  onAdoptItem?: (item: GraphResultItem) => void;
 }) {
   const { t } = useI18n();
   const title = section.kind === "group"
@@ -237,6 +272,9 @@ function ResultSection({
             onOpenLocalEdit={onOpenLocalEdit}
             onPreviewImage={onPreviewImage}
             onBindEvidence={onBindEvidence}
+            adoptedAssetId={adoptedAssetBySlot?.get(item.nodeId) ?? null}
+            adopting={adoptingNodeId === item.nodeId}
+            onAdoptItem={onAdoptItem}
           />
         ))}
       </div>
@@ -261,6 +299,9 @@ function ResultCard({
   onOpenLocalEdit,
   onPreviewImage,
   onBindEvidence,
+  adoptedAssetId,
+  adopting,
+  onAdoptItem,
 }: {
   item: GraphResultItem;
   selected: boolean;
@@ -278,6 +319,9 @@ function ResultCard({
   onOpenLocalEdit?: (item: GraphResultItem) => void;
   onPreviewImage?: (item: GraphResultItem) => void;
   onBindEvidence?: (item: GraphResultItem) => void;
+  adoptedAssetId: string | null;
+  adopting: boolean;
+  onAdoptItem?: (item: GraphResultItem) => void;
 }) {
   const { t } = useI18n();
   const failed = item.status === "failed" || item.status === "unknown";
@@ -289,6 +333,13 @@ function ResultCard({
   const canEdit = Boolean(item.currentAssetId && item.kind === "generation" && onOpenLocalEdit);
   const canPreview = Boolean(item.currentAssetId && onPreviewImage);
   const canBind = item.kind === "evidence" && Boolean(onBindEvidence);
+  const isAdopted = Boolean(adoptedAssetId && item.currentAssetId && adoptedAssetId === item.currentAssetId);
+  const canAdopt = Boolean(
+    item.kind === "generation"
+    && item.currentAssetId
+    && onAdoptItem
+    && !isAdopted,
+  );
 
   return (
     <article
@@ -297,6 +348,7 @@ function ResultCard({
       data-graph-result-kind={item.kind}
       data-graph-result-status={item.status}
       data-graph-result-stale={item.showingStaleCurrent ? "true" : "false"}
+      data-graph-result-delivery-adopted={isAdopted ? "true" : "false"}
       data-graph-planned-action={plannedAction ?? undefined}
       className={`group relative flex min-w-0 flex-col overflow-hidden rounded-control border bg-surface-raised ${plannedActionClassName(plannedAction)} ${
         failed
@@ -339,6 +391,14 @@ function ResultCard({
               {t("graph.results.staleCurrent")}
             </span>
           ) : null}
+          {isAdopted ? (
+            <span
+              data-graph-result-adopted="true"
+              className="absolute bottom-1 right-1 rounded bg-accent/90 px-1 text-[9px] font-semibold text-accent-fg"
+            >
+              {t("graph.results.adopted")}
+            </span>
+          ) : null}
         </button>
       </Tooltip>
       <div className="flex min-w-0 flex-col gap-1 px-2 py-1.5">
@@ -369,6 +429,19 @@ function ResultCard({
             >
               <History size={12} aria-hidden="true" />
             </IconButton>
+            {canAdopt ? (
+              <IconButton
+                label={t("graph.results.adopt")}
+                size="sm"
+                data-graph-result-adopt
+                className="!h-7 !w-7"
+                busy={adopting}
+                disabled={busy || adopting}
+                onClick={() => onAdoptItem?.(item)}
+              >
+                <Check size={12} aria-hidden="true" />
+              </IconButton>
+            ) : null}
             {canEdit ? (
               <IconButton
                 label={t("localEdit.open")}
