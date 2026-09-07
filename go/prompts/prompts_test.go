@@ -84,6 +84,11 @@ func TestCatalogHasRequiredImageTypesAndNeedles(t *testing.T) {
 	if !strings.Contains(sellingLine, "一页") || !strings.Contains(sellingLine, "小图标") || !strings.Contains(sellingLine, "信任") {
 		t.Fatalf("selling_point type line %q", sellingLine)
 	}
+	for _, needle := range []string{"多利益图标条", "品牌标识", "线框剖视"} {
+		if !strings.Contains(sellingLine, needle) {
+			t.Fatalf("selling_point type line missing fidelity/one-reason needle %q: %q", needle, sellingLine)
+		}
+	}
 	sceneLine := compile.TypeLine("scene")
 	if !strings.Contains(sceneLine, "真实环境") || !strings.Contains(sceneLine, "暖白台面") {
 		t.Fatalf("scene type line %q", sceneLine)
@@ -99,7 +104,7 @@ func TestCatalogHasRequiredImageTypesAndNeedles(t *testing.T) {
 	if !strings.Contains(compile.FamilyLine("infographic"), "资料模块") {
 		t.Fatalf("infographic family fallback %q", compile.Infographic)
 	}
-	for _, needle := range []string{"即使只选一张", "一个有依据的购买理由", "最多两条", "小图标"} {
+	for _, needle := range []string{"即使只选一张", "一个有依据的购买理由", "最多两条", "小图标", "多利益底栏", "保真同向", "卖点1/卖点2"} {
 		if !strings.Contains(selling.Job, needle) {
 			t.Fatalf("selling point job missing %q: %q", needle, selling.Job)
 		}
@@ -124,6 +129,20 @@ func TestCatalogHasRequiredImageTypesAndNeedles(t *testing.T) {
 	}
 	if !strings.Contains(PromptInstructions(), "complete ecommerce conversion page") || !strings.Contains(PromptInstructions(), "compact trust strip") {
 		t.Fatal("prompt instructions must preserve infographic conversion hierarchy")
+	}
+	for _, needle := range []string{
+		"exactly one primary purchase-reason",
+		"never a row of unrelated",
+		"do not invent wireframe cutaways",
+		"卖点1",
+		"卖点2",
+	} {
+		if !strings.Contains(PromptInstructions(), needle) {
+			t.Fatalf("prompt instructions missing selling-point fidelity needle %q", needle)
+		}
+	}
+	if !strings.Contains(BriefInstructions(), "on-product evidence that keeps brand marks") {
+		t.Fatal("brief instructions must couple selling_point reason with on-product fidelity")
 	}
 	if !strings.Contains(PromptInstructions(), "hero: a commercial product cover") || !strings.Contains(PromptInstructions(), "scene: sell ownership") || !strings.Contains(PromptInstructions(), "detail: prove craft") {
 		t.Fatal("prompt instructions must branch by image type")

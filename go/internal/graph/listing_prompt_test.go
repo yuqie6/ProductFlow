@@ -143,3 +143,46 @@ func TestCompileImageModelPromptUsesPerTypeQualityLine(t *testing.T) {
 		t.Fatalf("detail compile\n%s", detail)
 	}
 }
+
+func TestCompileImageModelPromptSellingPointKeepsOnePrimaryReason(t *testing.T) {
+	got := CompileImageModelPrompt(ImageRequest{
+		ImageTypeKey:   "selling_point",
+		GenerationSpec: map[string]any{"text_policy": "required", "text_language": "zh-CN"},
+		Prompt: map[string]any{
+			"design_goal": "证明热风循环",
+			"content": map[string]any{
+				"selling_points": []any{"360°热风循环", "6.2L 大容量", "配不粘烤架"},
+			},
+			"product_fidelity": map[string]any{
+				"requirements": []any{"保留可视窗口与品牌标识"},
+			},
+		},
+	})
+	if !strings.Contains(got, "主要购买理由：360°热风循环") {
+		t.Fatalf("selling_point must emit one primary reason\n%s", got)
+	}
+	if strings.Contains(got, "卖点：") || strings.Contains(got, "6.2L 大容量") || strings.Contains(got, "配不粘烤架") {
+		t.Fatalf("selling_point must not dump extra reasons into the image prompt\n%s", got)
+	}
+	for _, needle := range []string{"多利益图标条", "品牌标识", "线框剖视", "保留可视窗口与品牌标识"} {
+		if !strings.Contains(got, needle) {
+			t.Fatalf("missing %q in selling_point compile\n%s", needle, got)
+		}
+	}
+}
+
+func TestCompileImageModelPromptNonSellingPointKeepsJoinedSellingPoints(t *testing.T) {
+	got := CompileImageModelPrompt(ImageRequest{
+		ImageTypeKey: "specifications",
+		Prompt: map[string]any{
+			"design_goal": "规格",
+			"content":     map[string]any{"selling_points": []any{"容量 6.2L", "全金属内腔"}},
+		},
+	})
+	if !strings.Contains(got, "卖点：容量 6.2L、全金属内腔") {
+		t.Fatalf("non-selling_point should still join selling_points\n%s", got)
+	}
+	if strings.Contains(got, "主要购买理由：") {
+		t.Fatalf("non-selling_point must not use primary-reason label\n%s", got)
+	}
+}

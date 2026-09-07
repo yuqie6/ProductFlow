@@ -48,7 +48,7 @@
 - 原因：无。
 - 解除条件：无。
 - 跟进者：协调者审核；执行者已停隔离 API/worker/dispatcher/Redis，保留 PG 容器 `productflow-iq-content-pilot-pg-0907` 与产物目录待验收后处置。
-- 交接：已归档；产物留在 `storage-dev/image-quality-content-pilot-run/`（gitignore）；PG 容器 `productflow-iq-content-pilot-pg-0907` 可由协调者择机停。跟进见 [image-quality-selling-point-fidelity](../image-quality-selling-point-fidelity.md)。
+- 交接：已归档；产物留在 `storage-dev/image-quality-content-pilot-run/`（gitignore）；PG 容器 `productflow-iq-content-pilot-pg-0907` 可由协调者择机停。跟进见 [image-quality-selling-point-fidelity](image-quality-selling-point-fidelity.md)。
 
 ## 证据
 

@@ -103,7 +103,12 @@ func CompileImageModelPrompt(req ImageRequest) string {
 		briefLines = append(briefLines, "主体："+strings.Join(focus, "、"))
 	}
 	if selling := usablePromptTexts(content["selling_points"]); len(selling) > 0 {
-		briefLines = append(briefLines, "卖点："+strings.Join(selling, "、"))
+		if imageTypeKey == "selling_point" {
+			// 卖点图只把第一句当作主要购买理由发给生图模型，避免多利益堆砌入片。
+			briefLines = append(briefLines, "主要购买理由："+selling[0])
+		} else {
+			briefLines = append(briefLines, "卖点："+strings.Join(selling, "、"))
+		}
 	}
 	if background := usablePromptText(content["background"]); background != "" {
 		briefLines = append(briefLines, "背景："+scrubRoutePromptText(route, background))
