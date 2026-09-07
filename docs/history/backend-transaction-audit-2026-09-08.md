@@ -24,7 +24,8 @@
 | 连续生图旧 worker 在条件 UPDATE 未命中后仍重排队或收口当前额度 | `imagesession.finishFailed` 先锁并核对当前 attempt，失败终态与额度同事务提交 | 原代码回归复现额外信封和当前 hold 被释放；修复后旧 attempt 无副作用，额度写失败回滚任务，重放仅一次释放事件 | `bc0a52c3` |
 | 连续生图成功/未知先提交任务再收口额度，过期未知未同步 hold | `finishSucceeded`、`finishUnknown` 和 `recoverImageTaskState` 在当前任务事务调用 quota owner | success/unknown/recovery 三种额度写故障均保留 running 与当前 attempt；解除后任务与 hold 同步终态，重放不重复额度事件 | `6935a107` |
 | 连续生图创建/重试分开预留额度，失败依靠事后释放；取消提交后吞掉额度错误 | `imagesession.Service.Generate/Retry/Cancel` 负责组合事务；Retry/Cancel 锁定任务后判断状态；删除 Service 的补偿释放路径 | 队列约束失败回滚任务、hold 和余额；取消额度失败保留 queued；解除故障可重放；两个并发 Retry 仅一个成功且预留保持 reserved | `1f9af348` |
-| Graph HTTP 取消在事务外忽略额度失败，Agent 的 CancelRunTx 完全漏掉额度处理 | `cancelGraphRun` 持 run/node 锁后处理准确 attempt 的额度；两个 Service 入口共享命令 | 两种入口、Provider 前后四条真实数据库约束回归；失败时运行/节点/额度/取消事件回滚，AfterRunStatus 不发生，解除后重复取消幂等 | 随本次提交 |
+| Graph HTTP 取消在事务外忽略额度失败，Agent 的 CancelRunTx 完全漏掉额度处理 | `cancelGraphRun` 持 run/node 锁后处理准确 attempt 的额度；两个 Service 入口共享命令 | 两种入口、Provider 前后四条真实数据库约束回归；失败时运行/节点/额度/取消事件回滚，AfterRunStatus 不发生，解除后重复取消幂等 | `adfe06ce` |
+| Graph 恢复先提交 queued/unknown，再处理额度且吞掉写错误 | `recoverGraphRunState` 在恢复事务中使用原额度 owner，删除事务外动作列表并复用商家查询 | claimed/provider_call 两分支原代码均复现吞错；额度失败保留运行和当前 attempt、余额与事件，解除后重排队或标未知，重放仅一次额度事件 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -34,7 +35,7 @@
 |---|---|---|
 | 商品与图创建 | `product.Service.CreateDirect → createWithGraph/createCanonical → graph.WriteTx`，商品、资产与图在调用者的同一事务组合；媒体沿 compensation 处理。保留 product 的创建 owner。 | 各种中断点的全组合故障注入尚未逐一覆盖；不从包测试推定整条真实商品交付签收。 |
 | 图修改 | `graph.Service → WriteTx → graph command/project`；商品、配方和 Agent 通过 Graph 写入口组合，Graph 用 ProductGuard 访问商品。 | `WithProductGuard` 的隐式依赖要求多个调用者懂装配；尚无本轮越权复现。 |
-| 图执行 | `ExecuteRun → executeClaimedNode → runClaimedNode → prepare/finishProviderCall → persist*Artifact` 已有 lease、attempt、effect、投影晋升分层。 | 取消已在持锁命令收口；Provider 前预留、成功和恢复仍有事务外额度处理，需以数据库故障和竞争证明后修改；只改文件布局没有验收价值。 |
+| 图执行 | `ExecuteRun → executeClaimedNode → runClaimedNode → prepare/finishProviderCall → persist*Artifact` 已有 lease、attempt、effect、投影晋升分层。 | 取消已在持锁命令收口；过期恢复已在同一事务收口；Provider 前预留和成功仍有事务外额度处理，需以数据库故障和竞争证明后修改；只改文件布局没有验收价值。 |
 | 连续生图 | `Execute → runGeneration → ensureEffect → Generate → saveCandidate → markEffect → finish*`；每次信封处理一个批次，已有 applied 批次跳过 Provider。 | billing sequence 绑定、部分候选已保存后的失败、effect 写失败及额度最终收口需继续审计；不能直接套用 node/attempt 的额度键规则。 |
 | 局部编辑 | 本轮覆盖 HTTP 创建/提交夹具、worker、task/attempt/asset/hold/账户、恢复与 queue.Consume。 | 未进行 SIGKILL 或真实 Provider 调用；进程崩溃按可持久化边界和实际恢复函数注入验证。 |
 | 交付 | 已有本地 Render、资产派生、attempt 条件写入和恢复；此次收口 worker 失败终态错误传播。 | 原图/媒体存储的各类真实 IO 故障、交付性能和全部采用流程未作本轮专项验收。 |
@@ -44,7 +45,7 @@
 
 优先级按可能损害排序；修改频率与扩散范围目前只有静态调用者证据，没有生产统计。
 
-1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，`graph/recovery.go` 和图像成功持久化仍有事务外额度调用；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 的精确绑定和缺失 hold 处理仍待核实。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
+1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化仍有事务外额度调用；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 的精确绑定和缺失 hold 处理仍待核实。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
 2. **中：局部编辑 claimed 历史预留与缺失 hold 的合同。** 当前调用前预留已原子化；仍应检查恢复前已存在的 claimed + hold 是否可安全释放，以及 `finalizeQuotaIgnoreMissing` 对真实异常与合法未预留路径的区分。不能因夹具未建 hold 就放宽生产成功合同。
 3. **中：Graph context 服务依赖。** `WithProductGuard` 跨 product/recipe/agent 装配，形成编译期不可见的前置。候选方向是显式 Graph 用例依赖与已有事务入口；必须维持跨商家统一 404、事务组合及 worker 无 HTTP 商家上下文的执行合同。未实施，不把风格判断升级成安全缺陷。
 4. **可选：节点执行职责与跨生成入口共享机制。** 保留三种不同的业务计费身份和 Provider 合同；只在同一规则的重复已导致漂移时抽取 owner。当前不建立统一生成框架，也不因 `execute_node.go` 较长拆文件。Graph 的 cook、效果记录、资产晋升、交付组合是后续逐边界验证对象。
@@ -77,3 +78,7 @@
 Graph 取消切片由本任务主代理负责，范围限定 `graph/service.go`、`runs.go` 与 [取消额度原子性回归](../../go/internal/graph/cancel_quota_atomicity_test.go)。`CancelRun` 删除预扫描和事务外后处理；`CancelRunTx` 的 Agent 调用者无需知道额度键或额外调用额度服务。取消命令持运行锁后锁节点并保存当前 attempt，再通过原有 quota owner 处理预留。Provider 外部调用不进入取消事务。缺失 hold 的旧容忍规则及调用前预留竞争仍属待审计项。
 
 Graph 取消最终整包回归通过；新增四种数据库故障回归实际执行，目标规模查询门仍 opt-in。整包前一次运行保留为 FAIL：新增 effect 夹具使用了不合法的 request hash，修正为现有 64 位散列合同后针对性回归和最终整包均通过，未放宽 schema。Agent 的 `TestCancelWorkflowRunRequest*` 与 `TestCancelTaskParksProductGoalAfterWorkflowRunRequest` 消费者回归通过（1.953 秒）。主代理自审确认删除旧事务外额度路径，未修改 Agent、共享运行环境或其他任务文件。
+
+Graph 恢复切片由本任务主代理负责，范围为 `graph/recovery.go` 与 [恢复额度回归](../../go/internal/graph/recovery_quota_atomicity_test.go)。原代码两分支均实际复现额度写故障被吞掉；修复后恢复调用者只有状态结果和错误，不再另持额度后处理列表。未改变原有 claimed/prepared 可重排队、Provider 已开始必须未知的判定，也未触发外部 Provider。
+
+恢复切片最终 Graph 整包通过；新增数据库回归实际执行，原有恢复分页/隔离和取消执行恢复并发回归通过。`just docs-check` 与完整 diff 自审通过。期间账户任务修改 auth/schema，按其已登记范围保留；本切片不包含这些修改，也不占用其数据库前缀。
