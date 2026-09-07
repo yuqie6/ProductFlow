@@ -18,6 +18,12 @@ Two current deliveries are category-aware multimodal image annotation using the 
 
 Simple controls and optional advanced Graph editing share the same product, assets and versions. Automation continues within clear authorization; confirmation depends on the actual effects of replacement, deletion, scope expansion and permission changes. Account management develops as a separate usability capability. Commercial operation and scaling remain future directions. The Chinese roadmap and its linked delivery tasks own the detailed acceptance criteria.
 
+## Full Current Objective
+
+Completion requires mature personal accounts (profile, password change, SMTP recovery, session management and isolated saved preferences), a professional merchant dashboard backed by real products/jobs/adopted deliveries, and an administrator console with explicit merchant scope and traceable actions. The dashboard must link back to existing work and handle empty, failed and mobile states; it must not invent sales or revenue. Enterprise quality does not introduce team roles or organization switching.
+
+Repeated image annotations must expose uncertain identities and unstable comparisons, guide verified material corrections and production improvements, and be followed by fixed-input regression evidence. Agent improvements must use real merchant tasks and preserve the independent behavior/evaluation contracts. Shared domain state, restart/upgrade/backup recovery, and accurate documentation remain part of maturity. The Chinese roadmap section 1.4 owns these acceptance boundaries; a completed annotation tool or isolated UI slice does not establish the full goal.
+
 ## Competitive Direction
 
 The Chinese roadmap records dated official sources for Designkit, 51aic, Gaoding, Lovart, Photoroom, PicCopilot, Huiwa, Canva and ComfyUI. The investigation covers public interfaces, help/API documentation and public technical material. Paid same-task generation comparisons were not performed, and private competitor implementation details are unknown.

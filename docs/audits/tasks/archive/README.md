@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [category-annotation-repeatability.md](category-annotation-repeatability.md) | 完成 | 48项重复标注，候选胜负仅2/8一致；定位评委适用性和身份判读问题 |
 | [category-image-annotation.md](category-image-annotation.md) | 完成 | 分类多模态标注与显式候选对照；16/16 有效真实标注，非生成质量达标门 |
 | [workbench-continuity.md](workbench-continuity.md) | 完成 | 明确预览入口、采用版本差异与导出连续路径，四语及窄屏浏览器验证 |
 | [saas-identity-convergence.md](saas-identity-convergence.md) | 完成 | 账号自有商家与独立管理员、删除成员模型和默认归属，迁移与前后端验证 |
