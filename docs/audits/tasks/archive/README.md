@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-queue-frontend.md](merchant-queue-frontend.md) | 完成 | B8 队列 merchant 快照+前端切换边界；≠MP-B |
 | [merchant-agent-tools.md](merchant-agent-tools.md) | 完成 | B7 Agent 全链商家字段+25工具 harness；≠MP-B |
 | [compete-facts-brand-inherit.md](compete-facts-brand-inherit.md) | 完成 | CF-B5 四级风格链+清身份；Brand 占位；≠R3 |
 | [compete-facts-controlled-layout.md](compete-facts-controlled-layout.md) | 完成 | CF-B4 自研 layout 组合器+选型备忘；≠HTTP/编辑器/R3 |

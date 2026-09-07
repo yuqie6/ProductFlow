@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/metrics"
@@ -286,7 +287,7 @@ func restageGraphRun(ctx context.Context, gdb *gorm.DB, runID string) (bool, err
 	var changed bool
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var rec schema.WorkflowGraphRuns
-		err := pgxTx.WithContext(ctx).Select("id", "status").Where("id = ?", runID).Take(&rec).Error
+		err := pgxTx.WithContext(ctx).Select("id", "status", "graph_id").Where("id = ?", runID).Take(&rec).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
@@ -296,8 +297,17 @@ func restageGraphRun(ctx context.Context, gdb *gorm.DB, runID string) (bool, err
 		if rec.Status != RunStatusRunning {
 			return nil
 		}
+		var merchantID string
+		if scanErr := pgxTx.WithContext(ctx).Raw(`
+			SELECT p.merchant_id
+			FROM workflow_graphs g
+			JOIN products p ON p.id = g.product_id
+			WHERE g.id = ?`, rec.GraphID).Scan(&merchantID).Error; scanErr != nil {
+			return scanErr
+		}
+		restageCtx := auth.WithMerchantID(ctx, merchantID)
 		var restageErr error
-		changed, restageErr = queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, runID, nil)
+		changed, restageErr = queue.RestageIfIdle(restageCtx, pgxTx, queue.ActorGraphRun, runID, nil)
 		return restageErr
 	})
 	return changed, err

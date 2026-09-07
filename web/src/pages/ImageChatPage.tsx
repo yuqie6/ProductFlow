@@ -30,6 +30,7 @@ import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS } from "../lib/imageToolOptions";
+import { bindMerchantGeneration, getMerchantGeneration } from "../lib/merchantBoundary";
 import { useI18n } from "../lib/preferences";
 import { DEFAULT_IMAGE_GENERATION_MAX_DIMENSION, buildImageSizeOptions } from "../lib/imageSizes";
 import { imageRoundSizeLabel, placeholderStatusClass, placeholderStatusLabel } from "./image-chat/display";
@@ -434,9 +435,10 @@ export function ImageChatPage() {
       setSessionEventsFallback(false);
       return;
     }
-    return subscribeImageSessionEvents(api.imageSessionEventsUrl(selectedSessionId), (status) => {
+    const generation = getMerchantGeneration();
+    return subscribeImageSessionEvents(api.imageSessionEventsUrl(selectedSessionId), bindMerchantGeneration(generation, (status) => {
       queryClient.setQueryData(["image-session-status", status.id], status);
-    }, {
+    }), {
       onOpen: () => setSessionEventsFallback(false),
       onError: () => {
         setSessionEventsFallback(true);

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/metrics"
@@ -246,8 +247,14 @@ func restageImageTask(ctx context.Context, gdb *gorm.DB, taskID, sessionID strin
 		if task.Status != "queued" {
 			return nil
 		}
+		var merchantID string
+		if scanErr := pgxTx.WithContext(ctx).Model(&schema.ImageSessions{}).
+			Select("merchant_id").Where("id = ?", sessionID).Scan(&merchantID).Error; scanErr != nil {
+			return scanErr
+		}
+		restageCtx := auth.WithMerchantID(ctx, merchantID)
 		var restageErr error
-		changed, restageErr = queue.RestageIfIdle(ctx, pgxTx, queue.ActorImageSession, taskID, nil)
+		changed, restageErr = queue.RestageIfIdle(restageCtx, pgxTx, queue.ActorImageSession, taskID, nil)
 		if restageErr != nil {
 			return restageErr
 		}

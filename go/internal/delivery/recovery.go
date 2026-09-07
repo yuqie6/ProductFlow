@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/metrics"
@@ -158,7 +159,7 @@ func restageDeliveryJob(ctx context.Context, gdb *gorm.DB, jobID string) (bool, 
 	var changed bool
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var job schema.DeliveryRenditionJobs
-		err := pgxTx.WithContext(ctx).Select("id", "status").Where("id = ?", jobID).Take(&job).Error
+		err := pgxTx.WithContext(ctx).Select("id", "status", "product_id").Where("id = ?", jobID).Take(&job).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
@@ -168,8 +169,14 @@ func restageDeliveryJob(ctx context.Context, gdb *gorm.DB, jobID string) (bool, 
 		if job.Status != "queued" {
 			return nil
 		}
+		var merchantID string
+		if scanErr := pgxTx.WithContext(ctx).Model(&schema.Products{}).
+			Select("merchant_id").Where("id = ?", job.ProductID).Scan(&merchantID).Error; scanErr != nil {
+			return scanErr
+		}
+		restageCtx := auth.WithMerchantID(ctx, merchantID)
 		var restageErr error
-		changed, restageErr = queue.RestageIfIdle(ctx, pgxTx, queue.ActorDelivery, jobID, nil)
+		changed, restageErr = queue.RestageIfIdle(restageCtx, pgxTx, queue.ActorDelivery, jobID, nil)
 		return restageErr
 	})
 	return changed, err

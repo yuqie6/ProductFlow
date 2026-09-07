@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/metrics"
@@ -141,8 +142,14 @@ func restageLocalEditTask(ctx context.Context, gdb *gorm.DB, taskID string) (boo
 		if task.Status != "queued" {
 			return nil
 		}
+		var merchantID string
+		if scanErr := pgxTx.WithContext(ctx).Model(&schema.Products{}).
+			Select("merchant_id").Where("id = ?", task.ProductID).Scan(&merchantID).Error; scanErr != nil {
+			return scanErr
+		}
+		restageCtx := auth.WithMerchantID(ctx, merchantID)
 		var restageErr error
-		changed, restageErr = queue.RestageIfIdle(ctx, pgxTx, queue.ActorLocalEdit, task.ID, payloadFor(taskFromModel(task)))
+		changed, restageErr = queue.RestageIfIdle(restageCtx, pgxTx, queue.ActorLocalEdit, task.ID, payloadFor(taskFromModel(task)))
 		return restageErr
 	})
 	return changed, err

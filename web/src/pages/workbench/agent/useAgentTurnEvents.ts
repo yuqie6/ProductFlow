@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import type { AgentTurn, AgentTurnEvent } from "../../../lib/types";
+import { getMerchantGeneration, isCurrentMerchantGeneration } from "../../../lib/merchantBoundary";
 import {
   AGENT_TERMINAL_EVENT_KINDS,
   agentTurnNeedsEventStream,
@@ -109,6 +110,7 @@ export function useAgentTurnEvents({
       setConnectionState("idle");
       return;
     }
+    const generation = getMerchantGeneration();
     try {
       const key = turnKey;
       const release = runtime.acquire({
@@ -118,6 +120,7 @@ export function useAgentTurnEvents({
           setStreamError(message);
         },
         onEvent: (event) => {
+          if (!isCurrentMerchantGeneration(generation)) return;
           callbacksRef.current.onEvent?.(event);
           if (event.kind === "approval.requested") {
             callbacksRef.current.onArtifactProposed?.();

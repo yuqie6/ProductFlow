@@ -27,6 +27,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { ApiError, api } from "../lib/api";
 import { useAgentPageContext } from "../lib/agentPageContext";
 import type { TranslationKey } from "../lib/i18n";
+import { bindMerchantGeneration, getMerchantGeneration, isCurrentMerchantGeneration } from "../lib/merchantBoundary";
 import { useI18n } from "../lib/preferences";
 import type {
   AgentPageContextSnapshotInput,
@@ -459,11 +460,12 @@ export function GlobalAgentDock() {
       return;
     }
     let active = true;
+    const generation = getMerchantGeneration();
     const source = new EventSource(api.agentControlEventsUrl(), { withCredentials: true });
-    const invalidateLists = () => {
+    const invalidateLists = bindMerchantGeneration(generation, () => {
       void queryClient.invalidateQueries({ queryKey: ["agent-sessions"] });
       void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
-    };
+    });
     const handleOpen = () => {
       if (!active) return;
       void reconcileAgentDockListsOnControlOpen(
@@ -485,7 +487,7 @@ export function GlobalAgentDock() {
     source.addEventListener("error", handleError);
     const handleLeaseChanged = (event: Event) => {
       const data = "data" in event && typeof event.data === "string" ? event.data : "";
-      if (!data || !active) return;
+      if (!data || !active || !isCurrentMerchantGeneration(generation)) return;
       try {
         const payload = JSON.parse(data) as { phase?: string; execution_id?: string };
         setLeaseHealth({

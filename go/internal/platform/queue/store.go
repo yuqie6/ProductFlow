@@ -17,6 +17,7 @@ import (
 
 // Stage 按 delivery_key 幂等写入 PENDING。已存在且身份一致则复用；CONSUMED 会重置为 PENDING。
 // 同一 key 绑到不同 actor/aggregate/payload 返回 409。
+// context 商家写入 MerchantID 快照；已有快照不可改写（改信封商家 → Conflict）。
 // 新建或 resetPending 时在同一事务里 NOTIFY ChannelDispatch；复用已有 PENDING/SENT/DEAD 不通知。
 func Stage(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID string, payload any, availableAt *time.Time) (Dispatch, error) {
 	existing, err := loadByDeliveryKey(ctx, tx, deliveryKey)
@@ -31,18 +32,29 @@ func Stage(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID
 			return Dispatch{}, err
 		}
 	}
+	merchantID, err := resolveStageMerchant(ctx, existing)
+	if err != nil {
+		return Dispatch{}, err
+	}
 	if existing != nil {
 		if err := validateIdentity(*existing, actorName, aggregateID, payloadJSON); err != nil {
 			return Dispatch{}, err
 		}
+		updates := map[string]any{}
 		if len(payloadJSON) > 0 && len(existing.PayloadJSON) == 0 {
 			existing.PayloadJSON = payloadJSON
-			if err := tx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Where("id = ?", existing.ID).Updates(map[string]any{
-				"payload_json": string(payloadJSON),
-				"updated_at":   now,
-			}).Error; err != nil {
+			updates["payload_json"] = string(payloadJSON)
+		}
+		if existing.MerchantID == "" && merchantID != "" {
+			existing.MerchantID = merchantID
+			updates["merchant_id"] = merchantID
+		}
+		if len(updates) > 0 {
+			updates["updated_at"] = now
+			if err := tx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
 				return Dispatch{}, err
 			}
+			existing.UpdatedAt = now
 		}
 		if existing.Status == StatusConsumed {
 			avail := now
@@ -79,7 +91,7 @@ func Stage(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID
 	id := clockid.New()
 	row := schema.AsyncDispatches{
 		ID: id, DeliveryKey: deliveryKey, ActorName: actorName, AggregateID: aggregateID,
-		PayloadJSON: payloadPtr(payloadJSON), Status: StatusPending, AvailableAt: avail, Attempts: 0,
+		MerchantID: merchantID, PayloadJSON: payloadPtr(payloadJSON), Status: StatusPending, AvailableAt: avail, Attempts: 0,
 		CreatedAt: now, UpdatedAt: now,
 	}
 	if err := tx.WithContext(ctx).Create(&row).Error; err != nil {
@@ -119,7 +131,7 @@ func RestageIfIdle(ctx context.Context, tx *gorm.DB, actorName, aggregateID stri
 }
 
 // StageForActor 用 [DeliveryKey] 调用 [Stage]；delay>0 时设置 available_at。
-// 同一 key 绑到不同 actor/aggregate 返回 Conflict。
+// context 中的工作商家写入受理快照；同一 key 绑到不同 actor/aggregate 或改写商家返回 Conflict。
 func StageForActor(ctx context.Context, tx *gorm.DB, actorName, aggregateID string, delay time.Duration) (Dispatch, error) {
 	var availableAt *time.Time
 	if delay > 0 {
@@ -130,7 +142,7 @@ func StageForActor(ctx context.Context, tx *gorm.DB, actorName, aggregateID stri
 }
 
 // Requeue 把已有信封拉回 PENDING。SENT 且 lease 仍有效时，除非 allowActiveLease，否则原样返回。
-// payload JSON 无法 marshal 时返回 error；同一 key 身份冲突返回 Conflict。
+// payload JSON 无法 marshal 时返回 error；同一 key 身份冲突或改写商家快照返回 Conflict。
 func Requeue(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregateID string, payload any, availableAt *time.Time, allowActiveLease bool) (Dispatch, error) {
 	existing, err := loadByDeliveryKey(ctx, tx, deliveryKey)
 	if err != nil {
@@ -146,15 +158,25 @@ func Requeue(ctx context.Context, tx *gorm.DB, deliveryKey, actorName, aggregate
 			return Dispatch{}, err
 		}
 	}
+	merchantID, err := resolveStageMerchant(ctx, existing)
+	if err != nil {
+		return Dispatch{}, err
+	}
 	if err := validateIdentity(*existing, actorName, aggregateID, payloadJSON); err != nil {
 		return Dispatch{}, err
 	}
 	now := time.Now().UTC()
+	updates := map[string]any{}
 	if len(payloadJSON) > 0 && len(existing.PayloadJSON) == 0 {
-		if err := tx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Where("id = ?", existing.ID).Updates(map[string]any{
-			"payload_json": string(payloadJSON),
-			"updated_at":   now,
-		}).Error; err != nil {
+		updates["payload_json"] = string(payloadJSON)
+	}
+	if existing.MerchantID == "" && merchantID != "" {
+		existing.MerchantID = merchantID
+		updates["merchant_id"] = merchantID
+	}
+	if len(updates) > 0 {
+		updates["updated_at"] = now
+		if err := tx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
 			return Dispatch{}, err
 		}
 	}
@@ -222,9 +244,9 @@ func notifyDispatch(ctx context.Context, tx *gorm.DB, id string) error {
 func fromSchema(row schema.AsyncDispatches) Dispatch {
 	d := Dispatch{
 		ID: row.ID, DeliveryKey: row.DeliveryKey, ActorName: row.ActorName, AggregateID: row.AggregateID,
-		Status: row.Status, AvailableAt: row.AvailableAt, LeaseToken: row.LeaseToken, LeaseExpiresAt: row.LeaseExpiresAt,
-		Attempts: row.Attempts, LastError: row.LastError, SentAt: row.SentAt, ConsumedAt: row.ConsumedAt,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		MerchantID: row.MerchantID, Status: row.Status, AvailableAt: row.AvailableAt, LeaseToken: row.LeaseToken,
+		LeaseExpiresAt: row.LeaseExpiresAt, Attempts: row.Attempts, LastError: row.LastError, SentAt: row.SentAt,
+		ConsumedAt: row.ConsumedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 	if row.PayloadJSON != nil {
 		d.PayloadJSON = []byte(*row.PayloadJSON)

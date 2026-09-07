@@ -24,7 +24,8 @@ type Dispatch struct {
 	DeliveryKey    string // 幂等键，格式 actorName:aggregateID
 	ActorName      string // worker 路由名；改名必须同步路由
 	AggregateID    string
-	PayloadJSON    []byte // 信封负载
+	MerchantID     string // 受理商家快照；Restage/重试保持不变，改写返回 Conflict
+	PayloadJSON    []byte // 信封负载（业务字段；商家归属看 MerchantID）
 	Status         string // pending | sent | consumed | dead
 	AvailableAt    time.Time
 	LeaseToken     *string // dispatcher/worker 围栏；错配不得 CONSUMED

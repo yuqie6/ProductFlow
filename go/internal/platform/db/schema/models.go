@@ -291,11 +291,13 @@ func (AppSettings) TableName() string { return "app_settings" }
 
 // AsyncDispatches 对应表 async_dispatches。
 // 异步信封：HTTP 只写 PENDING，dispatcher 标 SENT 再入队。
+// MerchantID 是受理时商家快照（非租户根）；重试/Restage 不得改写；空串表示旧行尚未回填。
 type AsyncDispatches struct {
 	ID             string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	DeliveryKey    string     `gorm:"column:delivery_key;type:varchar(255);not null"`
 	ActorName      string     `gorm:"column:actor_name;type:varchar(120);not null"`
 	AggregateID    string     `gorm:"column:aggregate_id;type:varchar(36);not null"`
+	MerchantID     string     `gorm:"column:merchant_id;type:varchar(36)"`
 	PayloadJSON    *string    `gorm:"column:payload_json;type:json"`
 	Status         string     `gorm:"column:status;type:asyncdispatchstatus;not null"`
 	AvailableAt    time.Time  `gorm:"column:available_at;type:timestamptz;not null"`

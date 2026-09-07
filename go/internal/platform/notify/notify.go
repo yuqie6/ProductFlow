@@ -23,7 +23,7 @@ const (
 	ChannelTurn = "productflow_turn"
 	// ChannelImageSession 是连续生图会话唤醒通道。
 	ChannelImageSession = "productflow_image_session"
-	// ChannelDispatch 是 dispatcher 出队唤醒通道。载荷只作唤醒，不当工作项。
+	// ChannelDispatch 是 dispatcher 出队唤醒通道。载荷只作唤醒（dispatch id），不当工作项，不授予商家数据。
 	ChannelDispatch = "productflow_dispatch"
 	maxPayload      = 7900
 )

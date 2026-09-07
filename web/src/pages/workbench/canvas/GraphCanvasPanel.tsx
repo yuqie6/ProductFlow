@@ -17,6 +17,7 @@ import { Kbd } from "../../../components/ui/kbd";
 import { toast } from "../../../components/ui/toast";
 import { Tooltip } from "../../../components/ui/tooltip";
 import { api, ApiError } from "../../../lib/api";
+import { bindMerchantGeneration, getMerchantGeneration } from "../../../lib/merchantBoundary";
 import { AGENT_IMAGE_TYPE_TRANSLATIONS } from "../../product-create/imageTypeSelection";
 import { useI18n } from "../../../lib/preferences";
 import type { AgentProductImageTypeKey, GraphChangeSet, GraphNodeCatalog, GraphNodeType, GraphProjection, GraphRunListResponse, GraphRunPreviewResponse, GraphRunSubmitInput } from "../../../lib/types";
@@ -479,7 +480,8 @@ export function GraphCanvasPanel({
       setRunEventsFallback(false);
       return;
     }
-    return subscribeGraphRunEvents(api.graphRunEventsUrl(productId, graph.id, liveRunId), (event) => {
+    const generation = getMerchantGeneration();
+    return subscribeGraphRunEvents(api.graphRunEventsUrl(productId, graph.id, liveRunId), bindMerchantGeneration(generation, (event) => {
       runEventCursorRef.current[event.run_id] = event.sequence;
       queryClient.setQueryData<GraphRunListResponse | undefined>(["graph-runs", productId, graph.id], (previous) => applyGraphRunEvent(previous, event));
       if (event.kind === "run.started"
@@ -496,7 +498,7 @@ export function GraphCanvasPanel({
         void queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] });
         void queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] });
       }
-    }, {
+    }), {
       after: runEventCursorRef.current[liveRunId] ?? 0,
       onOpen: () => setRunEventsFallback(false),
       onError: () => {

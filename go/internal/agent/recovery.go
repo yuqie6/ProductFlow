@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/metrics"
@@ -188,7 +189,7 @@ func restagePendingTurns(ctx context.Context, s Service, limit int) (enqueued, p
 		var changed bool
 		restageErr := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 			var projection schema.AgentTurnProjections
-			if takeErr := pgxTx.WithContext(ctx).Select("id", "status", "harness_turn_id", "resume_required", "question_answer_json").
+			if takeErr := pgxTx.WithContext(ctx).Select("id", "status", "harness_turn_id", "resume_required", "question_answer_json", "conversation_id").
 				Where("id = ?", id).Take(&projection).Error; takeErr != nil {
 				if errors.Is(takeErr, gorm.ErrRecordNotFound) {
 					return nil
@@ -201,7 +202,13 @@ func restagePendingTurns(ctx context.Context, s Service, limit int) (enqueued, p
 			}) {
 				return nil
 			}
-			ok, restageErr := queue.RestageIfIdle(ctx, pgxTx, queue.ActorAgentTurnSync, id, nil)
+			var merchantID string
+			if scanErr := pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).
+				Select("merchant_id").Where("id = ?", projection.ConversationID).Scan(&merchantID).Error; scanErr != nil {
+				return scanErr
+			}
+			restageCtx := auth.WithMerchantID(ctx, merchantID)
+			ok, restageErr := queue.RestageIfIdle(restageCtx, pgxTx, queue.ActorAgentTurnSync, id, nil)
 			changed = ok
 			return restageErr
 		})

@@ -148,6 +148,14 @@ export function releaseConversationRuntime(key: string, runtime: ConversationRun
   runtimes.delete(key);
 }
 
+/** 商家切换时关闭全部共享 EventSource，避免旧订阅写入新商 UI。 */
+export function disposeAllConversationRuntimes(): void {
+  for (const [key, runtime] of [...runtimes.entries()]) {
+    runtime.dispose();
+    runtimes.delete(key);
+  }
+}
+
 interface ConversationEventSubscriptionInput {
   url: string;
   scope: AgentTurnEventScope;

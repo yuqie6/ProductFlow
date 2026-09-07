@@ -14,6 +14,7 @@ PostgreSQL 是业务终态。Redis / broker 只负责投递。HTTP 默认不在�
 - Worker `max_retries = 0`。asynq/Dramatiq retry 不是 WorkflowRun 状态机。
 - SENT 不等于业务成功。
 - Provider 调用之后不能证明结果：保持 `unknown`，不自动当失败重试。Delivery 没有 unknown。
+- `async_dispatches.merchant_id` 是受理时商家快照（非租户根）。Stage/Restage/Requeue 保持原商家；context 改写已有快照返回 Conflict。Worker 只按 aggregate 执行，不信任 asynq 信封外带商家。
 
 ## Actor 名
 

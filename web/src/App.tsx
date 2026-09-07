@@ -1,12 +1,14 @@
-import { lazy, Suspense, useEffect, useMemo } from "react";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { lazy, Suspense, useEffect, useMemo, useRef } from "react";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { AppToaster } from "./components/ui/toast";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { api } from "./lib/api";
+import { activeMerchantId, applyMerchantSwitchBoundary } from "./lib/merchantBoundary";
 import { PreferencesProvider, useI18n } from "./lib/preferences";
+import { disposeAllConversationRuntimes } from "./pages/workbench/agent/conversation/runtime";
 
 const MediaLibraryPage = lazy(() =>
   import("./pages/MediaLibraryPage").then((module) => ({ default: module.MediaLibraryPage })),
@@ -51,6 +53,7 @@ function LoadingScreen() {
 }
 
 function AppRoutes() {
+  const queryClient = useQueryClient();
   const sessionQuery = useQuery({
     queryKey: ["session"],
     queryFn: api.getSessionState,
@@ -58,6 +61,18 @@ function AppRoutes() {
   });
 
   const authenticated = Boolean(sessionQuery.data?.authenticated);
+  const merchantId = activeMerchantId(sessionQuery.data);
+  const previousMerchantRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const previous = previousMerchantRef.current;
+    if (previous !== null && previous !== merchantId) {
+      applyMerchantSwitchBoundary(queryClient, {
+        onInvalidateSubscriptions: disposeAllConversationRuntimes,
+      });
+    }
+    previousMerchantRef.current = merchantId;
+  }, [merchantId, queryClient]);
 
   useEffect(() => {
     if (!authenticated) {
