@@ -3,8 +3,8 @@
 // 与平台调用事实分离：agent_model_invocations.usage_source 仍是 provider/estimated/unavailable
 // 操作事实；本包只管商家被收取的服务额度（available/reserved/事件），不另造平台成本账。
 //
-// B0 接线：生图/Agent 入口尚未调用 Reserve/Settle/Release/MarkUnknown；入口接线另发。
-// 未知结果必须走 MarkUnknown，禁止把超时自动当零消费 Release。
+// B0 账本已交付；B1 将图会话 Generate 入队点接到 Reserve/Settle/Release/MarkUnknown。
+// Agent 入口与余额 HTTP 仍未接线。未知结果必须走 MarkUnknown，禁止把超时自动当零消费 Release。
 package quota
 
 import (
@@ -26,10 +26,10 @@ const (
 	CurrencyInternalUnits = "iu"
 	DefaultPriceVersionID = "pv-placeholder-v0"
 
-	StatusReserved               = "reserved"
-	StatusSettled                = "settled"
-	StatusReleased               = "released"
-	StatusPendingReconciliation  = "pending_reconciliation"
+	StatusReserved              = "reserved"
+	StatusSettled               = "settled"
+	StatusReleased              = "released"
+	StatusPendingReconciliation = "pending_reconciliation"
 
 	EventReserve     = "reserve"
 	EventSettle      = "settle"

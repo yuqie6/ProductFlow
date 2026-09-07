@@ -62,17 +62,24 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 			return err
 		}
 		if errors.Is(err, errCancelled) || errors.Is(err, errStale) {
+			if errors.Is(err, errCancelled) {
+				persistCtx, cancelPersist := persistContext(ctx)
+				defer cancelPersist()
+				if qErr := e.finalizeQuotaOnCancel(persistCtx, sessionID, taskID); qErr != nil {
+					return qErr
+				}
+			}
 			return nil
 		}
 		persistCtx, cancelPersist := persistContext(ctx)
 		defer cancelPersist()
 		if isUnknown(err) {
-			if markErr := e.finishUnknown(persistCtx, taskID, attemptID); markErr != nil {
+			if markErr := e.finishUnknown(persistCtx, taskID, attemptID, sessionID); markErr != nil {
 				return markErr
 			}
 			return nil
 		}
-		return e.finishFailed(persistCtx, taskID, attemptID, err)
+		return e.finishFailed(persistCtx, taskID, attemptID, sessionID, err)
 	}
 	return nil
 }
@@ -269,7 +276,7 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 		groupID = clockid.New()
 	}
 	if completed >= count {
-		return e.finishSucceeded(ctx, taskID, attemptID, groupID)
+		return e.finishSucceeded(ctx, taskID, attemptID, sessionID, groupID)
 	}
 
 	chatCtx, err := e.loadChatContext(ctx, sessionID, baseID, refs)
@@ -371,7 +378,7 @@ func (e Executor) runGeneration(ctx context.Context, taskID, attemptID, sessionI
 			return queue.ErrLater
 		}
 	}
-	return e.finishSucceeded(ctx, taskID, attemptID, groupID)
+	return e.finishSucceeded(ctx, taskID, attemptID, sessionID, groupID)
 }
 
 func (e Executor) yieldCompletedBatch(ctx context.Context, taskID, attemptID string) error {
@@ -593,10 +600,11 @@ func (e Executor) saveCandidate(ctx context.Context, sessionID, taskID, attemptI
 	return nil
 }
 
-func (e Executor) finishSucceeded(ctx context.Context, taskID, attemptID, groupID string) error {
-	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+func (e Executor) finishSucceeded(ctx context.Context, taskID, attemptID, sessionID, groupID string) error {
+	var ok bool
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		now := time.Now().UTC()
-		if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
+		res := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
 			Where("id = ? AND active_attempt_id = ? AND status = ?", taskID, attemptID, "running").
 			Updates(map[string]any{
 				"status":                     "succeeded",
@@ -606,17 +614,31 @@ func (e Executor) finishSucceeded(ctx context.Context, taskID, attemptID, groupI
 				"progress_phase":             "succeeded",
 				"progress_updated_at":        now,
 				"result_generation_group_id": groupID,
-			}).Error; err != nil {
-			return err
+			})
+		if res.Error != nil {
+			return res.Error
 		}
+		if res.RowsAffected != 1 {
+			return nil
+		}
+		ok = true
 		return notifyTaskSession(ctx, pgxTx, taskID)
 	})
+	if err != nil || !ok {
+		return err
+	}
+	merchantID, err := sessionMerchantID(ctx, e.DB, sessionID)
+	if err != nil {
+		return err
+	}
+	return e.settleGenerationQuota(ctx, merchantID, taskID)
 }
 
-func (e Executor) finishUnknown(ctx context.Context, taskID, attemptID string) error {
-	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+func (e Executor) finishUnknown(ctx context.Context, taskID, attemptID, sessionID string) error {
+	var ok bool
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		now := time.Now().UTC()
-		if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
+		res := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
 			Where("id = ? AND active_attempt_id = ? AND status = ?", taskID, attemptID, "running").
 			Updates(map[string]any{
 				"status":              "unknown",
@@ -626,16 +648,30 @@ func (e Executor) finishUnknown(ctx context.Context, taskID, attemptID string) e
 				"failure_reason":      unknownDetail,
 				"progress_phase":      unknownPhase,
 				"progress_updated_at": now,
-			}).Error; err != nil {
-			return err
+			})
+		if res.Error != nil {
+			return res.Error
 		}
+		if res.RowsAffected != 1 {
+			return nil
+		}
+		ok = true
 		return notifyTaskSession(ctx, pgxTx, taskID)
 	})
+	if err != nil || !ok {
+		return err
+	}
+	merchantID, err := sessionMerchantID(ctx, e.DB, sessionID)
+	if err != nil {
+		return err
+	}
+	return e.markGenerationQuotaUnknown(ctx, merchantID, taskID)
 }
 
 // finishFailed 处理已证明失败；可重试且 attempts 未满则回 queued，否则写 failed。
 // 持久化错误必须返回 consumer，不能将未提交的处理结果确认为已消费。
-func (e Executor) finishFailed(ctx context.Context, taskID, attemptID string, cause error) error {
+// 终态失败：已写 provider effect 则 Settle；从未发出则 Release。自动重试保持预留。
+func (e Executor) finishFailed(ctx context.Context, taskID, attemptID, sessionID string, cause error) error {
 	reason := genericFailure
 	if cause != nil && cause.Error() != "" {
 		reason = cause.Error()
@@ -644,7 +680,8 @@ func (e Executor) finishFailed(ctx context.Context, taskID, attemptID string, ca
 		}
 	}
 	noRetry := isNonRetryableGenerationError(cause)
-	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+	var terminal bool
+	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		var task schema.ImageSessionGenerationTasks
 		if err := pgxTx.Where("id = ?", taskID).Take(&task).Error; err != nil {
 			return err
@@ -684,8 +721,16 @@ func (e Executor) finishFailed(ctx context.Context, taskID, attemptID string, ca
 			}).Error; err != nil {
 			return err
 		}
+		terminal = true
 		return notifyTaskSession(ctx, pgxTx, taskID)
 	})
+	if err != nil {
+		return err
+	}
+	if terminal {
+		return e.finalizeQuotaOnTerminalFailure(ctx, sessionID, taskID)
+	}
+	return nil
 }
 
 func isNonRetryableGenerationError(err error) bool {

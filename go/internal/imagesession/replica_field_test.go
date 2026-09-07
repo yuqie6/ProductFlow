@@ -104,8 +104,9 @@ func TestReplicaFieldTwoWorkersRespectGenerationCapacity(t *testing.T) {
 func TestGenerateWhenCapacityFullStillQueuesWithoutDenied(t *testing.T) {
 	name := fmt.Sprintf("pf_enqcap_%d", time.Now().UnixNano()%1_000_000_000)
 	_, gdb := testdb.IsolatedMigrated(t, name)
-	_ = auth.MustDevMerchantID(t, gdb)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	merchantID := auth.MustDevMerchantID(t, gdb)
+	mustSeedMerchantQuota(t, gdb, merchantID, 100)
+	ctx, cancel := context.WithTimeout(auth.WithMerchantID(context.Background(), merchantID), 20*time.Second)
 	defer cancel()
 	now := time.Now().UTC()
 
@@ -119,8 +120,8 @@ func TestGenerateWhenCapacityFullStillQueuesWithoutDenied(t *testing.T) {
 
 	holderID := clockid.New()
 	if err := gdb.Exec(`
-		INSERT INTO image_sessions (id, title, created_at, updated_at) VALUES (?, 'hold-slot', ?, ?)
-	`, holderID, now, now).Error; err != nil {
+		INSERT INTO image_sessions (id, merchant_id, title, created_at, updated_at) VALUES (?, ?, 'hold-slot', ?, ?)
+	`, holderID, merchantID, now, now).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := gdb.Exec(`
@@ -134,8 +135,8 @@ func TestGenerateWhenCapacityFullStillQueuesWithoutDenied(t *testing.T) {
 
 	sessionID := clockid.New()
 	if err := gdb.Exec(`
-		INSERT INTO image_sessions (id, title, created_at, updated_at) VALUES (?, 'enqueue-admission', ?, ?)
-	`, sessionID, now, now).Error; err != nil {
+		INSERT INTO image_sessions (id, merchant_id, title, created_at, updated_at) VALUES (?, ?, 'enqueue-admission', ?, ?)
+	`, sessionID, merchantID, now, now).Error; err != nil {
 		t.Fatal(err)
 	}
 

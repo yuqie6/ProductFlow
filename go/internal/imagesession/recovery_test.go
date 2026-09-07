@@ -362,7 +362,7 @@ func TestRecoverUnfinishedLateWriterDoesNotSucceedAfterUnknown(t *testing.T) {
 	if summary.UnknownTasks < 1 {
 		t.Fatalf("summary %+v", summary)
 	}
-	if err := (Executor{DB: ss.db, Media: ss.media}).finishSucceeded(context.Background(), taskID, attempt, clockid.New()); err != nil {
+	if err := (Executor{DB: ss.db, Media: ss.media}).finishSucceeded(context.Background(), taskID, attempt, session.ID, clockid.New()); err != nil {
 		t.Fatal(err)
 	}
 	got := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)

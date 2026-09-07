@@ -4,6 +4,8 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-mp-c-wire-b1.md](merchant-mp-c-wire-b1.md) | 完成 | 图会话 Generate 额度接线；≠R5/Graph/Agent |
+| [image-quality-selling-point-live.md](image-quality-selling-point-live.md) | 完成 | 炸锅 selling_point live k=1；闸门改善保真平；≠R3 |
 | [merchant-mp-c-quota-b0.md](merchant-mp-c-quota-b0.md) | 完成 | MP-C B0 预留/结算骨架；入口未接线；≠R5 |
 | [image-quality-selling-point-fidelity.md](image-quality-selling-point-fidelity.md) | 完成 | 一理由+本体证据；拼装只发一句；无 live；≠R3 |
 | [image-quality-content-pilot.md](image-quality-content-pilot.md) | 完成 | 两商品 16/16 对照；闸门 2/8；卖点保真退步单列；≠R3 |

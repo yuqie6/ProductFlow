@@ -81,6 +81,8 @@
 | compete-adoption-hard-gate | IQ-CF-08 采用硬闸 | 2026-09-07 完成归档；服务端强制 text/route_qualified；≠R3 |
 | merchant-r1-close-ruling | 总纲 R1 关闭裁定 | 2026-09-07 完成归档；**R1 通过**（夹具双商；CreateMerchant 仍 409） |
 | merchant-mp-c-quota-b0 | 商家平台 MP-C B0 额度账本 | 2026-09-07 完成归档；骨架+包测；入口未接线；≠R5 |
+| image-quality-selling-point-live | 卖点保真 live k=1 | 2026-09-07 完成归档；闸门改善、保真平 4；≠R3 |
+| merchant-mp-c-wire-b1 | 商家平台 MP-C B1 图会话额度接线 | 2026-09-07 完成归档；Generate Reserve/Settle/Release/MarkUnknown；≠R5 |
 | eval-skills | Agent 质量 | 阻塞；保留候选与冻结 A/B |
 | eval-labels / eval-state-live | Agent 质量证据 | 阻塞 |
 | eval-production-mine | Agent 质量 | 阻塞（无生产商户） |

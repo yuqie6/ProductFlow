@@ -73,6 +73,7 @@ func newSessionServerWithDatabase(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB
 	t.Cleanup(srv.Close)
 	ss := &sessionServer{pool: pool, db: gdb, root: root, media: mediaStore, svc: svc, srv: srv, client: &http.Client{}}
 	ss.cookies = auth.MustAuthenticate(t, ss.client, srv.URL)
+	mustSeedMerchantQuota(t, gdb, auth.MustDevMerchantID(t, gdb), 10_000)
 	var previousCapacity *string
 	_ = ss.pool.QueryRow(context.Background(), `SELECT value FROM app_settings WHERE key = 'generation_max_concurrent_tasks'`).Scan(&previousCapacity)
 	_, _ = ss.pool.Exec(context.Background(), `

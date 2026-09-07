@@ -196,10 +196,11 @@ type AttachRequest struct {
 }
 
 type sessionRow struct {
-	ID        string
-	Title     string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID         string
+	MerchantID string
+	Title      string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type assetRow struct {

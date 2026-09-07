@@ -326,7 +326,7 @@ func serializeAsset(row assetRow) AssetResponse {
 }
 
 func sessionFromModel(m schema.ImageSessions) sessionRow {
-	return sessionRow{ID: m.ID, Title: m.Title, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+	return sessionRow{ID: m.ID, MerchantID: m.MerchantID, Title: m.Title, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 
 func assetFromModels(tx *gorm.DB, asset schema.ImageSessionAssets) (assetRow, error) {

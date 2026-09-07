@@ -5,6 +5,7 @@
 // 副作用：写 image_sessions、rounds、generation_tasks、provider_effects、session assets。
 // 错误：会话不存在 NotFound。Generate 在已有任务 running 时仍可再入队，不会 Conflict。
 // Delete 会拆掉商品图上的 source_image_session_asset_id，不因运行中任务拒绝。
+// 额度（MP-C B1）：Generate 入队前 Reserve；成功 Settle、取消未发出 Release、unknown MarkUnknown。
 // 禁区：不要把会话状态写进 workflow_graphs；不要把 attach 当成节点绑定的唯一路径。
 package imagesession
 
@@ -136,7 +137,7 @@ func (s Service) Create(ctx context.Context, title *string) (DetailResponse, err
 	}
 	id := clockid.New()
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-	merchantID := auth.ResolveMerchantID(ctx)
+		merchantID := auth.ResolveMerchantID(ctx)
 		now := time.Now().UTC()
 		row := schema.ImageSessions{ID: id, MerchantID: merchantID, Title: normalized, CreatedAt: now, UpdatedAt: now}
 		return pgxTx.Create(&row).Error
@@ -337,6 +338,7 @@ func (s Service) DeleteReference(ctx context.Context, sessionID, assetID string)
 // Generate 创建 queued 生成任务并写入 PENDING dispatch；HTTP 不直接入队 broker。
 // 容量 admission 在 worker claim，入队不持 generation advisory、不增加 denied。
 // 提示词空/超长、尺寸或 tool 非法返回 Validation；会话或图片不存在返回 NotFound。
+// 额度不足返回 Conflict（可用额度不足），不静默跳过。
 func (s Service) Generate(ctx context.Context, sessionID string, req GenerateRequest) (DetailResponse, error) {
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
@@ -361,7 +363,25 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 		return DetailResponse{}, err
 	}
 	toolOpts := filterToolOptions(req.ToolOptions, s.allowedToolFields(ctx))
-	var taskID string
+
+	var merchantID string
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		sess, err := loadSession(ctx, pgxTx, sessionID)
+		if err != nil {
+			return err
+		}
+		merchantID = sess.MerchantID
+		return nil
+	})
+	if err != nil {
+		return DetailResponse{}, err
+	}
+
+	taskID := clockid.New()
+	if err := s.reserveGenerationQuota(ctx, merchantID, taskID, 0); err != nil {
+		return DetailResponse{}, err
+	}
+
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		sessAssets, err := listAssets(ctx, pgxTx, sessionID)
 		if err != nil {
@@ -379,7 +399,6 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 		if refs == nil {
 			refs = []string{}
 		}
-		taskID = clockid.New()
 		refJSON, err := json.Marshal(refs)
 		if err != nil {
 			return err
@@ -418,14 +437,46 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 		return publishSession(ctx, pgxTx, sessionID)
 	})
 	if err != nil {
+		_ = s.releaseGenerationQuota(ctx, merchantID, taskID)
 		return DetailResponse{}, err
 	}
 	return s.Get(ctx, sessionID)
 }
 
 // Retry 把可重试的 failed 任务重新标 queued 并补 PENDING dispatch；unknown 不会被当成失败重试。
+// 终态失败后重新 Reserve（幂等键带 attempts），避免沿用已 Settle/Release 的旧 hold。
 func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailResponse, error) {
+	var merchantID string
+	var billingSeq int
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		sess, err := loadSession(ctx, pgxTx, sessionID)
+		if err != nil {
+			return err
+		}
+		merchantID = sess.MerchantID
+		task, err := loadTask(ctx, pgxTx, sessionID, taskID)
+		if err != nil {
+			return err
+		}
+		if task.Status != "failed" {
+			return apperr.Validation("只有失败的生成任务可以重试")
+		}
+		if !task.IsRetryable {
+			return apperr.Validation("该生成任务不可重试")
+		}
+		billingSeq = task.Attempts
+		if billingSeq < 1 {
+			billingSeq = 1
+		}
+		return nil
+	})
+	if err != nil {
+		return DetailResponse{}, err
+	}
+	if err := s.reserveGenerationQuota(ctx, merchantID, taskID, billingSeq); err != nil {
+		return DetailResponse{}, err
+	}
+	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
 			return err
 		}
@@ -462,6 +513,7 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 		return publishSession(ctx, pgxTx, sessionID)
 	})
 	if err != nil {
+		_ = s.releaseGenerationQuota(ctx, merchantID, taskID)
 		return DetailResponse{}, err
 	}
 	return s.Get(ctx, sessionID)
@@ -470,11 +522,17 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 // Cancel 取消尚未终态的生成任务（queued/running → cancelled）。
 // 调用时机：HTTP POST .../cancel。已 succeeded/failed/unknown 返回 Validation；已 cancelled 幂等成功。
 // HTTP 不入队 broker。unknown 任务不能当失败取消后再 Retry。
+// 未写 provider effect 时 Release 预留；已有 effect 则 MarkUnknown（禁止超时/在途当零消费）。
 func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailResponse, error) {
+	var merchantID string
+	var hadEffect bool
+	var wasActive bool
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if _, err := loadSession(ctx, pgxTx, sessionID); err != nil {
+		sess, err := loadSession(ctx, pgxTx, sessionID)
+		if err != nil {
 			return err
 		}
+		merchantID = sess.MerchantID
 		task, err := loadTask(ctx, pgxTx, sessionID, taskID)
 		if err != nil {
 			return err
@@ -485,6 +543,13 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 		if task.Status == "succeeded" || task.Status == "failed" || task.Status == "unknown" {
 			return apperr.Validation("已结束的生成任务不能取消")
 		}
+		wasActive = true
+		var n int64
+		if err := pgxTx.Model(&schema.ImageSessionProviderEffects{}).
+			Where("generation_task_id = ?", taskID).Count(&n).Error; err != nil {
+			return err
+		}
+		hadEffect = n > 0
 		now := time.Now().UTC()
 		err = pgxTx.Model(&schema.ImageSessionGenerationTasks{}).Where("id = ?", taskID).Updates(map[string]any{
 			"status":              "cancelled",
@@ -502,6 +567,13 @@ func (s Service) Cancel(ctx context.Context, sessionID, taskID string) (DetailRe
 	})
 	if err != nil {
 		return DetailResponse{}, err
+	}
+	if wasActive {
+		if hadEffect {
+			_ = finalizeQuotaIgnoreMissing(s.quota().MarkUnknown(ctx, merchantID, mustActiveQuotaKey(ctx, s.DB, merchantID, taskID)))
+		} else {
+			_ = s.releaseGenerationQuota(ctx, merchantID, taskID)
+		}
 	}
 	return s.Get(ctx, sessionID)
 }

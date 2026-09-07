@@ -355,7 +355,7 @@ flowchart LR
 | R2 常用操作 | 按第 5 节完成创建、改稿、采用、交付、复用；检查实际持久状态和文件，桌面/手机核心任务可达 | 局部已有测试；整体未验收 |
 | R3 图片质量 | 既有 IMG 冻结合同，商品身份与准确文字严重缺陷单独报告；候选完整复验 | 未通过 |
 | R4 Agent 行为 | 既有 G-06 与 Agent 质量合同，实际工具副作用、状态、确认和跨商家约束 | 未通过 |
-| R5 额度与执行 | 并发预留、重复投递、超时、取消、恢复、未知结果与核对；全部收费入口归属可解释 | 商业账本 B0 已交付（[merchant-mp-c-quota-b0](audits/tasks/archive/merchant-mp-c-quota-b0.md)）；生图/Agent 入口未接线；≠通过 |
+| R5 额度与执行 | 并发预留、重复投递、超时、取消、恢复、未知结果与核对；全部收费入口归属可解释 | 商业账本 B0 + 图会话 Generate 入口 B1 已交付；Graph/Agent/全入口仍缺；≠通过 |
 | R6 发行与恢复 | 干净安装、固定候选全量检查、重启、备份恢复和升级演练；资源预算与部署规模对应 | **通过**（2026-09-07；pin `0.0.0-67b0f3092158`；证据见 [release-r6-close-ruling](audits/tasks/archive/release-r6-close-ruling.md)；残余非宣称见该文，≠R1–R5/≠SLA） |
 
 G-07 干净固定 checkout 全量检查和原 [平台发布合同](audits/performance-governance.md#production-gates) 保留。旧 `fb658633` 的 G-07 PASS 不替代新候选。运行证据绑定 commit、配置、数据与模型，不能用文档提交宣布通过。
