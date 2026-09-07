@@ -36,6 +36,10 @@ func main() {
 		os.Exit(runLive(os.Args[2:]))
 	case "prepare-inputs":
 		os.Exit(runPrepareInputs(os.Args[2:]))
+	case "prepare-annotations":
+		os.Exit(runPrepareAnnotations(os.Args[2:]))
+	case "annotate":
+		os.Exit(runAnnotate(os.Args[2:]))
 	case "report":
 		os.Exit(runReport(os.Args[2:]))
 	case "-h", "--help", "help":
@@ -52,6 +56,8 @@ func usage() {
   productflow-image-evals ingest --json <file-or-dir>
   productflow-image-evals sample [--n 20] [--seed 1]
   productflow-image-evals prepare-inputs --out <new-json-file> [--n 8] [--seed 1]
+  productflow-image-evals prepare-annotations --out <new-json-file> [--pool <pool-dir>] [--n 8] [--seed 1] [--types hero,selling_point,scene,detail]
+  productflow-image-evals annotate --selection <selection-json> --out <new-report-dir> [--run-id <id>] [--model <model>] [--base-url <url>]
   productflow-image-evals run [--n 8] [--seed 1] [--product-inputs <json-file>]
   productflow-image-evals report <run_id>`)
 }
@@ -242,6 +248,204 @@ func runPrepareInputs(args []string) int {
 	}
 	fmt.Printf("prepared=%d output=%s\n", len(snapshot.Inputs), *out)
 	return 0
+}
+
+func runPrepareAnnotations(args []string) int {
+	flags := flag.NewFlagSet("prepare-annotations", flag.ContinueOnError)
+	n := flags.Int("n", 8, "sample count")
+	seed := flags.Int64("seed", 1, "sample seed")
+	pool := flags.String("pool", "", "admitted pool directory")
+	out := flags.String("out", "", "new selection JSON; never overwrite an existing snapshot")
+	types := flags.String("types", "", "optional comma-separated type cycle; one type per sampled case")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || strings.TrimSpace(*out) == "" {
+		fmt.Fprintln(os.Stderr, "prepare-annotations requires --out <new-json-file>")
+		return 2
+	}
+	var typeCycle []string
+	if strings.TrimSpace(*types) != "" {
+		for _, item := range strings.Split(*types, ",") {
+			item = strings.TrimSpace(item)
+			if item == "" || !imageeval.IsGeneratingType(item) {
+				fmt.Fprintf(os.Stderr, "unsupported annotation image type %q\n", item)
+				return 2
+			}
+			typeCycle = append(typeCycle, item)
+		}
+	}
+	poolPath := strings.TrimSpace(*pool)
+	if poolPath == "" {
+		root, err := storageRoot()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		poolPath = filepath.Join(imageeval.PoolRoot(root), imageeval.PoolDir)
+	}
+	var selection imageeval.AnnotationSelection
+	var err error
+	if len(typeCycle) > 0 {
+		selection, err = imageeval.PrepareAnnotationSelectionForTypes(poolPath, *n, *seed, gitHead(), *out, typeCycle)
+	} else {
+		selection, err = imageeval.PrepareAnnotationSelection(poolPath, *n, *seed, gitHead(), *out)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Printf("prepared_annotation_selection=%s mode=%s cases=%d output=%s\n", imageeval.AnnotationSelectionSchemaVersion, selection.Mode, len(selection.Cases), *out)
+	return 0
+}
+
+func runAnnotate(args []string) int {
+	flags := flag.NewFlagSet("annotate", flag.ContinueOnError)
+	selectionPath := flags.String("selection", "", "annotation selection JSON")
+	out := flags.String("out", "", "new report directory; never overwrite an existing report")
+	runID := flags.String("run-id", "", "optional stable run id")
+	modelOverride := flags.String("model", "", "judge model override")
+	baseOverride := flags.String("base-url", "", "judge base URL override")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || strings.TrimSpace(*selectionPath) == "" || strings.TrimSpace(*out) == "" {
+		fmt.Fprintln(os.Stderr, "annotate requires --selection <selection-json> and --out <new-report-dir>")
+		return 2
+	}
+	if strings.TrimSpace(os.Getenv(imageeval.RunSwitch)) != "1" {
+		fmt.Fprintf(os.Stderr, "set %s=1 to run image annotations\n", imageeval.RunSwitch)
+		return 1
+	}
+	selectionRaw, err := os.ReadFile(*selectionPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	selection, err := imageeval.LoadAnnotationSelection(*selectionPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	started := time.Now().UTC()
+	generatedRunID := strings.TrimSpace(*runID)
+	if generatedRunID == "" {
+		generatedRunID = imageeval.AnnotationRunID(started, selectionRaw)
+	}
+	commit := gitHead()
+	poolPath, err := filepath.Abs(selection.PoolPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	reservationModel := strings.TrimSpace(*modelOverride)
+	if reservationModel == "" {
+		reservationModel = strings.TrimSpace(os.Getenv("IMAGE_EVAL_JUDGE_MODEL"))
+	}
+	if err := imageeval.ReserveAnnotationOutput(*out, imageeval.AnnotationOutputReservation{
+		SchemaVersion:   imageeval.AnnotationSchemaVersion,
+		ContractVersion: imageeval.AnnotationContractVersion,
+		RunID:           generatedRunID,
+		Mode:            selection.Mode,
+		SelectionPath:   *selectionPath,
+		SelectionSHA256: imageeval.FileSHA256(selectionRaw),
+		PoolPath:        poolPath,
+		PoolIndexSHA256: selection.PoolIndexSHA256,
+		PromptSHA256:    imageeval.FileSHA256([]byte(imageeval.AnnotationSystemPrompt)),
+		Model:           reservationModel,
+		Commit:          commit,
+		ReservedAt:      started,
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 6*time.Hour)
+	defer stop()
+	judge, model, cleanup, err := resolveAnnotationJudge(ctx, *modelOverride, *baseOverride)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer cleanup()
+	report, err := imageeval.RunAnnotations(ctx, imageeval.AnnotationRunConfig{
+		SelectionPath: *selectionPath,
+		RunID:         generatedRunID,
+		Commit:        commit,
+		Model:         model,
+		Judge:         judge,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := imageeval.WriteAnnotationReport(*out, report); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	records, completed, unknown, failed, assessmentUncomparable, comparisonUncomparable := 0, 0, 0, 0, 0, 0
+	for _, item := range report.Cases {
+		for _, record := range item.Records {
+			records++
+			switch record.Status {
+			case imageeval.AnnotationStatusComplete:
+				completed++
+			case imageeval.AnnotationStatusUnknown:
+				unknown++
+			case imageeval.AnnotationStatusFailed:
+				failed++
+			case imageeval.AnnotationStatusUncomparable:
+				assessmentUncomparable++
+			}
+			if record.Comparison != nil && record.Comparison.Status == imageeval.AnnotationComparisonUncomparable {
+				comparisonUncomparable++
+			}
+		}
+	}
+	fmt.Printf("annotation_run=%s cases=%d records=%d complete=%d unknown=%d failed=%d assessment_uncomparable=%d comparison_uncomparable=%d json=%s markdown=%s\n",
+		report.RunID, len(report.Cases), records, completed, unknown, failed, assessmentUncomparable, comparisonUncomparable,
+		filepath.Join(*out, "report.json"), filepath.Join(*out, "report.md"))
+	return 0
+}
+
+func resolveAnnotationJudge(ctx context.Context, modelOverride, baseOverride string) (imageeval.VisionJudge, string, func(), error) {
+	model := strings.TrimSpace(modelOverride)
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv("IMAGE_EVAL_JUDGE_MODEL"))
+	}
+	apiKey := strings.TrimSpace(os.Getenv("IMAGE_EVAL_JUDGE_API_KEY"))
+	baseURL := strings.TrimSpace(baseOverride)
+	if baseURL == "" {
+		baseURL = strings.TrimSpace(os.Getenv("IMAGE_EVAL_JUDGE_BASE_URL"))
+	}
+	var cleanup func()
+	cleanup = func() {}
+	if apiKey == "" || model == "" {
+		cfg, err := config.Load()
+		if err != nil {
+			return imageeval.VisionJudge{}, "", cleanup, err
+		}
+		ctxDB, cancel := context.WithTimeout(ctx, 10*time.Second)
+		pool, err := db.Connect(ctxDB, config.NormalizePostgresURL(cfg.DatabaseURL))
+		cancel()
+		if err != nil {
+			return imageeval.VisionJudge{}, "", cleanup, err
+		}
+		cleanup = pool.Close
+		binding, err := settings.NewStore(pool, cfg).ResolvePrompt(ctx)
+		if err != nil {
+			cleanup()
+			cleanup = func() {}
+			return imageeval.VisionJudge{}, "", cleanup, err
+		}
+		if apiKey == "" {
+			apiKey = strings.TrimSpace(binding.APIKey)
+		}
+		if model == "" {
+			model = strings.TrimSpace(binding.Model)
+		}
+		if baseURL == "" {
+			baseURL = strings.TrimSpace(binding.BaseURL)
+		}
+	}
+	if apiKey == "" || model == "" {
+		cleanup()
+		return imageeval.VisionJudge{}, "", func() {}, fmt.Errorf("annotation judge requires IMAGE_EVAL_JUDGE_API_KEY and IMAGE_EVAL_JUDGE_MODEL or a configured prompt binding")
+	}
+	return imageeval.VisionJudge{BaseURL: baseURL, APIKey: apiKey, Model: model}, model, cleanup, nil
 }
 
 func imageEvalAPIBase() string {

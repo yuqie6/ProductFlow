@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [category-image-annotation.md](category-image-annotation.md) | 完成 | 分类多模态标注与显式候选对照；16/16 有效真实标注，非生成质量达标门 |
 | [workbench-continuity.md](workbench-continuity.md) | 完成 | 明确预览入口、采用版本差异与导出连续路径，四语及窄屏浏览器验证 |
 | [saas-identity-convergence.md](saas-identity-convergence.md) | 完成 | 账号自有商家与独立管理员、删除成员模型和默认归属，迁移与前后端验证 |
 | [saas-policy-alignment.md](saas-policy-alignment.md) | 完成 | 未知调用到期释放用户额度；有限质量检查允许确认采用，保留实际状态并下载 |

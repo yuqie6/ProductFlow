@@ -25,3 +25,24 @@ Compose 默认启动三个 Go 进程，占用 `APP_HOST_PORT`（默认 29280）�
 ## 配方列表排障
 
 `GET /api/v3/workflow-recipes` 只返回当前版本通过内容、节点合同及 hash 校验的配方；失效项不阻断其他配方，全部失效时返回 `[]`。`include_archived=true` 仍执行上述校验。过滤不删除、归档或改写数据库记录；API 终端日志中的 `recipe list excluded invalid current version` 包含配方 ID 和错误。失效配方的详情、预览与应用仍严格拒绝，不支持旧配置自动升级。
+
+## 分类图片标注
+
+`image-annotation.v1` 对已有图片做多模态标注。`reference` 评价真实商品图；`comparison` 使用显式绑定的候选与同商品、同图种质量对照。类别与图种共同决定展示重点，报告包含四维评分、优缺点、资产依据、不确定项和待验证建议。模型标注仍需抽查，原池中的分类与身份不是已核实的事实真值。历史 `image-evals-run` 的生成对照门保持独立。
+
+在仓库根目录运行，输入和输出路径建议使用绝对路径：
+
+```bash
+just image-evals-prepare-annotations /tmp/productflow-reference-selection.json 8 1
+just image-evals-annotate /tmp/productflow-reference-selection.json /tmp/productflow-reference-report
+```
+
+准备命令默认读取 `STORAGE_ROOT/image-evals/pool`，不调用模型。第四个可选位置参数为其他池路径；第五个为图种轮换列表，如 `hero,selling_point,scene,detail`，每个抽样商品按列表取一个图种。省略轮换列表时选择样本现有的生成图种。选择文件记录商品/图种、身份参考和真实图路径、SHA256 与来源；旧选择文件不能覆盖。
+
+`annotate` 只调用评委，无需 API、worker 或生图供应商。上面的 just 命令显式开启 `PRODUCTFLOW_RUN_IMAGE_EVALS=1`；直接调用 Go CLI 时须自行设置。模型配置优先使用 `IMAGE_EVAL_JUDGE_API_KEY`、`IMAGE_EVAL_JUDGE_MODEL`、`IMAGE_EVAL_JUDGE_BASE_URL`；未提供完整 key/model 时从开发配置连接数据库，读取现有 prompt 绑定。密钥仅放环境，不写入选择或报告。
+
+候选比较须复制为新的选择文件，设置 `mode=comparison`，在每个 case 的 `candidates` 明确填写候选资产身份、绝对路径、SHA256、尺寸、字节数、`image_type`、`variant`、`role=evaluated_result`、`source=external`，并保留身份参考和对应的 `quality_references`。不得按历史数组顺序猜测候选归属。缺候选会拒绝输入，缺质量对照单列不可比较；不把缺失变为通过或零分。
+
+每次指定一个全新报告目录。输出 `report.json` 与 `report.md`，按类别、图种与候选分组保留分母、状态和分维度差值。未知、失败、不可比较和严重事实问题不会被解释为达标。报告保留模型、提示词、选择文件和图片指纹、代码版本与时间；不更新旧评测的 latest 指针，不覆盖原池或历史结果。
+
+CLI 成功退出表示报告已写入。自动化读取报告的记录状态、覆盖率、关键问题和比较结论判断后续动作；不能把退出码 0 或 `complete` 标注状态当作图片质量通过。

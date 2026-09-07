@@ -89,6 +89,13 @@ image-evals-prepare-inputs out n="8" seed="1":
 image-evals-run n="8" seed="1" inputs="":
     bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_IMAGE_EVALS=1 go run -C go ./cmd/productflow-image-evals run --n "$1" --seed "$2" --product-inputs "$3"' -- '{{n}}' '{{seed}}' '{{inputs}}'
 
+# Annotation-only: existing images, no graph or image generation. Explicit judge opt-in.
+image-evals-prepare-annotations out n="8" seed="1" pool="" types="":
+    bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-image-evals prepare-annotations --out "$1" --n "$2" --seed "$3" --pool "$4" --types "$5"' -- '{{out}}' '{{n}}' '{{seed}}' '{{pool}}' '{{types}}'
+
+image-evals-annotate selection out:
+    bash scripts/with_dev_env.sh bash -lc 'PRODUCTFLOW_RUN_IMAGE_EVALS=1 go run -C go ./cmd/productflow-image-evals annotate --selection "$1" --out "$2"' -- '{{selection}}' '{{out}}'
+
 image-evals-report run:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-image-evals report "$1"' -- '{{run}}'
 
