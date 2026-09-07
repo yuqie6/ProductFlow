@@ -2,6 +2,7 @@ import type { QuotaPriceVersion } from "./types";
 
 /** Catalog entry codes aligned with go/internal/quota.Entry* (display lookup only). */
 export const QUOTA_ENTRY_IMAGE_SESSION_GENERATE = "image_session.generate";
+export const QUOTA_ENTRY_GRAPH_IMAGE_GENERATION = "graph.image_generation";
 
 export type QuotaEntryPriceLookup =
   | {

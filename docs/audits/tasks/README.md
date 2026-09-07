@@ -20,6 +20,8 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
+| [delivery-inspector-confirm-facts-null.md](delivery-inspector-confirm-facts-null.md) | 工作流体验 | 实现 | 认领 | sub-ux/delivery-inspector-confirm-facts-null | 2026-09-07T19:35:00+08:00 |
+| [image-quality-subject-preserve-live-smoke.md](image-quality-subject-preserve-live-smoke.md) | 图片质量 | 证据 | 认领 | sub-iq/image-quality-subject-preserve-live-smoke | 2026-09-07T19:35:00+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |

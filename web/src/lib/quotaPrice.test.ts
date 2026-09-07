@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { QuotaPriceVersion } from "./types";
 import {
+  QUOTA_ENTRY_GRAPH_IMAGE_GENERATION,
   QUOTA_ENTRY_IMAGE_SESSION_GENERATE,
   isQuotaEntryPriceReady,
   resolveQuotaEntryPrice,
@@ -15,7 +16,7 @@ function version(overrides: Partial<QuotaPriceVersion> = {}): QuotaPriceVersion 
     is_default: true,
     entries: [
       { entry_code: QUOTA_ENTRY_IMAGE_SESSION_GENERATE, unit_price: 1 },
-      { entry_code: "graph.image_generation", unit_price: 2 },
+      { entry_code: QUOTA_ENTRY_GRAPH_IMAGE_GENERATION, unit_price: 2 },
     ],
     ...overrides,
   };
@@ -30,6 +31,19 @@ describe("resolveQuotaEntryPrice", () => {
       entryCode: QUOTA_ENTRY_IMAGE_SESSION_GENERATE,
       unitPrice: 7,
       estimatedUnits: 7,
+      currency: "iu",
+    });
+    expect(isQuotaEntryPriceReady(lookup)).toBe(true);
+  });
+
+  it("reads catalog unit price for graph.image_generation", () => {
+    const lookup = resolveQuotaEntryPrice(version(), QUOTA_ENTRY_GRAPH_IMAGE_GENERATION);
+    expect(lookup).toEqual({
+      status: "ok",
+      priceVersionId: "pv-placeholder-v0",
+      entryCode: QUOTA_ENTRY_GRAPH_IMAGE_GENERATION,
+      unitPrice: 2,
+      estimatedUnits: 2,
       currency: "iu",
     });
     expect(isQuotaEntryPriceReady(lookup)).toBe(true);

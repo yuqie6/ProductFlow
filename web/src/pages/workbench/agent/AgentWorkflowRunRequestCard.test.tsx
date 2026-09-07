@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentWorkflowRunRequest } from "../../../lib/types";
+import { QUOTA_ENTRY_GRAPH_IMAGE_GENERATION } from "../../../lib/quotaPrice";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
 
 function request(status: AgentWorkflowRunRequest["status"]): AgentWorkflowRunRequest {
@@ -40,6 +41,14 @@ describe("AgentWorkflowRunRequestCard", () => {
         loading: false,
         busy: false,
         error: null,
+        quotaPriceLookup: {
+          status: "ok",
+          priceVersionId: "pv-placeholder-v0",
+          entryCode: QUOTA_ENTRY_GRAPH_IMAGE_GENERATION,
+          unitPrice: 3,
+          estimatedUnits: 3,
+          currency: "iu",
+        },
         onConfirm: vi.fn(),
         onCancel: vi.fn(),
         onOpenRuns: vi.fn(),
@@ -52,10 +61,33 @@ describe("AgentWorkflowRunRequestCard", () => {
     expect(markup).toContain("文稿动作：改写文稿");
     expect(markup).toContain("确认并执行");
     expect(markup).toContain("取消请求");
+    expect(markup).toContain("生图约扣 3 单位");
+    expect(markup).toContain("data-agent-workflow-run-quota-estimate");
     expect(markup).toContain("bg-accent");
     expect(markup).not.toContain("bg-blue-");
     expect(markup).not.toContain("bg-cyan-");
     expect(markup).not.toContain("border-zinc-");
+    expect(markup).not.toContain("disabled=\"\"");
+  });
+
+  it("disables confirm and surfaces unavailable price without silent zero", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentWorkflowRunRequestCard, {
+        request: request("awaiting_confirmation"),
+        loading: false,
+        busy: false,
+        error: null,
+        quotaPriceLookup: { status: "missing_entry" },
+        quotaPriceBlocksConfirm: true,
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+      }),
+    );
+    expect(markup).toContain("暂无法计价，无法确认执行");
+    expect(markup).toContain("data-agent-workflow-run-quota-unavailable");
+    expect(markup).toContain("disabled=\"\"");
+    expect(markup).not.toContain("生图约扣 0 单位");
+    expect(markup).not.toContain("data-agent-workflow-run-quota-estimate");
   });
 
   it("omits the revision line when the journal has not recorded one", () => {
@@ -65,6 +97,14 @@ describe("AgentWorkflowRunRequestCard", () => {
         loading: false,
         busy: false,
         error: null,
+        quotaPriceLookup: {
+          status: "ok",
+          priceVersionId: "pv-placeholder-v0",
+          entryCode: QUOTA_ENTRY_GRAPH_IMAGE_GENERATION,
+          unitPrice: 1,
+          estimatedUnits: 1,
+          currency: "iu",
+        },
         onConfirm: vi.fn(),
         onCancel: vi.fn(),
       }),
@@ -89,6 +129,7 @@ describe("AgentWorkflowRunRequestCard", () => {
     expect(markup).toContain("运行中");
     expect(markup).toContain("查看运行记录");
     expect(markup).not.toContain("确认并执行");
+    expect(markup).not.toContain("data-agent-workflow-run-quota-estimate");
   });
 
   it("renders a settled request inside the matching turn without chrome spacing", () => {

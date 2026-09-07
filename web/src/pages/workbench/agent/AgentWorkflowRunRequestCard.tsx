@@ -12,7 +12,12 @@ import {
 
 import { formatDateTime } from "../../../lib/format";
 import { useI18n } from "../../../lib/preferences";
+import {
+  QUOTA_ENTRY_GRAPH_IMAGE_GENERATION,
+  type QuotaEntryPriceLookup,
+} from "../../../lib/quotaPrice";
 import type { AgentTurn } from "../../../lib/types";
+import { useMerchantQuotaEntryPrice } from "../../../lib/useMerchantQuotaEntryPrice";
 import type { AgentTurnEventState } from "./agentEventReducer";
 import {
   workflowRunRequestForTurn,
@@ -26,6 +31,10 @@ interface AgentWorkflowRunRequestCardProps {
   error: string | null;
   targetLabel?: string | null;
   placement?: "chrome" | "turn";
+  /** When set (tests), skips live merchant price query. */
+  quotaPriceLookup?: QuotaEntryPriceLookup;
+  quotaPricePending?: boolean;
+  quotaPriceBlocksConfirm?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   onOpenRuns?: () => void;
@@ -53,6 +62,7 @@ export function WorkflowRunRequestTurnSlot({
   onOpenRuns?: () => void;
 }) {
   const request = workflowRunRequestForTurn(turn, fetched, eventStates);
+  const quotaPrice = useMerchantQuotaEntryPrice(QUOTA_ENTRY_GRAPH_IMAGE_GENERATION);
   if (!request) return null;
   return (
     <div className="mt-2" data-agent-turn-workflow-run-request>
@@ -63,6 +73,9 @@ export function WorkflowRunRequestTurnSlot({
         error={error}
         targetLabel={targetLabel}
         placement="turn"
+        quotaPriceLookup={quotaPrice.lookup}
+        quotaPricePending={quotaPrice.pending}
+        quotaPriceBlocksConfirm={quotaPrice.blocksAction}
         onConfirm={onConfirm}
         onCancel={onCancel}
         onOpenRuns={onOpenRuns}
@@ -78,6 +91,9 @@ export function AgentWorkflowRunRequestCard({
   error,
   targetLabel = null,
   placement = "chrome",
+  quotaPriceLookup,
+  quotaPricePending = false,
+  quotaPriceBlocksConfirm = false,
   onConfirm,
   onCancel,
   onOpenRuns,
@@ -212,6 +228,25 @@ export function AgentWorkflowRunRequestCard({
                   : t("agentWorkbench.workflowRunRequest.confirmDescription")}
               </p>
             ) : null}
+            {awaitingConfirmation && quotaPriceLookup?.status === "ok" && !quotaPricePending ? (
+              <p
+                className="mt-2 text-xs font-medium text-text-muted"
+                data-agent-workflow-run-quota-estimate
+              >
+                {t("agentWorkbench.workflowRunRequest.quotaEstimate", {
+                  units: quotaPriceLookup.estimatedUnits,
+                })}
+              </p>
+            ) : null}
+            {awaitingConfirmation && !quotaPricePending && quotaPriceBlocksConfirm ? (
+              <p
+                role="status"
+                className="mt-2 rounded-md border border-state-warning/40 bg-state-warning/10 px-2.5 py-2 text-xs font-medium text-state-warning"
+                data-agent-workflow-run-quota-unavailable
+              >
+                {t("agentWorkbench.workflowRunRequest.quotaPriceUnavailable")}
+              </p>
+            ) : null}
             {active ? (
               <p className="mt-2 text-xs leading-5 text-accent-strong">
                 {t("agentWorkbench.workflowRunRequest.runningDescription")}
@@ -240,8 +275,8 @@ export function AgentWorkflowRunRequestCard({
                   <button
                     type="button"
                     onClick={onConfirm}
-                    disabled={busy}
-                    className="inline-flex min-h-10 items-center gap-2 rounded-md bg-accent px-3 text-xs font-semibold text-accent-fg shadow-sm transition-colors hover:bg-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-wait disabled:opacity-50"
+                    disabled={busy || quotaPriceBlocksConfirm || quotaPricePending}
+                    className="inline-flex min-h-10 items-center gap-2 rounded-md bg-accent px-3 text-xs font-semibold text-accent-fg shadow-sm transition-colors hover:bg-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
                     {busy
