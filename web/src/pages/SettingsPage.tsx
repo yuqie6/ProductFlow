@@ -32,6 +32,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { TopNav } from "../components/TopNav";
+import { MerchantOpsPanel } from "./settings/MerchantOpsPanel";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "../components/ui/dialog";
 import { Select as SelectField } from "../components/ui/select";
 import { api, ApiError } from "../lib/api";
@@ -2257,6 +2258,7 @@ export function SettingsPage() {
         onHome={() => navigate("/home")}
         onLogout={() => logoutMutation.mutate()}
       />
+      <MerchantOpsPanel />
 
       <main className="mx-auto flex w-full max-w-[1440px] flex-1">
         <div className="w-full">

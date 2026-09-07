@@ -69,10 +69,13 @@ func (h HTTP) Register(engine *gin.Engine) {
 	})
 	merchants.GET("", h.listMerchants)
 	merchants.POST("", h.createMerchant)
+	merchants.PATCH("/:merchant_id/status", h.setMerchantStatus)
 	merchants.POST("/:merchant_id/invites", h.createInvite)
 	merchants.DELETE("/:merchant_id/invites/:invite_id", h.revokeInvite)
 	merchants.DELETE("/:merchant_id/memberships/:user_id", h.revokeMembership)
 	merchants.POST("/:merchant_id/memberships/:user_id/restore", h.restoreMembership)
+
+	h.registerSupportOps(engine)
 }
 
 func (h HTTP) accessRequired(c *gin.Context) (bool, error) {
@@ -281,6 +284,29 @@ func (h HTTP) createMerchant(c *gin.Context) {
 		return
 	}
 	merchant, err := h.svc().CreateMerchant(c.Request.Context(), actor, payload.Name)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"id": merchant.ID, "name": merchant.Name, "status": merchant.Status})
+}
+
+type merchantStatusRequest struct {
+	Status string `json:"status"`
+}
+
+func (h HTTP) setMerchantStatus(c *gin.Context) {
+	actor, ok := ActorFrom(c)
+	if !ok {
+		httpx.Unauthorized(c, "请先登录")
+		return
+	}
+	var payload merchantStatusRequest
+	if err := bindJSONStrict(c, &payload); err != nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	merchant, err := h.svc().SetMerchantStatus(c.Request.Context(), actor, c.Param("merchant_id"), payload.Status)
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return

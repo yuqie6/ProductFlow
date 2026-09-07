@@ -24,22 +24,28 @@ type LockState struct {
 // HTTP 是设置页与生成队列的 Gin 处理器集合。
 // 设置路由前缀 /api/settings；生成队列单独挂 GET /api/generation-queue。
 // 读 lock-state/unlock/runtime 不要求设置页解锁；其余读写要 requireUnlocked。
+// OperatorOnly（若注入）在门禁开启时限制为站点 Operator（矩阵 A3/A4）。
 type HTTP struct {
 	Store               RuntimeReader // RequireAdmin 读 AdminAccessRequired
 	DB                  *Store        // 设置读写；导出/供应商档案走这里
 	SettingsAccessToken string        // 与 POST /unlock 比较；空则 Configured=false
+	OperatorOnly        gin.HandlerFunc
 }
 
-// Register 挂上 /api/settings；写操作要求设置页已解锁。
+// Register 挂上 /api/settings；写操作要求设置页已解锁；可选 OperatorOnly。
 func (h HTTP) Register(engine *gin.Engine) {
-	group := engine.Group("/api/settings")
-	group.Use(httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
+	admin := httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
 		runtime, err := h.Store.Runtime(c.Request.Context())
 		if err != nil {
 			return false, err
 		}
 		return runtime.AdminAccessRequired, nil
-	}))
+	})
+	group := engine.Group("/api/settings")
+	group.Use(admin)
+	if h.OperatorOnly != nil {
+		group.Use(h.OperatorOnly)
+	}
 	group.GET("/lock-state", h.lockState)
 	group.POST("/unlock", h.unlock)
 	group.GET("/runtime", h.runtime)
@@ -54,13 +60,12 @@ func (h HTTP) Register(engine *gin.Engine) {
 	group.GET("", h.requireUnlocked, h.getConfig)
 	group.PATCH("", h.requireUnlocked, h.patchConfig)
 
-	engine.GET("/api/generation-queue", httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
-		runtime, err := h.Store.Runtime(c.Request.Context())
-		if err != nil {
-			return false, err
-		}
-		return runtime.AdminAccessRequired, nil
-	}), h.generationQueue)
+	queue := engine.Group("/api")
+	queue.Use(admin)
+	if h.OperatorOnly != nil {
+		queue.Use(h.OperatorOnly)
+	}
+	queue.GET("/generation-queue", h.generationQueue)
 }
 
 // requireUnlocked 是设置写路由中间件：未配令牌 503；cookie 未解锁 403。

@@ -73,6 +73,31 @@ func RequireOperator() gin.HandlerFunc {
 	}
 }
 
+// RequireOperatorIf 在 reader 返回 required=true 时要求站点 Operator；未开启门禁时放行（本地开放模式）。
+func RequireOperatorIf(reader func(c *gin.Context) (required bool, err error)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		required, err := reader(c)
+		if err != nil {
+			httpx.AbortDetail(c, http.StatusInternalServerError, "读取运行时设置失败")
+			return
+		}
+		if !required {
+			c.Next()
+			return
+		}
+		principal := PrincipalFrom(c)
+		if principal == nil {
+			httpx.Unauthorized(c, "请先登录")
+			return
+		}
+		if !principal.IsOperator {
+			httpx.AbortDetail(c, http.StatusForbidden, "仅站点 Operator 可访问")
+			return
+		}
+		c.Next()
+	}
+}
+
 // RequireMembership 校验当前用户对 merchantID 有有效成员关系；请求中的商家 ID 不授予权限。
 func (h HTTP) RequireMembership(merchantIDParam string) gin.HandlerFunc {
 	return func(c *gin.Context) {

@@ -55,6 +55,7 @@ export interface SessionState {
     merchant_name: string;
     role: string;
     status: string;
+    merchant_status?: string;
   }>;
 }
 

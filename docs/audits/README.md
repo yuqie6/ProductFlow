@@ -50,7 +50,8 @@
 | merchant-delivery-localedit | 商家平台 B6；交付与局部编辑隔离 | 2026-09-07 完成归档 |
 | merchant-agent-tools | 商家平台 B7；Agent 工具链隔离 | 2026-09-07 完成归档 |
 | merchant-queue-frontend | 商家平台 B8；队列与前端边界 | 2026-09-07 完成归档 |
-| merchant-ops-surface | 商家平台 B9；运营面最小集 | CTO 认领 `sub-merchant/…`，执行中 |
+| merchant-ops-surface | 商家平台 B9；运营面最小集 | 2026-09-07 完成归档 |
+| merchant-isolation-gate | 商家平台 B10；双商隔离门 MP-B | CTO 认领 `sub-merchant/…`，执行中 |
 | release-readiness-baseline | 发行差距 | 完成归档 |
 | release-compose-proxy-overlay | 发行 B1 | 完成归档 |
 | release-versioned-artifact | 发行 B2 | 2026-09-07 完成归档 |

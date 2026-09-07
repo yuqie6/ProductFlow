@@ -24,7 +24,7 @@ const (
 	TestMerchantName  = "开发商家"
 )
 
-// MountTest 挂上 Principal、工作商家与 auth 路由（调用方须先挂 Session 中间件）。
+// MountTest 挂上 Principal、工作商家、停用写拒绝与 auth 路由（调用方须先挂 Session 中间件）。
 func MountTest(engine *gin.Engine, gdb *gorm.DB, store settings.RuntimeReader, adminKey string) HTTP {
 	passwordHashCost = bcrypt.MinCost
 	httpx.AuthenticatedFunc = Authenticated
@@ -36,6 +36,7 @@ func MountTest(engine *gin.Engine, gdb *gorm.DB, store settings.RuntimeReader, a
 	}
 	engine.Use(h.LoadPrincipal())
 	engine.Use(h.AttachWorkingMerchant())
+	engine.Use(h.RejectSuspendedMerchantWrites())
 	h.Register(engine)
 	return h
 }

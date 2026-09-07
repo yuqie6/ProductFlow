@@ -6,6 +6,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppToaster } from "./components/ui/toast";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { api } from "./lib/api";
+import { canAccessOpsSettings } from "./lib/opsAccess";
 import { activeMerchantId, applyMerchantSwitchBoundary } from "./lib/merchantBoundary";
 import { PreferencesProvider, useI18n } from "./lib/preferences";
 import { disposeAllConversationRuntimes } from "./pages/workbench/agent/conversation/runtime";
@@ -61,6 +62,7 @@ function AppRoutes() {
   });
 
   const authenticated = Boolean(sessionQuery.data?.authenticated);
+  const canOpenSettings = canAccessOpsSettings(sessionQuery.data);
   const merchantId = activeMerchantId(sessionQuery.data);
   const previousMerchantRef = useRef<string | null>(null);
 
@@ -121,7 +123,9 @@ function AppRoutes() {
           />
           <Route
             path="/settings"
-            element={authenticated ? <SettingsPage /> : <Navigate to="/login" replace />}
+            element={
+              canOpenSettings ? <SettingsPage /> : <Navigate to={authenticated ? "/home" : "/login"} replace />
+            }
           />
           <Route
             path="/products/:productId"

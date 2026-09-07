@@ -44,10 +44,11 @@ type Principal struct {
 }
 
 type MembershipView struct {
-	MerchantID   string `json:"merchant_id"`
-	MerchantName string `json:"merchant_name"`
-	Role         string `json:"role"`
-	Status       string `json:"status"`
+	MerchantID     string `json:"merchant_id"`
+	MerchantName   string `json:"merchant_name"`
+	Role           string `json:"role"`
+	Status         string `json:"status"`
+	MerchantStatus string `json:"merchant_status"`
 }
 
 type InviteResult struct {
@@ -259,13 +260,89 @@ func (s Service) ListMemberships(ctx context.Context, userID string) ([]Membersh
 	}
 	var rows []MembershipView
 	err := s.DB.WithContext(ctx).Raw(`
-		SELECT m.merchant_id, mer.name AS merchant_name, m.role, m.status
+		SELECT m.merchant_id, mer.name AS merchant_name, m.role, m.status,
+		       mer.status AS merchant_status
 		FROM memberships m
 		JOIN merchants mer ON mer.id = m.merchant_id
 		WHERE m.user_id = ? AND m.status = ?
 		ORDER BY mer.name, m.merchant_id
 	`, userID, MembershipStatusActive).Scan(&rows).Error
 	return rows, err
+}
+
+// MerchantStatus 返回商家启停状态；不存在则 NotFound。
+func (s Service) MerchantStatus(ctx context.Context, merchantID string) (string, error) {
+	if err := s.requireDB(); err != nil {
+		return "", err
+	}
+	merchantID = strings.TrimSpace(merchantID)
+	if merchantID == "" {
+		return "", apperr.Validation("缺少商家 ID")
+	}
+	var row schema.Merchants
+	err := s.DB.WithContext(ctx).Select("id", "status").Where("id = ?", merchantID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", apperr.NotFound("商家不存在")
+	}
+	if err != nil {
+		return "", err
+	}
+	return row.Status, nil
+}
+
+func (s Service) requireMerchantActive(ctx context.Context, merchantID string) error {
+	status, err := s.MerchantStatus(ctx, merchantID)
+	if err != nil {
+		return err
+	}
+	if status == MerchantStatusSuspended {
+		return apperr.Forbidden("商家已停用，无法写入")
+	}
+	return nil
+}
+
+// SetMerchantStatus 由站点 Operator 启停商家；status 仅 active|suspended。
+func (s Service) SetMerchantStatus(ctx context.Context, operator UserRef, merchantID, status string) (*schema.Merchants, error) {
+	if err := s.requireDB(); err != nil {
+		return nil, err
+	}
+	if !operator.IsOperator {
+		return nil, apperr.Forbidden("仅站点 Operator 可启停商家")
+	}
+	merchantID = strings.TrimSpace(merchantID)
+	status = strings.TrimSpace(status)
+	if merchantID == "" {
+		return nil, apperr.Validation("缺少商家 ID")
+	}
+	if status != MerchantStatusActive && status != MerchantStatusSuspended {
+		return nil, apperr.Validation("商家状态无效")
+	}
+	now := s.now()
+	var merchant schema.Merchants
+	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
+		err := gdb.Clauses(pfdb.ForUpdate()).Where("id = ?", merchantID).Take(&merchant).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return apperr.NotFound("商家不存在")
+		}
+		if err != nil {
+			return err
+		}
+		if merchant.Status == status {
+			return nil
+		}
+		if err := gdb.Model(&merchant).Updates(map[string]any{
+			"status": status, "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		merchant.Status = status
+		merchant.UpdatedAt = now
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &merchant, nil
 }
 
 func (s Service) ActiveMembership(ctx context.Context, userID, merchantID string) (*schema.Memberships, error) {
@@ -336,6 +413,9 @@ func (s Service) CreateInvite(ctx context.Context, actor UserRef, merchantID, em
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
+	if err := s.requireMerchantActive(ctx, merchantID); err != nil {
+		return nil, err
+	}
 	emailNorm, err := normalizeEmail(email)
 	if err != nil {
 		return nil, apperr.Validation(err.Error())
@@ -392,6 +472,17 @@ func (s Service) AcceptInvite(ctx context.Context, token, password, displayName 
 		}
 		if invite.RevokedAt != nil || invite.AcceptedAt != nil || !invite.ExpiresAt.After(now) {
 			return apperr.Gone("邀请已失效")
+		}
+		var merchant schema.Merchants
+		err = gdb.Select("id", "status").Where("id = ?", invite.MerchantID).Take(&merchant).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return apperr.NotFound("商家不存在")
+		}
+		if err != nil {
+			return err
+		}
+		if merchant.Status == MerchantStatusSuspended {
+			return apperr.Forbidden("商家已停用，无法接受邀请")
 		}
 		var user schema.Users
 		err = gdb.Where("email = ?", invite.Email).Take(&user).Error
@@ -473,6 +564,9 @@ func (s Service) RevokeMembership(ctx context.Context, actor UserRef, merchantID
 	if err := s.requireDB(); err != nil {
 		return err
 	}
+	if err := s.requireMerchantActive(ctx, merchantID); err != nil {
+		return err
+	}
 	now := s.now()
 	return tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
 		var actorMembership schema.Memberships
@@ -522,6 +616,9 @@ func (s Service) RestoreMembership(ctx context.Context, actor UserRef, merchantI
 	if err := s.requireDB(); err != nil {
 		return err
 	}
+	if err := s.requireMerchantActive(ctx, merchantID); err != nil {
+		return err
+	}
 	now := s.now()
 	return tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
 		var actorMembership schema.Memberships
@@ -558,6 +655,9 @@ func (s Service) RestoreMembership(ctx context.Context, actor UserRef, merchantI
 
 func (s Service) RevokeInvite(ctx context.Context, actor UserRef, merchantID, inviteID string) error {
 	if err := s.requireDB(); err != nil {
+		return err
+	}
+	if err := s.requireMerchantActive(ctx, merchantID); err != nil {
 		return err
 	}
 	membership, err := s.ActiveMembership(ctx, actor.UserID, merchantID)

@@ -205,6 +205,26 @@ export const api = {
   destroySession(): Promise<{ ok: boolean }> {
     return request("/api/auth/session", { method: "DELETE" });
   },
+  setMerchantStatus(
+    merchantId: string,
+    status: "active" | "suspended",
+  ): Promise<{ id: string; name: string; status: string }> {
+    return request(`/api/merchants/${encodeURIComponent(merchantId)}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
+  },
+  getSupportAccessContract(): Promise<{
+    contract_version: number;
+    implemented: boolean;
+    summary: string;
+    rules: string[];
+    session_fields: string[];
+    audit_fields: string[];
+    actions: string[];
+  }> {
+    return request("/api/ops/support-contract");
+  },
   listProducts(input?: {
     page?: number;
     page_size?: number;

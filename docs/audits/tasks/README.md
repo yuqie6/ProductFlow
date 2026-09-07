@@ -20,7 +20,7 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [merchant-ops-surface.md](merchant-ops-surface.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-ops-surface | 2026-09-07T14:50:00+08:00 |
+| [merchant-isolation-gate.md](merchant-isolation-gate.md) | 商家平台 | 证据 | 认领 | sub-merchant/merchant-isolation-gate | 2026-09-07T15:00:00+08:00 |
 | [workbench-remember-last-view.md](workbench-remember-last-view.md) | 工作流体验 | 实现 | 开放 | — | — |
 | [release-r6-readiness-gate.md](release-r6-readiness-gate.md) | 平台可靠性 | 证据 | 开放 | — | — |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |

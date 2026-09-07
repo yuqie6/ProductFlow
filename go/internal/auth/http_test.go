@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -34,7 +35,16 @@ func newAuthServer(t *testing.T) *authServer {
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))
 	store := settings.NewStore(pool, config.Config{AdminAccessRequired: true})
 	auth.MountTest(engine, gdb, store, auth.TestAdminKey)
-	settings.HTTP{Store: store, DB: store, SettingsAccessToken: "settings-token"}.Register(engine)
+	settings.HTTP{
+		Store: store, DB: store, SettingsAccessToken: "settings-token",
+		OperatorOnly: auth.RequireOperatorIf(func(c *gin.Context) (bool, error) {
+			runtime, err := store.Runtime(c.Request.Context())
+			if err != nil {
+				return false, err
+			}
+			return runtime.AdminAccessRequired, nil
+		}),
+	}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	return &authServer{srv: srv, client: &http.Client{}, db: gdb}

@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [merchant-ops-surface.md](merchant-ops-surface.md) | 完成 | B9 Op settings/启停/A8草案；≠MP-B/MP-D |
 | [merchant-queue-frontend.md](merchant-queue-frontend.md) | 完成 | B8 队列 merchant 快照+前端切换边界；≠MP-B |
 | [merchant-agent-tools.md](merchant-agent-tools.md) | 完成 | B7 Agent 全链商家字段+25工具 harness；≠MP-B |
 | [compete-facts-brand-inherit.md](compete-facts-brand-inherit.md) | 完成 | CF-B5 四级风格链+清身份；Brand 占位；≠R3 |

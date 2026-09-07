@@ -173,3 +173,55 @@ func AbortIfNoMerchant(c *gin.Context) bool {
 	}
 	return false
 }
+
+// RejectSuspendedMerchantWrites 停用商家后拒绝非 Operator 的业务写请求。
+// 读路径与 /api/auth、/api/settings、/api/ops、generation-queue 放行；Operator 可继续写（含启停与支持）。
+func (h HTTP) RejectSuspendedMerchantWrites() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		default:
+			c.Next()
+			return
+		}
+		if skipSuspendedWriteGate(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+		principal := PrincipalFrom(c)
+		if principal != nil && principal.IsOperator {
+			c.Next()
+			return
+		}
+		merchantID, ok := MerchantIDFromGin(c)
+		if !ok {
+			c.Next()
+			return
+		}
+		status, err := h.svc().MerchantStatus(c.Request.Context(), merchantID)
+		if err != nil {
+			httpx.AbortErr(c, err)
+			return
+		}
+		if status == MerchantStatusSuspended {
+			httpx.AbortDetail(c, http.StatusForbidden, "商家已停用，无法写入")
+			return
+		}
+		c.Next()
+	}
+}
+
+func skipSuspendedWriteGate(path string) bool {
+	switch {
+	case strings.HasPrefix(path, "/api/auth/"):
+		return true
+	case strings.HasPrefix(path, "/api/settings"):
+		return true
+	case path == "/api/generation-queue":
+		return true
+	case strings.HasPrefix(path, "/api/ops/"):
+		return true
+	default:
+		return false
+	}
+}

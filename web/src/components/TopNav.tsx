@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import {
   BookOpen,
   Check,
@@ -17,7 +18,9 @@ import {
 import type { FocusEvent, MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 
+import { api } from "../lib/api";
 import { LOCALES, LOCALE_LABEL_KEYS, type Locale } from "../lib/i18n";
+import { canAccessOpsSettings } from "../lib/opsAccess";
 import { usePreferences } from "../lib/preferences";
 import { THEME_PREFERENCES, type ThemePreference } from "../lib/theme";
 
@@ -152,6 +155,13 @@ function LanguagePicker({ compact = false }: { compact?: boolean }) {
 export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
   const location = useLocation();
   const { t, themePreference, setThemePreference } = usePreferences();
+  const sessionQuery = useQuery({
+    queryKey: ["session"],
+    queryFn: api.getSessionState,
+    retry: false,
+  });
+  const showSettings = canAccessOpsSettings(sessionQuery.data);
+  const visibleNavItems = navItems.filter((item) => item.to !== "/settings" || showSettings);
   const CurrentThemeIcon = themeIcons[themePreference];
   const nextThemePreference =
     THEME_PREFERENCES[(THEME_PREFERENCES.indexOf(themePreference) + 1) % THEME_PREFERENCES.length];
@@ -194,7 +204,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
 
         <div className="hidden min-w-0 justify-start overflow-x-auto lg:flex lg:justify-center">
           <div className="flex min-w-max items-center gap-1 rounded-xl border border-slate-200 bg-slate-100/80 p-1 shadow-inner shadow-slate-200/40 dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-none">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const Icon = item.icon;
               const active = item.match(location.pathname);
               const label = t(item.labelKey);
@@ -282,9 +292,9 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
       >
         <div
           className="mx-auto grid w-full max-w-xl gap-1"
-          style={{ gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))` }}
+          style={{ gridTemplateColumns: `repeat(${visibleNavItems.length}, minmax(0, 1fr))` }}
         >
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const active = item.match(location.pathname);
             const label = t(item.labelKey);

@@ -7,6 +7,7 @@ import (
 )
 
 // GenerationQueueOverview 汇总图运行与连续生图的 queued/running 计数。
+// 合同固定为实例级只读聚合：仅计数，不含商家/任务明细（矩阵 A4）。
 type GenerationQueueOverview struct {
 	ActiveCount        int `json:"active_count"`         // running + queued
 	RunningCount       int `json:"running_count"`        // 图运行占用 + 连续生图 running

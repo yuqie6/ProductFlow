@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/agent"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/delivery"
@@ -95,9 +96,20 @@ func main() {
 	httpx.AuthenticatedFunc = auth.Authenticated
 	engine.Use(authHTTP.LoadPrincipal())
 	engine.Use(authHTTP.AttachWorkingMerchant())
+	engine.Use(authHTTP.RejectSuspendedMerchantWrites())
+	operatorOnly := auth.RequireOperatorIf(func(c *gin.Context) (bool, error) {
+		runtime, err := settingsStore.Runtime(c.Request.Context())
+		if err != nil {
+			return false, err
+		}
+		return runtime.AdminAccessRequired, nil
+	})
 	registerAPI(engine, apiHandlers{
-		Auth:     authHTTP,
-		Settings: settings.HTTP{Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken},
+		Auth: authHTTP,
+		Settings: settings.HTTP{
+			Store: settingsStore, DB: settingsStore, SettingsAccessToken: cfg.SettingsAccessToken,
+			OperatorOnly: operatorOnly,
+		},
 		Product: product.HTTP{
 			Service: product.Service{
 				DB: gdb, Media: mediaStore, Canvas: agent.WriteProductCanvas,

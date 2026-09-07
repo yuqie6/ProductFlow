@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
@@ -39,7 +40,16 @@ func newSettingsServer(t *testing.T) *settingsServer {
 		UploadMaxReferenceImages: 6,
 	})
 	auth.MountTest(engine, gdb, store, auth.TestAdminKey)
-	settings.HTTP{Store: store, DB: store, SettingsAccessToken: "settings-token"}.Register(engine)
+	settings.HTTP{
+		Store: store, DB: store, SettingsAccessToken: "settings-token",
+		OperatorOnly: auth.RequireOperatorIf(func(c *gin.Context) (bool, error) {
+			runtime, err := store.Runtime(c.Request.Context())
+			if err != nil {
+				return false, err
+			}
+			return runtime.AdminAccessRequired, nil
+		}),
+	}.Register(engine)
 	srv := httptest.NewServer(engine)
 	t.Cleanup(srv.Close)
 	ss := &settingsServer{store: store, srv: srv, client: &http.Client{}}

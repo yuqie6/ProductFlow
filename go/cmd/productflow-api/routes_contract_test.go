@@ -76,6 +76,11 @@ var goOpsExtras = map[string]bool{
 	"GET /api/v3/products/{}/visual-selection":                                          true,
 	"PUT /api/v3/products/{}/visual-selection":                                          true,
 	"POST /api/v3/products/{}/visual-inheritance":                                       true,
+	"PATCH /api/merchants/{}/status":                                                    true,
+	"GET /api/ops/support-contract":                                                     true,
+	"POST /api/ops/support-sessions":                                                    true,
+	"GET /api/ops/support-sessions/{}":                                                  true,
+	"POST /api/ops/support-sessions/{}/end":                                             true,
 }
 
 // Historical snapshot still lists retired Agent effects, single events and manual fidelity checks.
