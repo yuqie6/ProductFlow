@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	_ "image/jpeg"
 	"image/png"
 	"os"
 	"strings"
@@ -126,9 +127,13 @@ func (e *GlyphExtractor) Contains(pngBytes []byte, needle string) (bool, error) 
 }
 
 func decodeInkMask(pngBytes []byte) (*image.Gray, error) {
-	img, err := png.Decode(bytes.NewReader(pngBytes))
+	// 优先通用解码（JPEG/PNG 等）；回退 png.Decode 保留历史错误文案路径。
+	img, _, err := image.Decode(bytes.NewReader(pngBytes))
 	if err != nil {
-		return nil, fmt.Errorf("ocr: 无效 PNG: %w", err)
+		img, err = png.Decode(bytes.NewReader(pngBytes))
+		if err != nil {
+			return nil, fmt.Errorf("ocr: 无效图像: %w", err)
+		}
 	}
 	b := img.Bounds()
 	gray := image.NewGray(b)

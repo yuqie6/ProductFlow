@@ -18,10 +18,11 @@
 4. [卖点 live k=1](tasks/archive/image-quality-selling-point-live.md)：已归档；闸门相对试跑 candidate 改善、保真持平 4；≠R3。
 5. [OCR 追溯闸 B0](tasks/archive/image-quality-ocr-trace-b0.md)：已归档；成片对照 `text_trace`，失败不得 `text_qualified` pass；≠R3。
 6. [采用路径 OCR 接线](tasks/archive/image-quality-ocr-adoption-wire.md)：已归档；`CreateAdoption` 对有期望的 `text_trace` 默认 OCR；≠R3。
-7. [主体提取 B0](tasks/archive/image-quality-subject-extract-b0.md)：已归档；角点色差分割蒙版/抠图 + `produce_route` 闸；≠R3 / ≠像素保真。
-8. [主体提取接入生成路径](tasks/archive/image-quality-subject-extract-apply.md)：已归档；`image_generation` 对 `subject_preserve` 自动 Apply；≠R3。
-9. [主体合成 B1](tasks/archive/image-quality-subject-compose-b1.md)：已归档；cutout+可控背景+接触阴影占位+安全区比例 → PNG + `subject_compose`；≠R3。
-10. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
+7. [采用 OCR 硬闸收窄](tasks/archive/image-quality-ocr-adoption-scope.md)：已归档；采用只硬核期望字出现，残余墨迹不拦商品成片；≠R3。
+8. [主体提取 B0](tasks/archive/image-quality-subject-extract-b0.md)：已归档；角点色差分割蒙版/抠图 + `produce_route` 闸；≠R3 / ≠像素保真。
+9. [主体提取接入生成路径](tasks/archive/image-quality-subject-extract-apply.md)：已归档；`image_generation` 对 `subject_preserve` 自动 Apply；≠R3。
+10. [主体合成 B1](tasks/archive/image-quality-subject-compose-b1.md)：已归档；cutout+可控背景+接触阴影占位+安全区比例 → PNG + `subject_compose`；≠R3。
+11. 候选不得同时改评委或金标；评分合同缺陷另立先行任务。
 
 用户已授权组内开发；当前先交付采证任务，有证据的生成链修复按组内序列确认任务范围和占用后推进。共用 provider/DB/浏览器资源仍需排他预约。工作流操作正确性与执行可靠性的固定合同继续适用，不复制 Graph 或图片执行器。
 
@@ -39,7 +40,7 @@
 |---|---|---|
 | 商品事实 | `product/facts.go`：不可变 `product_fact_set_versions`；`source_type` 闭集 `user\|image_observation\|agent_inference`；`status` 闭集 `observed\|user_declared\|confirmed\|conflicted`；`layer` 闭集 `performance\|marketing`；`requires_confirmation` / `evidence_asset_ids` / `conflicts`；写入闸拒绝未确认推断升 `confirmed`、拒绝营销口吻入性能层；`POST .../facts/impact-preview` + PUT `update_node_ids`（CF-B2） | — |
 | 编译入边与 digest | `graph/compiler.go`：`incomingSorted` 只扫入边；`incomingFactSetVersions` 写入 digest；`execute_node.go` `skipUnchanged` 同 digest 跳过；CF-B2 预览只经 RoleFacts，未选中已完成节点可重盖 digest 保 artifact | — |
-| 图位文字 | `image_prompt`/`image` 产物可挂 `text_trace`（`fact_keys` 或 `user_image_override`）；`listing_prompt.go` 组装「图片内文字」；`text_settings` policy `none\|required`；卖点一图一理由检查器 `CheckSellingPointOneReason`；B0 OCR：`go/internal/ocr` 字形模板+残余墨迹对照，`graph.ApplyImageOCRTrace` 失败强制 `text_qualified=false`；采用路径对有期望的 `text_trace` 默认调用 OCR | 开放词表 live OCR 仅 opt-in；CJK/任意生成式成片未宣称；生成路径尚未自动 ApplyOCR |
+| 图位文字 | `image_prompt`/`image` 产物可挂 `text_trace`（`fact_keys` 或 `user_image_override`）；`listing_prompt.go` 组装「图片内文字」；`text_settings` policy `none\|required`；卖点一图一理由检查器 `CheckSellingPointOneReason`；B0 OCR：`go/internal/ocr` 字形模板对照；采用路径 `ApplyImageOCRTraceForAdoption` **只硬核期望字**（残余墨迹诊断不硬失败）；合成夹具仍可用严格残余闸 | 开放词表 live OCR 仅 opt-in；CJK/生成路径自动 Apply 未宣称；≠商品成片全文 OCR |
 | 配方清身份 | `recipe/payload.go` 剥 `source_product_id` / `fact_set_version_id` / `visual_system_version_id` / `visual_overrides` / `fact_keys` 等；CF-B5 第二商品夹具钉清身份+新 fact | — |
 | 主体/局部 | `localedit`：供应商 `masked_edit`；图位可声明 `produce_route=subject_preserve`；B0 `go/internal/subjectextract` 角点色差分割 + `graph.ApplySubjectPreserveExtract`；B1 `ComposeFromExtract`（纯色/垂直渐变背景 + 可选接触阴影占位 + 安全区等比放置）写 `produce_route.subject_compose`（PNG SHA + lineage）；生成路径对 `subject_preserve` 自动提取+合成，失败→`route_qualified=false` | 复杂场景质检未建；不能把 localedit/本 B0/B1 标成像素保真 |
 | 生成式摄影 | `image_generation` + providers；图位/产物 `produce_route`；生成式禁像素保真文案审计 | 采用硬闸已消费 `route_qualified`；复杂摄影对照另发 |
@@ -52,7 +53,7 @@
 | ID | 合同 | 验证层 | 状态 |
 |---|---|---|---|
 | IQ-CF-01 | **事实来源分层**：每条事实保留 `source_type` 与 `status`；`agent_inference` / 未确认 `observed` 不得静默升为 `confirmed` 性能断言；`conflicted` 与 `requires_confirmation=true` 必须对用户可见且可裁定。品牌营销口吻（卖点文案）不得写入与规格/材质同级的「已确认性能事实」。 | 写入校验 + UI 展示 + 正反夹具；复用 `normalizeFactPayload` 闭集，扩展规则不得开第二事实仓库 | `完成`（`layer` 闭集 + 确认门/营销闸；资料面板分栏；`TestFactLayerGate*`） |
-| IQ-CF-02 | **图位文字追溯**：信息图成稿中的可核验文字（规格、容量、材质、卖点短句）须能追到本商品 fact key 或显式「用户本图覆盖」标记；卖点图默认一图一主要购买理由。无依据文字不得进入交付采用合格集。 | 节点/产物元数据或导出旁路索引；对照 `fact_keys` 与成片 OCR/人工检；内容策略候选可作输入不得替代本闸 | `部分完成`（CF-B1 元数据+卖点检查器；采用硬闸已接 `text_qualified`；[OCR B0](tasks/archive/image-quality-ocr-trace-b0.md)；[采用 OCR 接线](tasks/archive/image-quality-ocr-adoption-wire.md)：有期望则默认对照，失败不得合格采用；CJK/开放词表/生成路径自动 Apply/R3 未宣称） |
+| IQ-CF-02 | **图位文字追溯**：信息图成稿中的可核验文字（规格、容量、材质、卖点短句）须能追到本商品 fact key 或显式「用户本图覆盖」标记；卖点图默认一图一主要购买理由。无依据文字不得进入交付采用合格集。 | 节点/产物元数据或导出旁路索引；对照 `fact_keys` 与成片 OCR/人工检；内容策略候选可作输入不得替代本闸 | `部分完成`（CF-B1 元数据+卖点检查器；采用硬闸已接 `text_qualified`；[OCR B0](tasks/archive/image-quality-ocr-trace-b0.md)；[采用 OCR 接线](tasks/archive/image-quality-ocr-adoption-wire.md)；[硬闸收窄](tasks/archive/image-quality-ocr-adoption-scope.md)：有期望则对照期望字，**不以残余墨迹拦商品成片**；CJK/开放词表/生成路径自动 Apply/R3 未宣称） |
 | IQ-CF-03 | **规格/事实变更影响预览**：确认事实新版本前，列出依赖该 fact（经 RoleFacts 入边 → prompt/generation 图位）的文案与图位；**已完成且 digest 不受影响的图不得自动重做**；用户显式选择更新范围。旧运行仍可通过当时 `fact_set_version_id` + `input_digest` 解释。 | 预览 API/用例 + `skipUnchanged` 回归；禁止全图扫描注入未连接资料 | `完成`（CF-B2：impact-preview + `update_node_ids` 采用；未选中保 artifact；证据见 [compete-facts-impact-preview](tasks/archive/compete-facts-impact-preview.md)） |
 | IQ-CF-04 | **主体保留路线**：有可靠主体图且需外观保真时，走主体提取→背景/阴影/位置比例→（可选）确定性排版；输出进入现有资产与交付链。透明/反光/遮挡边缘须质量检查，**不得宣称绝对像素保真**。 | 路线标签 + 质检失败留未解决项；与 localedit 供应商修补区分记账 | `部分完成`（CF-B3 路线标签；[主体提取 B0](tasks/archive/image-quality-subject-extract-b0.md)；[生成路径 Apply](tasks/archive/image-quality-subject-extract-apply.md)；[合成 B1](tasks/archive/image-quality-subject-compose-b1.md)：cutout+可控背景+接触阴影占位+安全区比例，写 `subject_compose`；失败不得 `route_qualified`；复杂场景质检/R3 未宣称） |
 | IQ-CF-05 | **生成式摄影路线**：新场景/创意摄影使用生成模型；记录身份参考与预期可变项；对照实果。提示词或 UI **不得**用「保持像素一致 / 像素级还原」等表述把本路线标成保留主体。 | 路线枚举 + 提示词/文案审计测试；失败留未解决项，不用均分掩盖身份错误 | `部分完成`（CF-B3：`produce_route=generative` + 禁令审计 + UI「可能改变外观」；真实对照另发） |
@@ -110,7 +111,7 @@
 
 - Brand 实体与商户多品牌 UI 归属商家平台；本组只钉继承优先级与质量判据，表结构实现可与商家批次衔接。
 - 主体提取 B0 + 生成路径自动 Apply + 合成 B1 已接线（`subject_preserve` → 提取 + `ComposeFromExtract`；`subject_extract`/`subject_compose` 元数据；失败不得 `route_qualified`；见 [subject-compose-b1](tasks/archive/image-quality-subject-compose-b1.md)）；复杂场景质检仍另发；≠像素保真 / ≠R3。
-- 成片 OCR B0 + 采用路径默认消费已交付（有期望则对照；无字节/无可对照期望拒绝合格，不静默 pass）；开放词表/CJK/生成路径自动 Apply 仍另发；≠R3。
+- 成片 OCR B0 + 采用路径默认消费已交付；采用硬闸已收窄为期望字出现（残余墨迹不硬失败，见 [ocr-adoption-scope](tasks/archive/image-quality-ocr-adoption-scope.md)）；开放词表/CJK/生成路径自动 Apply 仍另发；≠R3。
 - 旧 42 图位池与 32 图位诊断合同保持原状态；本竞争力合同样本独立冻结，不得回写 IMG live 表凑数。
 
 <a id="image-quality"></a>

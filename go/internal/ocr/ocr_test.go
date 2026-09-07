@@ -148,6 +148,43 @@ func TestOCRExtraInkFailsPass(t *testing.T) {
 	}
 }
 
+func TestOCRExpectedOnlyAllowsProductBodyInk(t *testing.T) {
+	ex := MustGlyphExtractor()
+	// 成片含期望字与未声明字（残余墨迹）：严格模式硬失败；采用模式只核期望字。
+	// 不用大块色主体夹具——大模板窗会把远处墨迹算进 extra 导致 Contains 假阴性。
+	png, err := RenderTextPNG("600ml  SALE", 480, 100, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := []ExpectedItem{{Source: "fact_key", Key: "capacity", Text: "600ml"}}
+
+	strict, err := ComparePNG(ex, png, expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strict.Missing) != 0 {
+		t.Fatalf("600ml must match: %+v", strict)
+	}
+	if strict.Pass || len(strict.Extra) == 0 {
+		t.Fatalf("strict mode should fail on unmatched ink: %+v", strict)
+	}
+
+	loose, err := ComparePNGExpectedOnly(ex, png, expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loose.Pass || len(loose.Missing) != 0 {
+		t.Fatalf("adoption mode must pass when expected text present: %+v", loose)
+	}
+	if len(loose.Extra) == 0 {
+		t.Fatal("extra should still be recorded for diagnostics")
+	}
+	if !TextQualifiedAfterOCR(true, loose) {
+		t.Fatal("adoption mode must allow text_qualified")
+	}
+}
+
+
 func TestContainsRenderedText(t *testing.T) {
 	ex := MustGlyphExtractor()
 	png, err := RenderTextPNG("600ml", 320, 100, 32)

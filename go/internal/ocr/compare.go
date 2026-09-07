@@ -166,9 +166,26 @@ func CompareExtracted(extracted ExtractResult, expected []ExpectedItem) CompareR
 	return out
 }
 
-// ComparePNG 用字形模板搜索判定匹配/缺失；掩盖已匹配模板后的残余墨迹判定多余。
-// extracted 汇总已匹配可见串；残余墨迹记入 extra（真实像素对照，非旁路假 OCR）。
+// ComparePNGOpts 控制字形对照的硬失败口径。
+type ComparePNGOpts struct {
+	// RejectUnmatchedInk 为 true 时，抹去已匹配模板后的显著残余墨迹记入 Extra 并令 Pass=false。
+	// 合成白底夹具可开；商品成片采用路径须关——主体/阴影本就会留墨迹，不能冒充「多余文字」。
+	RejectUnmatchedInk bool
+}
+
+// ComparePNG 用字形模板搜索判定匹配/缺失；默认把残余墨迹当硬失败（合成夹具口径）。
+// 采用路径请用 ComparePNGExpectedOnly。
 func ComparePNG(ex *GlyphExtractor, pngBytes []byte, expected []ExpectedItem) (CompareResult, error) {
+	return ComparePNGWithOpts(ex, pngBytes, expected, ComparePNGOpts{RejectUnmatchedInk: true})
+}
+
+// ComparePNGExpectedOnly 只硬核期望文字是否出现；残余墨迹可记入 Extra 供诊断，不令 Pass=false。
+func ComparePNGExpectedOnly(ex *GlyphExtractor, pngBytes []byte, expected []ExpectedItem) (CompareResult, error) {
+	return ComparePNGWithOpts(ex, pngBytes, expected, ComparePNGOpts{RejectUnmatchedInk: false})
+}
+
+// ComparePNGWithOpts 用字形模板搜索判定匹配/缺失；按 opts 决定残余墨迹是否硬失败。
+func ComparePNGWithOpts(ex *GlyphExtractor, pngBytes []byte, expected []ExpectedItem, opts ComparePNGOpts) (CompareResult, error) {
 	result := CompareResult{
 		SchemaVersion: defaultSchemaVersion,
 		Engine:        engineGlyphTemplate,
@@ -202,13 +219,17 @@ func ComparePNG(ex *GlyphExtractor, pngBytes []byte, expected []ExpectedItem) (C
 		}
 		result.Extracted += strings.Join(result.Extra, " ")
 	}
-	result.Pass = len(result.Missing) == 0 && len(result.Extra) == 0
+	missingFail := len(result.Missing) > 0
+	extraFail := opts.RejectUnmatchedInk && len(result.Extra) > 0
+	result.Pass = !missingFail && !extraFail
 	switch {
+	case result.Pass && len(result.Extra) > 0:
+		result.Detail = "期望文字已出现；残余墨迹仅作诊断、不硬失败"
 	case result.Pass:
 		result.Detail = "成片文字与 text_trace 期望一致"
-	case len(result.Missing) > 0 && len(result.Extra) > 0:
+	case missingFail && extraFail:
 		result.Detail = "成片缺少期望文字且含多余文字"
-	case len(result.Missing) > 0:
+	case missingFail:
 		result.Detail = "成片缺少 text_trace 期望文字"
 	default:
 		result.Detail = "成片含 text_trace 未声明的多余文字"

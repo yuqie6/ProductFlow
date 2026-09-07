@@ -424,6 +424,29 @@ func TestDeliveryAdoptionOCRPassAllowsDeclaredPass(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestDeliveryAdoptionOCRProductBodyInkAllowsPass(t *testing.T) {
+	ds := newDeliveryServer(t)
+	created := ds.createProduct(t)
+	productID := created.Product.ID
+	// 期望字 + 未声明字：旧硬闸会因残余墨迹拒绝；收窄后应可采用。
+	pngBytes, err := ocr.RenderTextPNG("600ml  SALE", 480, 100, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetID := ds.uploadPNGAsset(t, productID, pngBytes, "capacity-with-extra.png")
+	ds.attachArtifactLineageWithPayload(t, productID, assetID, textTraceCapacityPayload())
+	spec := map[string]any{"width": 64, "height": 64, "format": "png", "fit": "contain"}
+	resp := ds.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/delivery-adoptions", map[string]any{
+		"slots": []map[string]any{{
+			"slot_key": "hero-1", "sort_order": 0, "source_asset_id": assetID,
+			"delivery_spec": spec, "quality_status": "pass",
+		}},
+	})
+	ds.mustStatus(t, resp, http.StatusCreated)
+	resp.Body.Close()
+}
+
+
 func TestDeliveryAdoptionOCRRejectsEmptyExpectations(t *testing.T) {
 	ds := newDeliveryServer(t)
 	created := ds.createProduct(t)

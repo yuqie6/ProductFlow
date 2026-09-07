@@ -173,7 +173,7 @@ func (s Service) applyAdoptionOCRGate(
 		return apperr.Validationf("图位 %s 成片字节为空，文字 OCR 无法核对", slot.slotKey)
 	}
 
-	gated, result, err := graph.ApplyImageOCRTrace(ctx, content.Bytes, rawTrace, facts)
+	gated, result, err := graph.ApplyImageOCRTraceForAdoption(ctx, content.Bytes, rawTrace, facts)
 	if err != nil {
 		return apperr.Validationf("图位 %s 文字 OCR 对照失败：%s", slot.slotKey, err.Error())
 	}
