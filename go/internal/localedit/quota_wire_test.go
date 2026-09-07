@@ -428,3 +428,50 @@ func TestProviderPreparationQuotaFailureRollsBackBoundary(t *testing.T) {
 		t.Fatalf("partial provider boundary: task=%s phase=%s attempt=%s", status, phase, attemptPhase)
 	}
 }
+
+func TestSuccessRequiresCurrentAttemptReservation(t *testing.T) {
+	ctx := context.Background()
+	provider := &capturingEditProvider{MockProvider: MockProvider{Cap: SupportedCapability("mock-local")}}
+	es := newEditServer(t, provider)
+	created := es.createProduct(t)
+	taskID := createQueuedLocalEdit(t, es, created, "missing-success-hold")
+	executor := Executor{DB: es.db, Media: es.media, Provider: provider}
+	claimed, attempt, err := executor.claim(ctx, taskID)
+	if err != nil || !claimed {
+		t.Fatalf("claim=%v err=%v", claimed, err)
+	}
+	snap, err := executor.loadSnapshot(ctx, taskID, attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before int
+	if err := es.pool.QueryRow(ctx, "SELECT count(*) FROM product_image_assets WHERE product_id=$1", created.Product.ID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	result := EditResult{Bytes: snap.SourceBytes, MIME: snap.SourceMIME}
+	if err := executor.persistResult(ctx, snap, attempt, result); !apperr.IsNotFound(err) {
+		t.Fatalf("missing reservation accepted: %v", err)
+	}
+	var status, effect string
+	var asset *string
+	var after int
+	if err := es.pool.QueryRow(ctx, "SELECT t.status,t.result_asset_id,a.effect_result FROM local_image_edit_tasks t JOIN local_image_edit_provider_attempts a ON a.task_id=t.id AND a.attempt_id=$2 WHERE t.id=$1", taskID, attempt).Scan(&status, &asset, &effect); err != nil {
+		t.Fatal(err)
+	}
+	if err := es.pool.QueryRow(ctx, "SELECT count(*) FROM product_image_assets WHERE product_id=$1", created.Product.ID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" || asset != nil || effect != "pending" || after != before {
+		t.Fatalf("partial success status=%s asset=%v effect=%s assets=%d/%d", status, asset, effect, after, before)
+	}
+	merchantID := auth.MustDevMerchantID(t, es.db)
+	if err := executor.reserveEditQuota(ctx, merchantID, taskID, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.persistResult(ctx, snap, attempt, result); err != nil {
+		t.Fatal(err)
+	}
+	if hold := loadQuotaHold(t, es.db, merchantID, editQuotaKey(taskID, attempt)); hold.Status != quota.StatusSettled {
+		t.Fatalf("hold=%s", hold.Status)
+	}
+}

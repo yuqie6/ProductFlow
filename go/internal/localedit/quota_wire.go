@@ -59,7 +59,8 @@ func (e Executor) reserveEditQuota(ctx context.Context, merchantID, taskID, atte
 
 func (e Executor) settleEditQuota(ctx context.Context, merchantID, taskID, attemptID string) error {
 	key := editQuotaKey(taskID, attemptID)
-	return finalizeQuotaIgnoreMissing(e.quota().Settle(ctx, merchantID, key, localEditQuotaUnits))
+	_, _, err := e.quota().Settle(ctx, merchantID, key, localEditQuotaUnits)
+	return err
 }
 
 func (e Executor) markEditQuotaUnknown(ctx context.Context, merchantID, taskID, attemptID string) error {

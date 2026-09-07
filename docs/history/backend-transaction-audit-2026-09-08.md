@@ -39,7 +39,8 @@
 | Graph 提案 Service 未装配自身 Products，直接调用 Internal，Agent 调用者被迫理解 context 注入 | CreateAgentProposal 在 Service 入口使用已有依赖；删除 Agent 手动注入 | 原代码正常商家与跨商家均复现缺守卫；修复后提案落库且 live 图不变、跨商家 NotFound 且零写入、数据库插入故障原样返回且无部分修改 | `d27b6a66` |
 | Graph 图像/文稿 Provider 错误只留下统一 unknown 文案，原失败原因丢失 | 两种调用入口使用既有节点错误解释规则，将原因送入 markUnknownCommitted/markNodeUnknown | 原代码两个入口均复现原因丢失；修复后 run/node/effect 仍 unknown，节点与 effect 原因含调用失败细节，额度故障回滚语义不变 | `4216e3b0` |
 | 真实图像适配器和文稿 JSON 解码将原错误替换为无原因 unknown，导致 Graph 终态仍丢失证据 | providers 保留 Graph 分类和底层错误链；Graph 避免重复未知提示 | 四种适配错误和 JSON SyntaxError 原代码均复现；真实适配器经 Graph 执行后数据库保留 trace，重复投递不再调用 Provider | `d1e194c2` |
-| Graph effect 只记执行身份元数据，无法核对调用时的 typed request 与参考图字节 | callProvider/callImageProvider 持有同一个请求并直接传 Provider 方法；原 effect 记录完整请求字段、参考图元数据与 SHA-256 | Provider 内读取真实数据库，记录与收到的请求一致；256 KiB 参考图只存摘要，超限请求不写 intent/不占额度/不调用 Provider | 随本次提交 |
+| Graph effect 只记执行身份元数据，无法核对调用时的 typed request 与参考图字节 | callProvider/callImageProvider 持有同一个请求并直接传 Provider 方法；原 effect 记录完整请求字段、参考图元数据与 SHA-256 | Provider 内读取真实数据库，记录与收到的请求一致；256 KiB 参考图只存摘要，超限请求不写 intent/不占额度/不调用 Provider | `2610f2b0` |
+| 局部编辑成功结算容忍缺失 hold，可提交未结算资产及 succeeded | settleEditQuota 对唯一付费成功路径返回原额度错误；取消和未调用释放不扩改 | 原代码真实数据库复现缺 hold 仍成功；修复后资产/任务/attempt 回滚，补足原 attempt 预留后成功结算 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -60,7 +61,7 @@
 优先级按可能损害排序；修改频率与扩散范围目前只有静态调用者证据，没有生产统计。
 
 1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化已与结算同事务；明确失败终态额度已归入命令，付费成功结算已要求 hold；取消/未知/释放的缺失 hold 合同仍待核实；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 的精确绑定和缺失 hold 处理仍待核实。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
-2. **中：局部编辑 claimed 历史预留与缺失 hold 的合同。** 当前调用前预留已原子化；仍应检查恢复前已存在的 claimed + hold 是否可安全释放，以及 `finalizeQuotaIgnoreMissing` 对真实异常与合法未预留路径的区分。不能因夹具未建 hold 就放宽生产成功合同。
+2. **中：局部编辑 claimed 历史预留与缺失 hold 的合同。** 当前调用前预留已原子化；仍应检查恢复前已存在的 claimed + hold 是否可安全释放，以及 `finalizeQuotaIgnoreMissing` 对真实异常与合法未预留路径的区分。成功结算已在后续切片取消缺 hold 容忍；不能因夹具未建 hold 就放宽生产成功合同。
 3. **中：Graph context 服务依赖。** `WithProductGuard` 跨 product/recipe/agent 装配，形成编译期不可见的前置。候选方向是显式 Graph 用例依赖与已有事务入口；必须维持跨商家统一 404、事务组合及 worker 无 HTTP 商家上下文的执行合同。未实施，不把风格判断升级成安全缺陷。
 4. **可选：节点执行职责与跨生成入口共享机制。** 保留三种不同的业务计费身份和 Provider 合同；只在同一规则的重复已导致漂移时抽取 owner。当前不建立统一生成框架，也不因 `execute_node.go` 较长拆文件。Graph 的 cook、效果记录、资产晋升、交付组合是后续逐边界验证对象。
 
@@ -165,3 +166,10 @@ Graph 请求证据切片由本任务主代理负责，范围为 `graph/execute_n
 新数据库回归首次因 recovery 夹具从默认库取得商家 ID 而在隔离库外键失败；修复夹具为可显式传 merchantID，原调用者仍消费原默认商家夹具。四个独立 pf_reqtrace_* 数据库场景通过（5.044 秒）：文稿/图像的正常与超限输入。正常场景在 Provider 回调中读取已提交 intent，完整比较 typed request、实际参考图 hash、记录 hash；超限场景保持 claimed、零 intent、零 hold 和零 Provider 调用。256 KiB 参考图不会触发 JSON 大小限制；非字节请求证据仍受既有 64 KiB 上限约束，超出时明确拒绝调用，未评估生产请求大小分布。记录对应 Graph Provider 接口输入，不代表 providers 内部编译后 HTTP 正文或最终生效模型参数已全部留存。
 
 请求证据切片最终当前工作区 Graph 整包通过（91.740 秒），`go vet -stdversion=false ./internal/graph`、完整 diff 自审与 `just docs-check` 通过。首次整包停滞在 TestImageNodeRejectsInsufficientQuota，主代理仅对本任务测试 PID 611052 发 SIGQUIT 采栈并终止，记为 FAIL；栈包含并发文稿 persistContentArtifact 的 run 锁和 LoadFactSet 读取，尚无稳定因果复现。该用例单独重跑通过（2.205 秒），带 180 秒超时的整包再次通过；不据此声明并发停滞已修复。复核首轮最后观察到的独立库已不存在，无需删除其他数据库。未修改共享运行服务或其他任务资源。
+
+
+Graph 停滞跟进：当前调用链保持文稿采用先 run 后 graph，尚未发现足以解释旧栈停滞的确定性锁序反转。`TestImageNodeRejectsInsufficientQuota -count=10 -timeout 60s` 全部通过（14.852 秒），没有新增稳定复现，不修改并发控制；既有停滞仍为待验证风险。停止无新证据的重复尝试，保留原栈和复现命令。
+
+局部编辑成功 hold 切片由本任务主代理负责，范围为 `localedit/quota_wire.go` 与 [成功预留合同回归](../../go/internal/localedit/quota_wire_test.go)。当前唯一成功入口 persistResult 必经付费 Edit，没有 Graph 本地主体合成例外；取消/失败前未 Reserve 的合法路径不受此次改动影响。真实 PostgreSQL 原代码复现缺失 hold 的持久化返回 nil；修复后返回 NotFound，商品资产数不变、任务保持 running 且无 result_asset_id、attempt 保持 pending。为同一 attempt 补充预留后调用相同成功边界可完成结算。该负例验证持久化不变量，不声称已复现生产数据丢失。
+
+局部编辑成功 hold 切片当前工作区 localedit 整包通过（4.502 秒），标准 go vet 通过。主代理自审完整 diff，取消/未知/释放合同未扩大。共享工作区 docs-check 因账户任务正在归档、架构文档链接尚不存在的 saas-account-team 归档文件而失败；在隔离基线 2610f2b0 加本切片三个文件执行 docs-check 通过，确认临时 checkout 仅有本切片后已清理。共享文档失败不计为通过，也未修改其他任务文档。
