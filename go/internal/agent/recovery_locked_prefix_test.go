@@ -2,15 +2,19 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yuqie6/productflow/internal/platform/testdb"
 )
 
 func TestExpiredRecoveryAdvancesPastLockedProjectionPrefix(t *testing.T) {
-	as := newAgentServer(t, mockGateway{}, "tok")
-	drainAgentRecovery(t, as)
+	// This scanner counts all expired executions; keep unrelated leases out of its exact prefix.
+	pool, gdb := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_locked_prefix_%d", time.Now().UnixNano()))
+	as := newAgentServerOnDB(t, mockGateway{}, "tok", pool, gdb)
 	ctx := context.Background()
 	turns := make([]claimedJournalTurn, 26)
 	ids := make([]string, 0, 25)

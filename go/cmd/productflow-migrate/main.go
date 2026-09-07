@@ -1,6 +1,6 @@
 // Command productflow-migrate 按 schema 权威升级 PostgreSQL：CreateTable/AddColumn 加 ExtraDDL，不用 AutoMigrate。
 //
-// 需要 DATABASE_URL。不会删退役表/列。跑完会回填 graph document_origin。开发环境用 `just go-migrate`。
+// 需要 DATABASE_URL。身份收敛的旧 memberships 表清理随 schema.Apply 事务完成。跑完会回填 graph document_origin。开发环境用 `just go-migrate`。
 // 改表先改 go/internal/platform/db/schema 模型与 ExtraDDL，再跑本命令；不要手写 AutoMigrate。
 package main
 

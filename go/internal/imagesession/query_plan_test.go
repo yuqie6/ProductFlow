@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"gorm.io/gorm"
@@ -24,9 +25,10 @@ func TestImageSessionQueryPlanTargetScale(t *testing.T) {
 	}
 	name := fmt.Sprintf("pf_iplan_%d", time.Now().UnixNano()%1_000_000_000)
 	pool, gdb := testdb.IsolatedMigrated(t, name)
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	merchantID := auth.MustDevMerchantID(t, gdb)
+	ctx, cancel := context.WithTimeout(auth.WithMerchantID(context.Background(), merchantID), 4*time.Minute)
 	defer cancel()
-	seedTargetScaleImageSessions(t, ctx, pool)
+	seedTargetScaleImageSessions(t, ctx, pool, merchantID)
 
 	listPlan := testdb.ExplainAnalyze(t, ctx, pool, `
 		SELECT id, title, created_at, updated_at
@@ -123,16 +125,17 @@ func TestImageSessionQueryPlanTargetScale(t *testing.T) {
 	`, queryPlanHotSessionID)
 }
 
-func seedTargetScaleImageSessions(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func seedTargetScaleImageSessions(t *testing.T, ctx context.Context, pool *pgxpool.Pool, merchantID string) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO image_sessions (id, title, created_at, updated_at)
+		INSERT INTO image_sessions (id, merchant_id, title, created_at, updated_at)
 		SELECT 'plan-img-' || lpad(g::text, 5, '0'),
+		       $1,
 		       'query-plan',
 		       NOW() - (g * INTERVAL '1 second'),
 		       NOW() - (g * INTERVAL '1 second')
 		FROM generate_series(0, 24999) AS g
-	`); err != nil {
+	`, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

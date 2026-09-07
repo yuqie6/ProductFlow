@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
@@ -73,33 +74,9 @@ func RequireOperator() gin.HandlerFunc {
 	}
 }
 
-// RequireOperatorIf 在 reader 返回 required=true 时要求站点 Operator；未开启门禁时放行（本地开放模式）。
-func RequireOperatorIf(reader func(c *gin.Context) (required bool, err error)) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		required, err := reader(c)
-		if err != nil {
-			httpx.AbortDetail(c, http.StatusInternalServerError, "读取运行时设置失败")
-			return
-		}
-		if !required {
-			c.Next()
-			return
-		}
-		principal := PrincipalFrom(c)
-		if principal == nil {
-			httpx.Unauthorized(c, "请先登录")
-			return
-		}
-		if !principal.IsOperator {
-			httpx.AbortDetail(c, http.StatusForbidden, "仅站点 Operator 可访问")
-			return
-		}
-		c.Next()
-	}
-}
-
-// RequireMembership 校验当前用户对 merchantID 有有效成员关系；请求中的商家 ID 不授予权限。
-func (h HTTP) RequireMembership(merchantIDParam string) gin.HandlerFunc {
+// RequireOwnMerchant 校验当前用户直接归属 merchantID，并把该归属挂到请求 context。
+// 请求中的商家 ID 只用于确认 URL 资源属于本人，不会改变账号的商家归属。
+func (h HTTP) RequireOwnMerchant(merchantIDParam string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		principal := PrincipalFrom(c)
 		if principal == nil {
@@ -111,12 +88,42 @@ func (h HTTP) RequireMembership(merchantIDParam string) gin.HandlerFunc {
 			httpx.AbortDetail(c, http.StatusBadRequest, "缺少商家 ID")
 			return
 		}
-		membership, err := h.Service.ActiveMembership(c.Request.Context(), principal.UserID, merchantID)
-		if err != nil {
+		if err := h.svc().RequireOwnMerchant(c.Request.Context(), principal.UserID, merchantID); err != nil {
 			httpx.AbortErr(c, err)
 			return
 		}
-		c.Set("productflow.auth.membership", membership)
+		c.Set(ginMerchantKey, merchantID)
+		c.Request = c.Request.WithContext(WithMerchantID(c.Request.Context(), merchantID))
+		c.Next()
+	}
+}
+
+// RequireOperatorMerchantTarget authorizes an Operator request against an
+// explicitly named merchant and scopes only that request to the target.
+// It does not grant the target merchant's ordinary UI permissions to the
+// Operator.
+func (h HTTP) RequireOperatorMerchantTarget(merchantIDParam string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		principal := PrincipalFrom(c)
+		if principal == nil {
+			httpx.Unauthorized(c, "请先登录")
+			return
+		}
+		if !principal.IsOperator {
+			httpx.AbortDetail(c, http.StatusForbidden, "仅站点 Operator 可访问")
+			return
+		}
+		merchantID := strings.TrimSpace(c.Param(merchantIDParam))
+		if merchantID == "" {
+			httpx.AbortDetail(c, http.StatusBadRequest, "缺少商家 ID")
+			return
+		}
+		if _, err := h.svc().MerchantStatus(c.Request.Context(), merchantID); err != nil {
+			httpx.AbortErr(c, err)
+			return
+		}
+		c.Set(ginMerchantKey, merchantID)
+		c.Request = c.Request.WithContext(WithMerchantID(c.Request.Context(), merchantID))
 		c.Next()
 	}
 }

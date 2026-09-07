@@ -17,6 +17,7 @@ import (
 // B4：同商 from-product/session、workflow sync 成功；跨商绑定拒绝且无半写入（404 CrossMerchantDetail）。
 func TestMerchantLibraryBindingIsolation(t *testing.T) {
 	ls := newLibraryServer(t)
+	merchantID := auth.MustDevMerchantID(t, ls.db)
 
 	ownProduct := ls.createDirect(t, "本商图库绑定-"+clockid.New())
 	graphID, _ := ownProduct.Graph["id"].(string)
@@ -34,10 +35,11 @@ func TestMerchantLibraryBindingIsolation(t *testing.T) {
 
 	sessionID := clockid.New()
 	ownSessionAssetID := clockid.New()
-	if _, err := ls.pool.Exec(context.Background(), `
-		INSERT INTO image_sessions (id, title, created_at, updated_at)
-		VALUES ($1, '本商会话绑定', NOW(), NOW())
-	`, sessionID); err != nil {
+	fixtureCtx := auth.WithMerchantID(context.Background(), merchantID)
+	if _, err := ls.pool.Exec(fixtureCtx, `
+		INSERT INTO image_sessions (id, merchant_id, title, created_at, updated_at)
+		VALUES ($1, $2, '本商会话绑定', NOW(), NOW())
+	`, sessionID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ls.pool.Exec(context.Background(), `

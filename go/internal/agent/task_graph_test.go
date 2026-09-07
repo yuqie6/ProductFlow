@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -15,9 +16,10 @@ func TestConfirmWorkflowRunRequestKeepsProductGoalOpen(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	productID := clockid.New()
 	graphID := clockid.New()
+	merchantID := auth.MustDevMerchantID(t, as.db)
 	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, 'Goal 商品', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES ($1, $2, 'Goal 商品', NOW(), NOW())
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := as.pool.Exec(context.Background(), `
@@ -162,9 +164,10 @@ func TestPrepareEmptyGraphConflicts(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	productID := clockid.New()
 	graphID := clockid.New()
+	merchantID := auth.MustDevMerchantID(t, as.db)
 	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '空图', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES ($1, $2, '空图', NOW(), NOW())
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := as.pool.Exec(context.Background(), `
@@ -193,6 +196,7 @@ func TestPrepareEmptyGraphConflicts(t *testing.T) {
 
 func TestConfirmOrganizationDraftCompletesGlobalTask(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "")
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
 	var sess SessionResponse
@@ -209,8 +213,8 @@ func TestConfirmOrganizationDraftCompletesGlobalTask(t *testing.T) {
 
 	payload := libraryRenamePayload(t, as)
 	var revID string
-	err := tx.WithGorm(context.Background(), as.db, func(pgxTx *gorm.DB) error {
-		id, err := as.svc.Library.AppendOrganizationDraftRevisionTx(context.Background(), pgxTx, convID, payload, "", "")
+	err := tx.WithGorm(ctx, as.db, func(pgxTx *gorm.DB) error {
+		id, err := as.svc.Library.AppendOrganizationDraftRevisionTx(ctx, pgxTx, convID, payload, "", "")
 		revID = id
 		return err
 	})

@@ -10,7 +10,7 @@ import "time"
 // 保存商品工作流或全局 Dock 的 Agent 对话投影；Turn journal 挂在其上。
 type AgentConversations struct {
 	ID                     string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID             string    `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID             string    `gorm:"column:merchant_id;type:varchar(36);not null"`
 	ProductID              *string   `gorm:"column:product_id;type:varchar(36)"`
 	HarnessRunID           string    `gorm:"column:harness_run_id;type:varchar(120);not null"`
 	Status                 string    `gorm:"column:status;type:agentconversationstatus;not null"`
@@ -52,7 +52,7 @@ func (AgentPageContextSnapshots) TableName() string { return "agent_page_context
 // 长期交流容器：画布会话属于一个商品，全局 Dock 会话不属于商品。
 type AgentSessions struct {
 	ID         string     `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID string     `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID string     `gorm:"column:merchant_id;type:varchar(36);not null"`
 	Title      string     `gorm:"column:title;type:varchar(160);not null"`
 	Status     string     `gorm:"column:status;type:agentsessionstatus;not null"`
 	ArchivedAt *time.Time `gorm:"column:archived_at;type:timestamptz"`
@@ -69,7 +69,7 @@ func (AgentSessions) TableName() string { return "agent_sessions" }
 // 一条业务 Goal；harness_run_id 是持久化的运行身份，完成只能走用户 complete/cancel。
 type AgentTasks struct {
 	ID             string     `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID     string     `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID     string     `gorm:"column:merchant_id;type:varchar(36);not null"`
 	SessionID      string     `gorm:"column:session_id;type:varchar(36);not null"`
 	ConversationID *string    `gorm:"column:conversation_id;type:varchar(36)"`
 	ProductID      *string    `gorm:"column:product_id;type:varchar(36)"`
@@ -484,7 +484,7 @@ func (ImageSessionRounds) TableName() string { return "image_session_rounds" }
 // 连续生图会话容器，不等于 AgentSession。
 type ImageSessions struct {
 	ID         string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID string    `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID string    `gorm:"column:merchant_id;type:varchar(36);not null"`
 	Title      string    `gorm:"column:title;type:varchar(255);not null"`
 	CreatedAt  time.Time `gorm:"column:created_at;type:timestamptz;not null"`
 	UpdatedAt  time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
@@ -640,7 +640,7 @@ func (MediaLibraryAssetTags) TableName() string { return "media_library_asset_ta
 // 跨会话可归档的全局图库素材身份，不拥有第二份 bytes。
 type MediaLibraryAssets struct {
 	ID                        string     `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID                string     `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID                string     `gorm:"column:merchant_id;type:varchar(36);not null"`
 	MediaObjectID             string     `gorm:"column:media_object_id;type:varchar(36);not null"`
 	SourceType                string     `gorm:"column:source_type;type:varchar(40);not null"`
 	SourceID                  string     `gorm:"column:source_id;type:varchar(36);not null"`
@@ -664,7 +664,7 @@ func (MediaLibraryAssets) TableName() string { return "media_library_assets" }
 // 从商品收藏到全局图库的幂等键。
 type MediaLibraryCollectionKeys struct {
 	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID     string    `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID     string    `gorm:"column:merchant_id;type:varchar(36);not null"`
 	ProductID      string    `gorm:"column:product_id;type:varchar(36);not null"`
 	IdempotencyKey string    `gorm:"column:idempotency_key;type:varchar(200);not null"`
 	RequestHash    string    `gorm:"column:request_hash;type:varchar(64);not null"`
@@ -677,7 +677,7 @@ func (MediaLibraryCollectionKeys) TableName() string { return "media_library_col
 // 全局图库一层用户文件夹。
 type MediaLibraryFolders struct {
 	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID     string    `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID     string    `gorm:"column:merchant_id;type:varchar(36);not null"`
 	Name           string    `gorm:"column:name;type:varchar(120);not null"`
 	NormalizedName string    `gorm:"column:normalized_name;type:varchar(120);not null"`
 	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null"`
@@ -690,7 +690,7 @@ func (MediaLibraryFolders) TableName() string { return "media_library_folders" }
 // 全局图库标签。
 type MediaLibraryTags struct {
 	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID     string    `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID     string    `gorm:"column:merchant_id;type:varchar(36);not null"`
 	Name           string    `gorm:"column:name;type:varchar(80);not null"`
 	NormalizedName string    `gorm:"column:normalized_name;type:varchar(80);not null"`
 	CreatedAt      time.Time `gorm:"column:created_at;type:timestamptz;not null"`
@@ -703,7 +703,7 @@ func (MediaLibraryTags) TableName() string { return "media_library_tags" }
 // 直接上传到全局图库的幂等键。
 type MediaLibraryUploadKeys struct {
 	ID             string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID     string    `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID     string    `gorm:"column:merchant_id;type:varchar(36);not null"`
 	IdempotencyKey string    `gorm:"column:idempotency_key;type:varchar(200);not null"`
 	RequestHash    string    `gorm:"column:request_hash;type:varchar(64);not null"`
 	AssetIdsJSON   string    `gorm:"column:asset_ids_json;type:text;not null"`
@@ -778,22 +778,22 @@ func (ProductImageAssets) TableName() string { return "product_image_assets" }
 // Products 对应表 products。
 // 商品主档：名称、intake、封面与当前 facts 版本。
 type Products struct {
-	CreationIdempotencyKey             *string   `gorm:"column:creation_idempotency_key;type:varchar(120)"`
-	CreationRequestHash                *string   `gorm:"column:creation_request_hash;type:varchar(64)"`
-	ID                                 string    `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID                         string    `gorm:"column:merchant_id;type:varchar(36)"`
-	Name                               string    `gorm:"column:name;type:varchar(255);not null"`
-	Category                           *string   `gorm:"column:category;type:varchar(120)"`
-	Price                              *string   `gorm:"column:price;type:numeric(10,2)"`
-	SourceNote                         *string   `gorm:"column:source_note;type:text"`
-	BrandID                            *string   `gorm:"column:brand_id;type:varchar(36)"`
-	CreatedAt                          time.Time `gorm:"column:created_at;type:timestamptz;not null"`
-	UpdatedAt                          time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
-	CoverImageAssetID                  *string   `gorm:"column:cover_image_asset_id;type:varchar(36)"`
-	CurrentFactSetVersionID            *string   `gorm:"column:current_fact_set_version_id;type:varchar(36)"`
-	CurrentDeliveryAdoptionVersionID   *string   `gorm:"column:current_delivery_adoption_version_id;type:varchar(36)"`
-	IntakeSchemaVersion                *int      `gorm:"column:intake_schema_version;type:integer"`
-	IntakeJSON                         *string   `gorm:"column:intake_json;type:json"`
+	CreationIdempotencyKey           *string   `gorm:"column:creation_idempotency_key;type:varchar(120)"`
+	CreationRequestHash              *string   `gorm:"column:creation_request_hash;type:varchar(64)"`
+	ID                               string    `gorm:"column:id;type:varchar(36);primaryKey"`
+	MerchantID                       string    `gorm:"column:merchant_id;type:varchar(36);not null"`
+	Name                             string    `gorm:"column:name;type:varchar(255);not null"`
+	Category                         *string   `gorm:"column:category;type:varchar(120)"`
+	Price                            *string   `gorm:"column:price;type:numeric(10,2)"`
+	SourceNote                       *string   `gorm:"column:source_note;type:text"`
+	BrandID                          *string   `gorm:"column:brand_id;type:varchar(36)"`
+	CreatedAt                        time.Time `gorm:"column:created_at;type:timestamptz;not null"`
+	UpdatedAt                        time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
+	CoverImageAssetID                *string   `gorm:"column:cover_image_asset_id;type:varchar(36)"`
+	CurrentFactSetVersionID          *string   `gorm:"column:current_fact_set_version_id;type:varchar(36)"`
+	CurrentDeliveryAdoptionVersionID *string   `gorm:"column:current_delivery_adoption_version_id;type:varchar(36)"`
+	IntakeSchemaVersion              *int      `gorm:"column:intake_schema_version;type:integer"`
+	IntakeJSON                       *string   `gorm:"column:intake_json;type:json"`
 }
 
 func (Products) TableName() string { return "products" }
@@ -864,7 +864,7 @@ func (VisualSystemVersions) TableName() string { return "visual_system_versions"
 // 可归档的视觉系统主档。
 type VisualSystems struct {
 	ID         string     `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID string     `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID string     `gorm:"column:merchant_id;type:varchar(36);not null"`
 	Name       string     `gorm:"column:name;type:varchar(255);not null"`
 	ArchivedAt *time.Time `gorm:"column:archived_at;type:timestamptz"`
 	CreatedAt  time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
@@ -1131,7 +1131,7 @@ func (WorkflowRecipeVersions) TableName() string { return "workflow_recipe_versi
 // 可复用工作流结构的主档，不等于收藏画廊。
 type WorkflowRecipes struct {
 	ID               string     `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID       string     `gorm:"column:merchant_id;type:varchar(36)"`
+	MerchantID       string     `gorm:"column:merchant_id;type:varchar(36);not null"`
 	Kind             string     `gorm:"column:kind;type:workflowrecipekind;not null"`
 	CurrentVersionID *string    `gorm:"column:current_version_id;type:varchar(36)"`
 	ArchivedAt       *time.Time `gorm:"column:archived_at;type:timestamptz"`
@@ -1148,7 +1148,6 @@ func AllModels() []any {
 	return []any{
 		&Users{},
 		&Merchants{},
-		&Memberships{},
 		&RegistrationChallenges{},
 		&AuthSessions{},
 		&QuotaPriceVersions{},

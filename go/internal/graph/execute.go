@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -81,6 +82,12 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 		defer cancelRelease()
 		_, _ = releaseGraphRunLease(releaseCtx, e.DB, runID, token)
 	}()
+	merchantID, err := merchantIDForGraphRun(ctx, e.DB, runID)
+	if err != nil {
+		return err
+	}
+	ctx = auth.WithMerchantID(ctx, merchantID)
+	leaseCtx = auth.WithMerchantID(leaseCtx, merchantID)
 
 	if err := e.executeLoop(leaseCtx, runID); err != nil {
 		select {

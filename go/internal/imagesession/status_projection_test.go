@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"gorm.io/gorm"
@@ -17,9 +18,10 @@ import (
 
 func TestImageSessionStatusSkipsRawProviderPayloads(t *testing.T) {
 	ss := newSessionServer(t)
-	ctx := context.Background()
+	merchantID := auth.MustDevMerchantID(t, ss.db)
+	ctx := auth.WithMerchantID(context.Background(), merchantID)
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	session := schema.ImageSessions{ID: clockid.New(), Title: "status projection", CreatedAt: now, UpdatedAt: now}
+	session := schema.ImageSessions{ID: clockid.New(), MerchantID: merchantID, Title: "status projection", CreatedAt: now, UpdatedAt: now}
 	if err := ss.db.Create(&session).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -149,8 +151,9 @@ func TestImageSessionQueueOverviewOnlyForReturnedTasks(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ss := newSessionServer(t)
+			merchantID := auth.MustDevMerchantID(t, ss.db)
 			now := time.Now().UTC()
-			session := schema.ImageSessions{ID: clockid.New(), Title: tc.name, CreatedAt: now, UpdatedAt: now}
+			session := schema.ImageSessions{ID: clockid.New(), MerchantID: merchantID, Title: tc.name, CreatedAt: now, UpdatedAt: now}
 			if err := ss.db.Create(&session).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -179,14 +182,15 @@ func TestImageSessionQueueOverviewOnlyForReturnedTasks(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = ss.db.Callback().Query().Remove(callback) })
 			var tasks []TaskResponse
+			ctx := auth.WithMerchantID(context.Background(), merchantID)
 			if tc.detail {
-				detail, err := ss.svc.Get(context.Background(), session.ID)
+				detail, err := ss.svc.Get(ctx, session.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
 				tasks = detail.GenerationTasks
 			} else {
-				status, err := ss.svc.Status(context.Background(), session.ID)
+				status, err := ss.svc.Status(ctx, session.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -231,10 +235,11 @@ func TestImageSessionStatusActiveFlagMatchesTaskSnapshot(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			ss := newSessionServer(t)
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			merchantID := auth.MustDevMerchantID(t, ss.db)
+			ctx, cancel := context.WithTimeout(auth.WithMerchantID(context.Background(), merchantID), 10*time.Second)
 			defer cancel()
 			now := time.Now().UTC()
-			session := schema.ImageSessions{ID: clockid.New(), Title: name, CreatedAt: now, UpdatedAt: now}
+			session := schema.ImageSessions{ID: clockid.New(), MerchantID: merchantID, Title: name, CreatedAt: now, UpdatedAt: now}
 			if err := ss.db.WithContext(ctx).Create(&session).Error; err != nil {
 				t.Fatal(err)
 			}

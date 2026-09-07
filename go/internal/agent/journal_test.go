@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
@@ -16,9 +17,10 @@ func TestConfirmWorkflowRunRequestWritesApprovalResolved(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	productID := clockid.New()
 	graphID := clockid.New()
+	merchantID := auth.MustDevMerchantID(t, as.db)
 	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '确认商品', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES ($1, $2, '确认商品', NOW(), NOW())
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := as.pool.Exec(context.Background(), `
@@ -111,9 +113,10 @@ func TestSubmitTurnRejectedWhileAwaitingConfirmation(t *testing.T) {
 func seedProductGraphConversation(t *testing.T, as *agentServer) (productID, graphID, convID string) {
 	t.Helper()
 	productID = clockid.New()
+	merchantID := auth.MustDevMerchantID(t, as.db)
 	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '提案商品', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES ($1, $2, '提案商品', NOW(), NOW())
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	created := as.do(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows", nil, "", nil)
@@ -164,7 +167,8 @@ func seedPendingGraphProposalTurn(t *testing.T, as *agentServer, productID, grap
 	if conversation.SessionID == nil {
 		t.Fatal("missing session")
 	}
-	task, err := as.svc.CreateTask(context.Background(), *conversation.SessionID, "调整工作流", "提交并处理图提案", &convID)
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
+	task, err := as.svc.CreateTask(ctx, *conversation.SessionID, "调整工作流", "提交并处理图提案", &convID)
 	if err != nil {
 		t.Fatal(err)
 	}

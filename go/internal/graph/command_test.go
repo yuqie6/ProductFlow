@@ -8,6 +8,7 @@ import (
 
 	sqldb "database/sql"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -132,9 +133,9 @@ func TestWriteTxProductSourceTemplate(t *testing.T) {
 
 	productID := clockid.New()
 	_, err := pfdb.Exec(ctx, tx, `
-		INSERT INTO products (id, name, created_at, updated_at)
-		VALUES ($1, $2, NOW(), NOW())
-	`, productID, "名称出生商品")
+		INSERT INTO products (id, name, created_at, updated_at, merchant_id)
+		VALUES ($1, $2, NOW(), NOW(), $3)
+	`, productID, "名称出生商品", auth.MustDevMerchantID(t, tx))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,9 +234,9 @@ func insertCommandProduct(t *testing.T, ctx context.Context, tx *gorm.DB, name s
 	t.Helper()
 	productID := clockid.New()
 	_, err := pfdb.Exec(ctx, tx, `
-		INSERT INTO products (id, name, created_at, updated_at)
-		VALUES ($1, $2, NOW(), NOW())
-	`, productID, name)
+		INSERT INTO products (id, name, created_at, updated_at, merchant_id)
+		VALUES ($1, $2, NOW(), NOW(), $3)
+	`, productID, name, auth.MustDevMerchantID(t, tx))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 )
 
@@ -17,10 +18,10 @@ func TestAgentSessionQueryPlanTargetScale(t *testing.T) {
 		t.Skip("set PRODUCTFLOW_RUN_AGENT_QUERY_PLAN=1 to run the target-scale PostgreSQL plan gate")
 	}
 	name := fmt.Sprintf("pf_aplan_%d", time.Now().UnixNano()%1_000_000_000)
-	pool, _ := testdb.IsolatedMigrated(t, name)
+	pool, db := testdb.IsolatedMigrated(t, name)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	seedTargetScaleAgentSessions(t, ctx, pool)
+	seedTargetScaleAgentSessions(t, ctx, pool, auth.MustDevMerchantID(t, db))
 
 	dockPlan := testdb.ExplainAnalyze(t, ctx, pool, `
 		SELECT id
@@ -91,17 +92,18 @@ func TestAgentSessionQueryPlanTargetScale(t *testing.T) {
 	testdb.AssertNoSeqScan(t, "conversation counts", countPlan, 20)
 }
 
-func seedTargetScaleAgentSessions(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func seedTargetScaleAgentSessions(t *testing.T, ctx context.Context, pool *pgxpool.Pool, merchantID string) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO products (id, name, created_at, updated_at)
-		VALUES ('plan-product-0', 'query-plan-product', NOW(), NOW())
-	`); err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at)
+		VALUES ('plan-product-0', $1, 'query-plan-product', NOW(), NOW())
+	`, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO agent_sessions (id, title, status, created_at, updated_at, activity_at, summary, product_id)
+		INSERT INTO agent_sessions (id, merchant_id, title, status, created_at, updated_at, activity_at, summary, product_id)
 		SELECT 'plan-sess-' || lpad(g::text, 5, '0'),
+		       $1,
 		       'query-plan',
 		       'active',
 		       NOW() - (g * INTERVAL '1 second'),
@@ -110,12 +112,13 @@ func seedTargetScaleAgentSessions(t *testing.T, ctx context.Context, pool *pgxpo
 		       'query-plan',
 		       NULL
 		FROM generate_series(0, 19999) AS g
-	`); err != nil {
+	`, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO agent_sessions (id, title, status, created_at, updated_at, activity_at, summary, product_id)
+		INSERT INTO agent_sessions (id, merchant_id, title, status, created_at, updated_at, activity_at, summary, product_id)
 		SELECT 'plan-psess-' || lpad(g::text, 5, '0'),
+		       $1,
 		       'query-plan-product',
 		       'active',
 		       NOW() - (g * INTERVAL '1 second'),
@@ -124,14 +127,15 @@ func seedTargetScaleAgentSessions(t *testing.T, ctx context.Context, pool *pgxpo
 		       'query-plan',
 		       'plan-product-0'
 		FROM generate_series(0, 4999) AS g
-	`); err != nil {
+	`, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO agent_conversations (
-			id, harness_run_id, status, created_at, updated_at, session_id, scope_type
+			id, merchant_id, harness_run_id, status, created_at, updated_at, session_id, scope_type
 		)
 		SELECT 'plan-conv-' || lpad(g::text, 5, '0'),
+		       $1,
 		       'plan-conv-' || lpad(g::text, 5, '0'),
 		       'collecting',
 		       NOW() - (g * INTERVAL '1 second'),
@@ -139,14 +143,15 @@ func seedTargetScaleAgentSessions(t *testing.T, ctx context.Context, pool *pgxpo
 		       'plan-sess-' || lpad(g::text, 5, '0'),
 		       'global'
 		FROM generate_series(0, 19999) AS g
-	`); err != nil {
+	`, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO agent_conversations (
-			id, product_id, harness_run_id, status, created_at, updated_at, session_id, scope_type
+			id, merchant_id, product_id, harness_run_id, status, created_at, updated_at, session_id, scope_type
 		)
 		SELECT 'plan-pconv-' || lpad(g::text, 5, '0'),
+		       $1,
 		       'plan-product-0',
 		       'plan-pconv-' || lpad(g::text, 5, '0'),
 		       'collecting',
@@ -155,7 +160,7 @@ func seedTargetScaleAgentSessions(t *testing.T, ctx context.Context, pool *pgxpo
 		       'plan-psess-' || lpad(g::text, 5, '0'),
 		       'product_workflow'
 		FROM generate_series(0, 4999) AS g
-	`); err != nil {
+	`, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `ANALYZE agent_sessions; ANALYZE agent_conversations`); err != nil {

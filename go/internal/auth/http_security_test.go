@@ -46,15 +46,28 @@ func TestTwoAuthHTTPInstancesShareRedisBudgetAndReadsSurviveRedisClose(t *testin
 	}
 	userID := clockid.New()
 	createdUserIDs := []string{userID}
+	createdMerchantIDs := []string{}
 	t.Cleanup(func() {
 		if err := db.Where("id IN ?", createdUserIDs).Delete(&schema.Users{}).Error; err != nil {
 			t.Errorf("cleanup security users: %v", err)
 		}
+		if err := db.Where("id IN ?", createdMerchantIDs).Delete(&schema.Merchants{}).Error; err != nil {
+			t.Errorf("cleanup security merchants: %v", err)
+		}
 	})
 	now := time.Now().UTC()
+	merchant := schema.Merchants{
+		ID: clockid.New(), Name: "security-merchant-" + randomTestSuffix(), Status: auth.MerchantStatusActive,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&merchant).Error; err != nil {
+		t.Fatal(err)
+	}
+	createdMerchantIDs = append(createdMerchantIDs, merchant.ID)
 	if err := db.Create(&schema.Users{
 		ID: userID, Email: email, PasswordHash: string(hash), DisplayName: "security", Status: auth.UserStatusActive,
-		CreatedAt: now, UpdatedAt: now,
+		MerchantID: &merchant.ID,
+		CreatedAt:  now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -135,9 +148,18 @@ func TestTwoAuthHTTPInstancesShareRedisBudgetAndReadsSurviveRedisClose(t *testin
 	}
 	readUserID := clockid.New()
 	createdUserIDs = append(createdUserIDs, readUserID)
+	readMerchant := schema.Merchants{
+		ID: clockid.New(), Name: "read-merchant-" + randomTestSuffix(), Status: auth.MerchantStatusActive,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&readMerchant).Error; err != nil {
+		t.Fatal(err)
+	}
+	createdMerchantIDs = append(createdMerchantIDs, readMerchant.ID)
 	if err := db.Create(&schema.Users{
 		ID: readUserID, Email: readEmail, PasswordHash: string(readHash), DisplayName: "read", Status: auth.UserStatusActive,
-		CreatedAt: now, UpdatedAt: now,
+		MerchantID: &readMerchant.ID,
+		CreatedAt:  now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
@@ -35,21 +36,83 @@ func (s Service) requireDB() error {
 	return nil
 }
 
-// Principal 是已认证会话投影；商家权限另查 Membership。
+// Principal 是已认证会话投影。普通账号的商家归属直接来自 users.merchant_id；
+// Operator 的 MerchantID 可为空，且不影响其独立的跨商管理权限。
 type Principal struct {
 	UserID      string
 	SessionID   string
 	Email       string
 	DisplayName string
 	IsOperator  bool
+	MerchantID  *string
 }
 
-type MembershipView struct {
-	MerchantID     string `json:"merchant_id"`
-	MerchantName   string `json:"merchant_name"`
-	Role           string `json:"role"`
-	Status         string `json:"status"`
-	MerchantStatus string `json:"merchant_status"`
+// MerchantView 是会话与直接商家归属的稳定投影。
+type MerchantView struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+const (
+	merchantListDefaultPageSize = 20
+	merchantListMaxPageSize     = 100
+	merchantListMaxPage         = 100000
+)
+
+// MerchantPage 是 Operator 商家发现接口的有界列表投影。
+type MerchantPage struct {
+	Items    []MerchantView `json:"items"`
+	Total    int64          `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"page_size"`
+}
+
+type principalRow struct {
+	SessionID   string
+	UserID      string
+	Email       string
+	DisplayName string
+	IsOperator  bool
+	MerchantID  sql.NullString
+	UserStatus  string
+	ExpiresAt   time.Time
+	RevokedAt   *time.Time
+}
+
+type userRow struct {
+	ID           string
+	Email        string
+	PasswordHash string
+	DisplayName  string
+	IsOperator   bool
+	MerchantID   sql.NullString
+	Status       string
+}
+
+func nullableID(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	id := strings.TrimSpace(value.String)
+	if id == "" {
+		return nil
+	}
+	return &id
+}
+
+func createUser(gdb *gorm.DB, id, email, passwordHash, displayName string, operator bool, status string, now time.Time, merchantID *string) error {
+	return gdb.Table("users").Create(map[string]any{
+		"id":            id,
+		"email":         email,
+		"password_hash": passwordHash,
+		"display_name":  displayName,
+		"is_operator":   operator,
+		"status":        status,
+		"merchant_id":   merchantID,
+		"created_at":    now,
+		"updated_at":    now,
+	}).Error
 }
 
 func (s Service) UserCount(ctx context.Context) (int64, error) {
@@ -58,15 +121,6 @@ func (s Service) UserCount(ctx context.Context) (int64, error) {
 	}
 	var n int64
 	err := s.DB.WithContext(ctx).Model(&schema.Users{}).Count(&n).Error
-	return n, err
-}
-
-func (s Service) MerchantCount(ctx context.Context) (int64, error) {
-	if err := s.requireDB(); err != nil {
-		return 0, err
-	}
-	var n int64
-	err := s.DB.WithContext(ctx).Model(&schema.Merchants{}).Count(&n).Error
 	return n, err
 }
 
@@ -79,19 +133,10 @@ func (s Service) LoadPrincipal(ctx context.Context, sessionID string) (*Principa
 		return nil, nil
 	}
 	now := s.now()
-	var row struct {
-		SessionID   string
-		UserID      string
-		Email       string
-		DisplayName string
-		IsOperator  bool
-		UserStatus  string
-		ExpiresAt   time.Time
-		RevokedAt   *time.Time
-	}
+	var row principalRow
 	err := s.DB.WithContext(ctx).Raw(`
 		SELECT s.id AS session_id, u.id AS user_id, u.email, u.display_name, u.is_operator,
-		       u.status AS user_status, s.expires_at, s.revoked_at
+		       u.merchant_id, u.status AS user_status, s.expires_at, s.revoked_at
 		FROM auth_sessions s
 		JOIN users u ON u.id = s.user_id
 		WHERE s.id = ?
@@ -111,6 +156,7 @@ func (s Service) LoadPrincipal(ctx context.Context, sessionID string) (*Principa
 		Email:       row.Email,
 		DisplayName: row.DisplayName,
 		IsOperator:  row.IsOperator,
+		MerchantID:  nullableID(row.MerchantID),
 	}, nil
 }
 
@@ -160,29 +206,17 @@ func (s Service) Bootstrap(ctx context.Context, adminKey, expectedAdminKey, emai
 		}
 		userID := clockid.New()
 		merchantID := clockid.New()
-		membershipID := clockid.New()
 		sessionID = clockid.New()
-		user := schema.Users{
-			ID: userID, Email: emailNorm, PasswordHash: passwordHash, DisplayName: displayName,
-			IsOperator: true, Status: UserStatusActive, CreatedAt: now, UpdatedAt: now,
-		}
 		merchant := schema.Merchants{
 			ID: merchantID, Name: merchantName, Status: MerchantStatusActive, CreatedAt: now, UpdatedAt: now,
-		}
-		membership := schema.Memberships{
-			ID: membershipID, MerchantID: merchantID, UserID: userID, Role: RoleOwner,
-			Status: MembershipStatusActive, CreatedAt: now, UpdatedAt: now,
 		}
 		session := schema.AuthSessions{
 			ID: sessionID, UserID: userID, ExpiresAt: now.Add(sessionTTL), CreatedAt: now,
 		}
-		if err := gdb.Create(&user).Error; err != nil {
-			return err
-		}
 		if err := gdb.Create(&merchant).Error; err != nil {
 			return err
 		}
-		if err := gdb.Create(&membership).Error; err != nil {
+		if err := createUser(gdb, userID, emailNorm, passwordHash, displayName, true, UserStatusActive, now, &merchantID); err != nil {
 			return err
 		}
 		if err := gdb.Create(&session).Error; err != nil {
@@ -190,7 +224,7 @@ func (s Service) Bootstrap(ctx context.Context, adminKey, expectedAdminKey, emai
 		}
 		principal = &Principal{
 			UserID: userID, SessionID: sessionID, Email: emailNorm,
-			DisplayName: displayName, IsOperator: true,
+			DisplayName: displayName, IsOperator: true, MerchantID: &merchantID,
 		}
 		return nil
 	})
@@ -211,8 +245,8 @@ func (s Service) Login(ctx context.Context, email, password string) (*Principal,
 	if err != nil {
 		return nil, "", apperr.Error{Status: 401, Detail: "邮箱或密码不正确"}
 	}
-	var user schema.Users
-	err = s.DB.WithContext(ctx).Where("email = ?", emailNorm).Take(&user).Error
+	var user userRow
+	err = s.DB.WithContext(ctx).Table("users").Where("email = ?", emailNorm).Take(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, "", apperr.Error{Status: 401, Detail: "邮箱或密码不正确"}
 	}
@@ -233,6 +267,7 @@ func (s Service) Login(ctx context.Context, email, password string) (*Principal,
 	return &Principal{
 		UserID: user.ID, SessionID: sessionID, Email: user.Email,
 		DisplayName: user.DisplayName, IsOperator: user.IsOperator,
+		MerchantID: nullableID(user.MerchantID),
 	}, sessionID, nil
 }
 
@@ -250,20 +285,120 @@ func (s Service) RevokeSession(ctx context.Context, sessionID string) error {
 		Updates(map[string]any{"revoked_at": now}).Error
 }
 
-func (s Service) ListMemberships(ctx context.Context, userID string) ([]MembershipView, error) {
+// OwnMerchant 返回账号的直接商家投影。Operator 没有 home merchant 时返回 nil。
+func (s Service) OwnMerchant(ctx context.Context, userID string) (*MerchantView, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
-	var rows []MembershipView
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, apperr.Validation("缺少用户 ID")
+	}
+	var row struct {
+		UserID         string
+		UserStatus     string
+		MerchantID     sql.NullString
+		MerchantName   sql.NullString
+		MerchantStatus sql.NullString
+	}
 	err := s.DB.WithContext(ctx).Raw(`
-		SELECT m.merchant_id, mer.name AS merchant_name, m.role, m.status,
-		       mer.status AS merchant_status
-		FROM memberships m
-		JOIN merchants mer ON mer.id = m.merchant_id
-		WHERE m.user_id = ? AND m.status = ?
-		ORDER BY mer.name, m.merchant_id
-	`, userID, MembershipStatusActive).Scan(&rows).Error
-	return rows, err
+		SELECT u.id AS user_id, u.status AS user_status, u.merchant_id,
+		       m.name AS merchant_name, m.status AS merchant_status
+		FROM users u
+		LEFT JOIN merchants m ON m.id = u.merchant_id
+		WHERE u.id = ?
+	`, userID).Scan(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	if row.UserID == "" {
+		return nil, apperr.NotFound("用户不存在")
+	}
+	merchantID := nullableID(row.MerchantID)
+	if merchantID == nil {
+		return nil, nil
+	}
+	if !row.MerchantName.Valid || !row.MerchantStatus.Valid {
+		return nil, apperr.Internal("用户商家归属无效")
+	}
+	return &MerchantView{ID: *merchantID, Name: row.MerchantName.String, Status: row.MerchantStatus.String}, nil
+}
+
+// ListMerchants 返回 Operator 商家发现所需的有界商家摘要。
+// 该列表不建立工作商家 context，也不授予目标商家业务权限。
+func (s Service) ListMerchants(ctx context.Context, page, pageSize int) (MerchantPage, error) {
+	if err := s.requireDB(); err != nil {
+		return MerchantPage{}, err
+	}
+	if page < 1 || page > merchantListMaxPage {
+		return MerchantPage{}, apperr.Validation("商家列表页码无效")
+	}
+	if pageSize < 1 || pageSize > merchantListMaxPageSize {
+		return MerchantPage{}, apperr.Validation("商家列表每页数量无效")
+	}
+
+	q := s.DB.WithContext(ctx).Model(&schema.Merchants{})
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return MerchantPage{}, err
+	}
+	var rows []schema.Merchants
+	offset := (page - 1) * pageSize
+	if err := q.Select("id", "name", "status").
+		Order("created_at ASC, id ASC").Offset(offset).Limit(pageSize).Find(&rows).Error; err != nil {
+		return MerchantPage{}, err
+	}
+	items := make([]MerchantView, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, MerchantView{ID: row.ID, Name: row.Name, Status: row.Status})
+	}
+	return MerchantPage{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+// RequireOwnMerchant 验证用户直接归属目标商家。停用商家仍可读，写请求由
+// RejectSuspendedMerchantWrites 统一拒绝；这样会话和运营查询仍能展示商家状态。
+func (s Service) RequireOwnMerchant(ctx context.Context, userID, merchantID string) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	userID = strings.TrimSpace(userID)
+	merchantID = strings.TrimSpace(merchantID)
+	if userID == "" {
+		return apperr.Error{Status: 401, Detail: "请先登录"}
+	}
+	if merchantID == "" {
+		return apperr.Validation("缺少商家 ID")
+	}
+	var row struct {
+		UserID         string
+		UserStatus     string
+		MerchantID     sql.NullString
+		MerchantStatus sql.NullString
+	}
+	err := s.DB.WithContext(ctx).Raw(`
+		SELECT u.id AS user_id, u.status AS user_status, u.merchant_id,
+		       m.status AS merchant_status
+		FROM users u
+		LEFT JOIN merchants m ON m.id = u.merchant_id
+		WHERE u.id = ?
+	`, userID).Scan(&row).Error
+	if err != nil {
+		return err
+	}
+	if row.UserID == "" {
+		return apperr.NotFound("用户不存在")
+	}
+	if row.UserStatus != UserStatusActive {
+		return apperr.Forbidden("账号已停用")
+	}
+	owned := nullableID(row.MerchantID)
+	if owned == nil {
+		return apperr.Forbidden("当前用户不属于任何商家")
+	}
+	if *owned != merchantID || !row.MerchantStatus.Valid {
+		return NotFoundCrossMerchant()
+	}
+	return nil
 }
 
 // MerchantStatus 返回商家启停状态；不存在则 NotFound。
@@ -284,17 +419,6 @@ func (s Service) MerchantStatus(ctx context.Context, merchantID string) (string,
 		return "", err
 	}
 	return row.Status, nil
-}
-
-func (s Service) requireMerchantActive(ctx context.Context, merchantID string) error {
-	status, err := s.MerchantStatus(ctx, merchantID)
-	if err != nil {
-		return err
-	}
-	if status == MerchantStatusSuspended {
-		return apperr.Forbidden("商家已停用，无法写入")
-	}
-	return nil
 }
 
 // SetMerchantStatus 由站点 Operator 启停商家；status 仅 active|suspended。
@@ -341,159 +465,7 @@ func (s Service) SetMerchantStatus(ctx context.Context, operator UserRef, mercha
 	return &merchant, nil
 }
 
-func (s Service) ActiveMembership(ctx context.Context, userID, merchantID string) (*schema.Memberships, error) {
-	if err := s.requireDB(); err != nil {
-		return nil, err
-	}
-	var row schema.Memberships
-	err := s.DB.WithContext(ctx).
-		Where("user_id = ? AND merchant_id = ? AND status = ?", userID, merchantID, MembershipStatusActive).
-		Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, apperr.Forbidden("不是该商家成员")
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &row, nil
-}
-
-func (s Service) CreateMerchant(ctx context.Context, operator UserRef, name string) (*schema.Merchants, error) {
-	if err := s.requireDB(); err != nil {
-		return nil, err
-	}
-	if !operator.IsOperator {
-		return nil, apperr.Forbidden("仅站点 Operator 可创建商家")
-	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, apperr.Validation("商家名称不能为空")
-	}
-	now := s.now()
-	var merchant schema.Merchants
-	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
-		var ids []string
-		if err := gdb.Clauses(pfdb.ForUpdate()).
-			Model(&schema.Merchants{}).
-			Order("id").
-			Pluck("id", &ids).Error; err != nil {
-			return err
-		}
-		if len(ids) > 0 {
-			return apperr.Conflict("当前版本仅允许唯一开发商家")
-		}
-		merchant = schema.Merchants{
-			ID: clockid.New(), Name: name, Status: MerchantStatusActive, CreatedAt: now, UpdatedAt: now,
-		}
-		membership := schema.Memberships{
-			ID: clockid.New(), MerchantID: merchant.ID, UserID: operator.UserID, Role: RoleOwner,
-			Status: MembershipStatusActive, CreatedAt: now, UpdatedAt: now,
-		}
-		if err := gdb.Create(&merchant).Error; err != nil {
-			return err
-		}
-		return gdb.Create(&membership).Error
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &merchant, nil
-}
-
 type UserRef struct {
 	UserID     string
 	IsOperator bool
-}
-
-func (s Service) RevokeMembership(ctx context.Context, actor UserRef, merchantID, targetUserID string) error {
-	if err := s.requireDB(); err != nil {
-		return err
-	}
-	if err := s.requireMerchantActive(ctx, merchantID); err != nil {
-		return err
-	}
-	now := s.now()
-	return tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
-		var actorMembership schema.Memberships
-		err := gdb.Clauses(pfdb.ForUpdate()).
-			Where("merchant_id = ? AND user_id = ? AND status = ?", merchantID, actor.UserID, MembershipStatusActive).
-			Take(&actorMembership).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return apperr.Forbidden("不是该商家成员")
-		}
-		if err != nil {
-			return err
-		}
-		if actorMembership.Role != RoleOwner {
-			return apperr.Forbidden("仅商家 Owner 可移除成员")
-		}
-		var target schema.Memberships
-		err = gdb.Clauses(pfdb.ForUpdate()).
-			Where("merchant_id = ? AND user_id = ?", merchantID, targetUserID).
-			Take(&target).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return apperr.NotFound("成员不存在")
-		}
-		if err != nil {
-			return err
-		}
-		if target.Status == MembershipStatusRevoked {
-			return nil
-		}
-		if target.Role == RoleOwner {
-			var ownerCount int64
-			if err := gdb.Model(&schema.Memberships{}).
-				Where("merchant_id = ? AND role = ? AND status = ?", merchantID, RoleOwner, MembershipStatusActive).
-				Count(&ownerCount).Error; err != nil {
-				return err
-			}
-			if ownerCount <= 1 {
-				return apperr.Conflict("不能移除最后一位 Owner")
-			}
-		}
-		return gdb.Model(&target).Updates(map[string]any{
-			"status": MembershipStatusRevoked, "revoked_at": now, "updated_at": now,
-		}).Error
-	})
-}
-
-func (s Service) RestoreMembership(ctx context.Context, actor UserRef, merchantID, targetUserID string) error {
-	if err := s.requireDB(); err != nil {
-		return err
-	}
-	if err := s.requireMerchantActive(ctx, merchantID); err != nil {
-		return err
-	}
-	now := s.now()
-	return tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
-		var actorMembership schema.Memberships
-		err := gdb.Clauses(pfdb.ForUpdate()).
-			Where("merchant_id = ? AND user_id = ? AND status = ?", merchantID, actor.UserID, MembershipStatusActive).
-			Take(&actorMembership).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return apperr.Forbidden("不是该商家成员")
-		}
-		if err != nil {
-			return err
-		}
-		if actorMembership.Role != RoleOwner {
-			return apperr.Forbidden("仅商家 Owner 可恢复成员")
-		}
-		var target schema.Memberships
-		err = gdb.Clauses(pfdb.ForUpdate()).
-			Where("merchant_id = ? AND user_id = ?", merchantID, targetUserID).
-			Take(&target).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return apperr.NotFound("成员不存在")
-		}
-		if err != nil {
-			return err
-		}
-		if target.Status == MembershipStatusActive {
-			return nil
-		}
-		return gdb.Model(&target).Updates(map[string]any{
-			"status": MembershipStatusActive, "revoked_at": nil, "updated_at": now,
-		}).Error
-	})
 }

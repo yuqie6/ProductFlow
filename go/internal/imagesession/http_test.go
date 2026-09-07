@@ -625,6 +625,7 @@ func TestImageSessionHistoryMissingSessionIs404(t *testing.T) {
 
 func TestImageSessionGetBoundsTasksWithoutCrowdingActiveOrFirstScreen(t *testing.T) {
 	ss := newSessionServer(t)
+	merchantID := auth.MustDevMerchantID(t, ss.db)
 	created := ss.doJSON(t, http.MethodPost, "/api/image-sessions", map[string]any{})
 	ss.mustStatus(t, created, http.StatusCreated)
 	var session DetailResponse
@@ -692,7 +693,7 @@ func TestImageSessionGetBoundsTasksWithoutCrowdingActiveOrFirstScreen(t *testing
 	if err := ss.db.Create(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
-	otherSession := schema.ImageSessions{ID: clockid.New(), Title: "other", CreatedAt: start, UpdatedAt: start}
+	otherSession := schema.ImageSessions{ID: clockid.New(), MerchantID: merchantID, Title: "other", CreatedAt: start, UpdatedAt: start}
 	if err := ss.db.Create(&otherSession).Error; err != nil {
 		t.Fatal(err)
 	}

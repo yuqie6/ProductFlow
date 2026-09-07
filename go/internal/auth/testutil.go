@@ -48,21 +48,37 @@ func (testAllowAttemptLimiter) Allow(context.Context, string, string) (AttemptDe
 	return AttemptDecision{Allowed: true}, nil
 }
 
-// MustDevMerchantID 返回测试库中已引导的开发商家 ID。
+// MustDevMerchantID ensures the shared test account and returns its explicit
+// merchant ownership, including for service fixtures that run before HTTP tests.
 func MustDevMerchantID(t *testing.T, db *gorm.DB) string {
 	t.Helper()
-	id, err := DevMerchantID(context.Background(), db)
-	if err == nil && id != "" {
-		return id
+	var user schema.Users
+	err := db.Where("email = ?", TestOperatorEmail).Take(&user).Error
+	if err == nil {
+		if user.MerchantID == nil {
+			t.Fatal("test operator has no merchant")
+		}
+		return *user.MerchantID
+	}
+	if err != gorm.ErrRecordNotFound {
+		t.Fatalf("load test operator: %v", err)
 	}
 	now := time.Now().UTC()
-	row := schema.Merchants{
-		ID: clockid.New(), Name: TestMerchantName, Status: "active", CreatedAt: now, UpdatedAt: now,
+	merchant := schema.Merchants{ID: clockid.New(), Name: TestMerchantName, Status: MerchantStatusActive, CreatedAt: now, UpdatedAt: now}
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(TestPassword), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := db.Create(&row).Error; err != nil {
-		t.Fatalf("create test merchant: %v", err)
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&merchant).Error; err != nil {
+			return err
+		}
+		return createUser(tx, clockid.New(), TestOperatorEmail, string(passwordHash), "Test operator", true, UserStatusActive, now, &merchant.ID)
+	})
+	if err != nil {
+		t.Fatalf("create test account and merchant: %v", err)
 	}
-	return row.ID
+	return merchant.ID
 }
 
 // MustAuthenticate 引导（若需要）并用测试账号登录，返回会话 cookie。

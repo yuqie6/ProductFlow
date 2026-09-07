@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"gorm.io/gorm"
@@ -28,8 +29,9 @@ func TestImageSessionSSESnapshotLoad(t *testing.T) {
 	}
 	pool, gdb := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_isse_%d", time.Now().UnixNano()))
 	ss := newSessionServerWithDatabase(t, pool, gdb)
+	merchantID := auth.MustDevMerchantID(t, gdb)
 	now := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
-	session := schema.ImageSessions{ID: "sse-load-session", Title: "snapshot load", CreatedAt: now, UpdatedAt: now}
+	session := schema.ImageSessions{ID: "sse-load-session", MerchantID: merchantID, Title: "snapshot load", CreatedAt: now, UpdatedAt: now}
 	if err := gdb.Create(&session).Error; err != nil {
 		t.Fatal(err)
 	}

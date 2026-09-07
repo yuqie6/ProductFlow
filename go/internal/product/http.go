@@ -19,7 +19,7 @@ import (
 	"github.com/yuqie6/productflow/internal/settings"
 )
 
-// HTTP 给管理员 session 挂商品出生、facts、封面、图库、工作区与删除路由。
+// HTTP 挂账号自有商品路由，以及显式目标商家的管理员商品管理路由。
 // Service 与 Settings 必须注入（删除门闩读 DeletionEnabled）。路径见各处理器。不要把本类型当成 product.Service。
 type HTTP struct {
 	Service Service // 必须注入
@@ -31,7 +31,7 @@ type HTTP struct {
 	}
 }
 
-// Register 挂上商品出生、facts、封面、图库与删除路由，全部走管理员 session。
+// Register 挂上账号自有商品路由；跨商管理单独验证管理员权限与目标商家。
 // 路径见各处理器注释。删除受 runtime.DeletionEnabled 门闩，关闭时 403。
 func (h HTTP) Register(engine *gin.Engine) {
 	admin := httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
@@ -73,6 +73,17 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api.GET("/v2/agent-product-workspaces/:conversation_id", h.getWorkspace)
 	api.POST("/v2/agent-product-workspaces/:conversation_id/intake", h.finalizeWorkspaceIntake)
 	api.POST("/v2/product-source-notes/generate", h.generateSourceNote)
+
+	// Administrator access is limited to explicit merchant product management.
+	// Generation and other billable routes remain in the account-owned group above.
+	operatorAuth := auth.HTTP{Service: auth.Service{DB: h.Service.DB}, DB: h.Service.DB}
+	ops := engine.Group("/api/ops/merchants/:merchant_id/products", operatorAuth.RequireOperatorMerchantTarget("merchant_id"))
+	ops.GET("", h.list)
+	ops.GET("/:product_id", h.get)
+	ops.GET("/:product_id/facts", h.getFacts)
+	ops.PUT("/:product_id/facts", h.updateFacts)
+	ops.DELETE("/:product_id", h.requireDeletion, h.deleteProduct)
+
 }
 
 // requireDeletion 挂在 DELETE /api/v2/products/:product_id 与 DELETE /api/v2/product-image-assets/:asset_id 前：放行不写响应（后续 204）；Settings 为 nil 或 DeletionEnabled=false 时 403；读设置失败 500。

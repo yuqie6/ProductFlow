@@ -17,7 +17,7 @@ Login and setup show a countdown when attempts are rate limited. Submission beco
 1. After deployer bootstrap, a signed-in Operator opens `/settings` and fills in registration SMTP: host, port, `starttls` or `tls`, username, password, sender address, and sender name. Ordinary Users and anonymous requests are denied, and the password is not echoed after save.
 2. After initialization, switch to the Register mode on the login page, enter an email, and request a verification code. The form remains visible when SMTP is not ready, while sending the code and submitting registration are disabled with an email-service notice.
 3. Enter the six-digit code, set a password of at least eight characters, and provide a merchant name before submitting.
-4. After verification, the system creates an ordinary account, that account's own merchant, an Owner membership, and trial quota, then signs in through the existing session. Email/password login remains available.
+4. After verification, the system creates an ordinary account, that account's own merchant, and trial quota, then signs in through the existing session. Email/password login remains available.
 
 A code is valid for 10 minutes, resends are limited to one per 60 seconds, and each challenge permits at most five failed attempts; resending invalidates the previous challenge. Existing membership management remains; direct association of additional existing users is deferred to a separate design.
 

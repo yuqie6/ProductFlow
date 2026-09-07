@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	authn "github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
@@ -149,9 +150,10 @@ func TestAgentTaskTurnControlAndInternalSurface(t *testing.T) {
 
 	productID := clockid.New()
 	graphID := clockid.New()
+	merchantID := authn.MustDevMerchantID(t, as.db)
 	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '画布商品', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES ($1, $2, '画布商品', NOW(), NOW())
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := as.pool.Exec(context.Background(), `

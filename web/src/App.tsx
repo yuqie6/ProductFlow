@@ -7,7 +7,7 @@ import { AppToaster } from "./components/ui/toast";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { api } from "./lib/api";
 import { canAccessOpsSettings } from "./lib/opsAccess";
-import { activeMerchantId, applyMerchantSwitchBoundary } from "./lib/merchantBoundary";
+import { accountIdentity, applyAccountSwitchBoundary, sameAccountIdentity } from "./lib/accountBoundary";
 import { PreferencesProvider, useI18n } from "./lib/preferences";
 import { disposeAllConversationRuntimes } from "./pages/workbench/agent/conversation/runtime";
 
@@ -63,18 +63,18 @@ function AppRoutes() {
 
   const authenticated = Boolean(sessionQuery.data?.authenticated);
   const canOpenSettings = canAccessOpsSettings(sessionQuery.data);
-  const merchantId = activeMerchantId(sessionQuery.data);
-  const previousMerchantRef = useRef<string | null>(null);
+  const identity = useMemo(() => accountIdentity(sessionQuery.data), [sessionQuery.data]);
+  const previousIdentityRef = useRef<typeof identity>(null);
 
   useEffect(() => {
-    const previous = previousMerchantRef.current;
-    if (previous !== null && previous !== merchantId) {
-      applyMerchantSwitchBoundary(queryClient, {
+    const previous = previousIdentityRef.current;
+    if (previous !== null && !sameAccountIdentity(previous, identity)) {
+      applyAccountSwitchBoundary(queryClient, {
         onInvalidateSubscriptions: disposeAllConversationRuntimes,
       });
     }
-    previousMerchantRef.current = merchantId;
-  }, [merchantId, queryClient]);
+    previousIdentityRef.current = identity;
+  }, [identity, queryClient]);
 
   useEffect(() => {
     if (!authenticated) {

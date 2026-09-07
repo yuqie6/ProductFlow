@@ -15,6 +15,7 @@ import (
 
 func TestConfirmDraftAndAppendTerminalDoNotDeadlock(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "")
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
 	var sess SessionResponse
@@ -46,8 +47,8 @@ func TestConfirmDraftAndAppendTerminalDoNotDeadlock(t *testing.T) {
 
 	payload := libraryRenamePayload(t, as)
 	var revID string
-	err = tx.WithGorm(context.Background(), as.db, func(pgxTx *gorm.DB) error {
-		id, err := as.svc.Library.AppendOrganizationDraftRevisionTx(context.Background(), pgxTx, convID, payload, "", "")
+	err = tx.WithGorm(ctx, as.db, func(pgxTx *gorm.DB) error {
+		id, err := as.svc.Library.AppendOrganizationDraftRevisionTx(ctx, pgxTx, convID, payload, "", "")
 		revID = id
 		return err
 	})
@@ -84,7 +85,7 @@ func TestConfirmDraftAndAppendTerminalDoNotDeadlock(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		_, err := as.svc.ConfirmLibraryDraftHTTP(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), convID, 1, clockid.New())
+		_, err := as.svc.ConfirmLibraryDraftHTTP(ctx, convID, 1, clockid.New())
 		results <- outcome{op: "confirm", err: err}
 	}()
 	wg.Wait()

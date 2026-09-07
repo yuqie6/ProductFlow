@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/generation"
@@ -96,7 +97,7 @@ func TestGenerationCapacityUsesAdmissionNodeCount(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	productID, graphID, runID := clockid.New(), clockid.New(), clockid.New()
-	if err := gdb.Exec(`INSERT INTO products (id, name, created_at, updated_at) VALUES (?, 'capacity', ?, ?)`, productID, now, now).Error; err != nil {
+	if err := gdb.Exec(`INSERT INTO products (id, name, created_at, updated_at, merchant_id) VALUES (?, 'capacity', ?, ?, ?)`, productID, now, now, auth.MustDevMerchantID(t, gdb)).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := gdb.Exec(`INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at) VALUES (?, ?, 'capacity', TRUE, 3, 1, ?, ?)`, graphID, productID, now, now).Error; err != nil {

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/library"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -88,6 +89,7 @@ func scopeForWorld(name string) string {
 
 func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld) seededEvalWorld {
 	t.Helper()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	out := seededEvalWorld{Scope: task.Scope, AssetIDs: map[string]string{}, FolderIDs: map[string]string{}, NodeIDs: map[string]string{}, EdgeIDs: map[string]string{}, GroupIDs: map[string]string{}}
 	if task.Scope == "global" {
 		seedGlobalLibraryWorld(t, as, task, world, &out)
@@ -125,7 +127,7 @@ func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld
 		expandEvalGraph(t, as, world, &out)
 	}
 	if len(selectedAssetIDs(task)) > 0 && task.Scope == "product_workflow" {
-		assets, err := as.svc.Product.AddImages(context.Background(), out.ProductID, []product.Upload{{
+		assets, err := as.svc.Product.AddImages(ctx, out.ProductID, []product.Upload{{
 			Content: evalPNG(t), Filename: "eval-ref.png", MIMEType: "image/png",
 		}})
 		if err != nil {
@@ -143,7 +145,7 @@ func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld
 	}
 	applyEvalInject(t, as, task, world, &out)
 	if out.GraphID != "" {
-		live, err := as.svc.Graph.Get(context.Background(), out.ProductID, out.GraphID)
+		live, err := as.svc.Graph.Get(ctx, out.ProductID, out.GraphID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -158,7 +160,8 @@ func needsExpandedGraph(world EvalWorld) bool {
 
 func expandEvalGraph(t *testing.T, as *agentServer, world EvalWorld, seeded *seededEvalWorld) {
 	t.Helper()
-	live, err := as.svc.Graph.Get(context.Background(), seeded.ProductID, seeded.GraphID)
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
+	live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +216,7 @@ func expandEvalGraph(t *testing.T, as *agentServer, world EvalWorld, seeded *see
 	if err != nil {
 		t.Fatal(err)
 	}
-	applied, err := as.svc.Graph.ApplyChangeSet(context.Background(), seeded.ProductID, seeded.GraphID, cs)
+	applied, err := as.svc.Graph.ApplyChangeSet(ctx, seeded.ProductID, seeded.GraphID, cs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,6 +279,7 @@ func insertEvalFailedRun(t *testing.T, as *agentServer, seeded seededEvalWorld, 
 
 func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld, seeded *seededEvalWorld) {
 	t.Helper()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
 	var sess SessionResponse
@@ -285,12 +289,12 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 	}
 	seeded.ConvID = sess.Conversations[0].ConversationID
 	if strings.HasPrefix(world.Name, "global-library") {
-		workspace, err := as.svc.Product.CreateAgentDraft(context.Background(), "评测商品", clockid.New(), nil)
+		workspace, err := as.svc.Product.CreateAgentDraft(ctx, "评测商品", clockid.New(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		seeded.ProductID = workspace.Product.ID
-		observed, err := as.svc.GlobalWorkflowContext(context.Background(), seeded.ConvID, seeded.ProductID, "concise")
+		observed, err := as.svc.GlobalWorkflowContext(ctx, seeded.ConvID, seeded.ProductID, "concise")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -304,7 +308,7 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 		if task.Inject != nil && task.Inject.Payload["folder_title"] != "" {
 			title += "\n" + task.Inject.Payload["folder_title"]
 		}
-		created, err := as.svc.Library.CreateFolder(context.Background(), title)
+		created, err := as.svc.Library.CreateFolder(ctx, title)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -317,7 +321,7 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 				folderID = &mapped
 			}
 		}
-		results, err := as.svc.Library.Upload(context.Background(), []library.UploadItem{{
+		results, err := as.svc.Library.Upload(ctx, []library.UploadItem{{
 			Content: evalPNG(t), Filename: listed.DisplayName, MIMEType: "image/png",
 		}}, folderID, clockid.New())
 		if err != nil || len(results) == 0 {
@@ -329,14 +333,14 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 			name += "\n" + task.Inject.Payload["display_name"]
 		}
 		if name != asset.DisplayName {
-			renamed, err := as.svc.Library.RenameAsset(context.Background(), asset.ID, asset.DisplayName, asset.Revision, name)
+			renamed, err := as.svc.Library.RenameAsset(ctx, asset.ID, asset.DisplayName, asset.Revision, name)
 			if err != nil {
 				t.Fatal(err)
 			}
 			asset = renamed
 		}
 		if len(listed.TagNames) > 0 {
-			if _, err := as.svc.Library.SetTags(context.Background(), []string{asset.ID}, listed.TagNames, map[string]int{asset.ID: asset.Revision}); err != nil {
+			if _, err := as.svc.Library.SetTags(ctx, []string{asset.ID}, listed.TagNames, map[string]int{asset.ID: asset.Revision}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -353,6 +357,7 @@ func applyEvalInject(t *testing.T, as *agentServer, task EvalTask, world EvalWor
 	if task.Inject == nil {
 		return
 	}
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	if name := task.Inject.Payload["product_name"]; name != "" && seeded.ProductID != "" {
 		if _, err := as.pool.Exec(context.Background(), `UPDATE products SET name = $2, updated_at = NOW() WHERE id = $1`, seeded.ProductID, name); err != nil {
 			t.Fatal(err)
@@ -363,7 +368,7 @@ func applyEvalInject(t *testing.T, as *agentServer, task EvalTask, world EvalWor
 		if nodeID == "" {
 			return
 		}
-		live, err := as.svc.Graph.Get(context.Background(), seeded.ProductID, seeded.GraphID)
+		live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -381,7 +386,7 @@ func applyEvalInject(t *testing.T, as *agentServer, task EvalTask, world EvalWor
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := as.svc.Graph.ApplyChangeSet(context.Background(), seeded.ProductID, seeded.GraphID, cs); err != nil {
+		if _, err := as.svc.Graph.ApplyChangeSet(ctx, seeded.ProductID, seeded.GraphID, cs); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -510,9 +515,10 @@ func gradeEvalState(t *testing.T, as *agentServer, seeded seededEvalWorld, expec
 	if expect == nil {
 		return nil
 	}
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	var errors []string
 	if seeded.ProductID != "" && seeded.GraphID != "" {
-		live, err := as.svc.Graph.Get(context.Background(), seeded.ProductID, seeded.GraphID)
+		live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
 		if err != nil {
 			return []string{err.Error()}
 		}
@@ -646,7 +652,8 @@ func TestEvalStateGraderSeesRename(t *testing.T) {
 	world := worlds["expanded-rev3"]
 	task := EvalTask{ID: "state-rename", Scope: "product_workflow", World: "expanded-rev3", PageContext: map[string]any{}}
 	seeded := seedEvalWorld(t, as, task, world)
-	live, err := as.svc.Graph.Get(context.Background(), seeded.ProductID, seeded.GraphID)
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
+	live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -663,7 +670,7 @@ func TestEvalStateGraderSeesRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := as.svc.Graph.ApplyChangeSet(context.Background(), seeded.ProductID, seeded.GraphID, cs); err != nil {
+	if _, err := as.svc.Graph.ApplyChangeSet(ctx, seeded.ProductID, seeded.GraphID, cs); err != nil {
 		t.Fatal(err)
 	}
 	minRev := 2

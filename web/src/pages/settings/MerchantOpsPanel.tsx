@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PauseCircle, PlayCircle } from "lucide-react";
 
 import { api } from "../../lib/api";
-import { activeMerchantId } from "../../lib/merchantBoundary";
+import { ownMerchantId } from "../../lib/accountBoundary";
 import { useI18n } from "../../lib/preferences";
 
 /** Op 面最小接线：当前商家启停；完整管理员跨商管理另行交付。 */
@@ -14,10 +14,9 @@ export function MerchantOpsPanel() {
     queryFn: api.getSessionState,
     retry: false,
   });
-  const merchantId = activeMerchantId(sessionQuery.data);
-  const membership = sessionQuery.data?.memberships?.find((item) => item.merchant_id === merchantId)
-    ?? sessionQuery.data?.memberships?.[0];
-  const suspended = membership?.merchant_status === "suspended";
+  const merchant = sessionQuery.data?.merchant;
+  const merchantId = ownMerchantId(sessionQuery.data);
+  const suspended = merchant?.status === "suspended";
 
   const statusMutation = useMutation({
     mutationFn: (status: "active" | "suspended") => {
@@ -31,7 +30,7 @@ export function MerchantOpsPanel() {
     },
   });
 
-  if (!merchantId || !membership) {
+  if (!merchantId || !merchant || !sessionQuery.data?.user?.is_operator) {
     return null;
   }
 
@@ -46,7 +45,7 @@ export function MerchantOpsPanel() {
             {t("settings.merchantOps.title")}
           </p>
           <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
-            {membership.merchant_name}
+            {merchant.name}
             {" · "}
             {suspended ? t("settings.merchantOps.statusSuspended") : t("settings.merchantOps.statusActive")}
           </p>

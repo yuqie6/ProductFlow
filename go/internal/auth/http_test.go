@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -138,118 +136,134 @@ func TestSessionRevokeReturns401(t *testing.T) {
 	}
 }
 
-func TestDirectMemberRole(t *testing.T) {
+func TestSessionProjectsDirectMerchant(t *testing.T) {
 	as := newAuthServer(t)
-	ownerCookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
-	state := as.do(t, http.MethodGet, "/api/auth/session", "", ownerCookies)
-	var stateBody struct {
-		Memberships []auth.MembershipView `json:"memberships"`
-		User        struct {
-			ID string `json:"id"`
-		} `json:"user"`
-	}
-	_ = json.NewDecoder(state.Body).Decode(&stateBody)
-	state.Body.Close()
-	if len(stateBody.Memberships) != 1 || stateBody.Memberships[0].Role != auth.RoleOwner {
-		t.Fatalf("memberships %#v", stateBody.Memberships)
-	}
-	merchantID := stateBody.Memberships[0].MerchantID
-	editorEmail := "editor-" + time.Now().Format("150405.000000000") + "@test.local"
-	seedDirectMember(t, as.db, merchantID, editorEmail, "editor-password-ok", "编辑", auth.RoleEditor, false)
-	editorCookies := loginDirectMember(t, as, editorEmail, "editor-password-ok")
-	editorState := as.do(t, http.MethodGet, "/api/auth/session", "", editorCookies)
-	var editorBody struct {
-		Memberships []auth.MembershipView `json:"memberships"`
-		User        struct {
-			IsOperator bool `json:"is_operator"`
-		} `json:"user"`
-	}
-	_ = json.NewDecoder(editorState.Body).Decode(&editorBody)
-	editorState.Body.Close()
-	if editorBody.User.IsOperator || len(editorBody.Memberships) != 1 || editorBody.Memberships[0].Role != auth.RoleEditor {
-		t.Fatalf("editor %#v", editorBody)
-	}
-	deny := as.do(t, http.MethodDelete, "/api/merchants/"+merchantID+"/memberships/"+stateBody.User.ID, "", editorCookies)
-	deny.Body.Close()
-	if deny.StatusCode != http.StatusForbidden {
-		t.Fatalf("editor membership status %d", deny.StatusCode)
-	}
-}
-
-func TestNonMemberForbidden(t *testing.T) {
-	as := newAuthServer(t)
-	ownerCookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
-	state := as.do(t, http.MethodGet, "/api/auth/session", "", ownerCookies)
-	var stateBody struct {
-		Memberships []auth.MembershipView `json:"memberships"`
-	}
-	_ = json.NewDecoder(state.Body).Decode(&stateBody)
-	state.Body.Close()
-	merchantID := stateBody.Memberships[0].MerchantID
-
-	outsiderEmail := "outsider-" + time.Now().Format("150405.000000000") + "@test.local"
-	outsider := seedDirectMember(t, as.db, merchantID, outsiderEmail, "viewer-password-ok", "外部成员", auth.RoleViewer, false)
-	outsiderCookies := loginDirectMember(t, as, outsiderEmail, "viewer-password-ok")
-
-	rev := as.do(t, http.MethodDelete, "/api/merchants/"+merchantID+"/memberships/"+outsider.ID, "", ownerCookies)
-	rev.Body.Close()
-	if rev.StatusCode != http.StatusOK {
-		t.Fatalf("revoke %d", rev.StatusCode)
-	}
-	again := as.do(t, http.MethodGet, "/api/merchants", "", outsiderCookies)
-	defer again.Body.Close()
-	if again.StatusCode != http.StatusOK {
-		t.Fatalf("revoked member list status %d", again.StatusCode)
-	}
-	var listed struct {
-		Items []auth.MembershipView `json:"items"`
-	}
-	_ = json.NewDecoder(again.Body).Decode(&listed)
-	if len(listed.Items) != 0 {
-		t.Fatalf("revoked member still listed: %#v", listed.Items)
-	}
-}
-
-func TestLastOwnerProtectedConcurrent(t *testing.T) {
-	as := newAuthServer(t)
-	ownerCookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
-	state := as.do(t, http.MethodGet, "/api/auth/session", "", ownerCookies)
-	var stateBody struct {
-		Memberships []auth.MembershipView `json:"memberships"`
-		User        struct {
-			ID string `json:"id"`
-		} `json:"user"`
-	}
-	_ = json.NewDecoder(state.Body).Decode(&stateBody)
-	state.Body.Close()
-	merchantID := stateBody.Memberships[0].MerchantID
-	ownerID := stateBody.User.ID
-
-	var conflict atomic.Int32
-	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			resp := as.do(t, http.MethodDelete, "/api/merchants/"+merchantID+"/memberships/"+ownerID, "", ownerCookies)
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusConflict {
-				conflict.Add(1)
-			}
-		}()
-	}
-	wg.Wait()
-	if conflict.Load() == 0 {
-		t.Fatal("expected last-owner conflicts")
-	}
-	var owners int64
-	if err := as.db.Model(&schema.Memberships{}).
-		Where("merchant_id = ? AND role = ? AND status = ?", merchantID, auth.RoleOwner, auth.MembershipStatusActive).
-		Count(&owners).Error; err != nil {
+	operatorCookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
+	state := as.do(t, http.MethodGet, "/api/auth/session", "", operatorCookies)
+	var operatorBody map[string]json.RawMessage
+	if err := json.NewDecoder(state.Body).Decode(&operatorBody); err != nil {
+		state.Body.Close()
 		t.Fatal(err)
 	}
-	if owners < 1 {
-		t.Fatalf("owner count %d", owners)
+	state.Body.Close()
+	if _, ok := operatorBody["memberships"]; ok {
+		t.Fatal("session still exposes memberships")
+	}
+	var operatorMerchant auth.MerchantView
+	if err := json.Unmarshal(operatorBody["merchant"], &operatorMerchant); err != nil {
+		t.Fatal(err)
+	}
+	if operatorMerchant.ID == "" {
+		t.Fatalf("operator merchant %#v", operatorMerchant)
+	}
+
+	now := time.Now().UTC()
+	merchant := schema.Merchants{ID: "auth-http-merchant-" + time.Now().Format("150405.000000000"), Name: "独立普通账号商家", Status: auth.MerchantStatusActive, CreatedAt: now, UpdatedAt: now}
+	if err := as.db.Create(&merchant).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = as.db.Where("id = ?", merchant.ID).Delete(&schema.Merchants{}).Error })
+	email := "direct-" + time.Now().Format("150405.000000000") + "@test.local"
+	user := seedDirectUser(t, as.db, merchant.ID, email, "direct-password-ok", "独立账号", false)
+	if user.MerchantID == nil || *user.MerchantID != merchant.ID {
+		t.Fatalf("direct user merchant %#v", user.MerchantID)
+	}
+	cookies := loginDirectUser(t, as, email, "direct-password-ok")
+	userState := as.do(t, http.MethodGet, "/api/auth/session", "", cookies)
+	var userBody map[string]json.RawMessage
+	if err := json.NewDecoder(userState.Body).Decode(&userBody); err != nil {
+		userState.Body.Close()
+		t.Fatal(err)
+	}
+	userState.Body.Close()
+	if _, ok := userBody["memberships"]; ok {
+		t.Fatal("ordinary session still exposes memberships")
+	}
+	var directMerchant auth.MerchantView
+	if err := json.Unmarshal(userBody["merchant"], &directMerchant); err != nil {
+		t.Fatal(err)
+	}
+	if directMerchant.ID != merchant.ID || directMerchant.Name != merchant.Name || directMerchant.Status != merchant.Status {
+		t.Fatalf("direct merchant %#v", directMerchant)
+	}
+}
+
+func TestDirectMerchantOwnershipAndOperatorMerchantList(t *testing.T) {
+	as := newAuthServer(t)
+	operatorCookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
+	now := time.Now().UTC()
+	merchant := schema.Merchants{ID: "auth-owner-merchant-" + time.Now().Format("150405.000000000"), Name: "归属校验商家", Status: auth.MerchantStatusActive, CreatedAt: now, UpdatedAt: now}
+	if err := as.db.Create(&merchant).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = as.db.Where("id = ?", merchant.ID).Delete(&schema.Merchants{}).Error })
+	email := "owner-check-" + time.Now().Format("150405.000000000") + "@test.local"
+	user := seedDirectUser(t, as.db, merchant.ID, email, "owner-check-password", "归属账号", false)
+	svc := auth.Service{DB: as.db}
+	view, err := svc.OwnMerchant(t.Context(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view == nil || view.ID != merchant.ID {
+		t.Fatalf("own merchant %#v", view)
+	}
+	if err := svc.RequireOwnMerchant(t.Context(), user.ID, merchant.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RequireOwnMerchant(t.Context(), user.ID, "other-merchant"); err == nil || !strings.Contains(err.Error(), auth.CrossMerchantDetail) {
+		t.Fatalf("cross merchant error %v", err)
+	}
+
+	list := as.do(t, http.MethodGet, "/api/ops/merchants?page=1&page_size=2", "", operatorCookies)
+	defer list.Body.Close()
+	if list.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(list.Body)
+		t.Fatalf("operator merchant list %d %s", list.StatusCode, raw)
+	}
+	var page auth.MerchantPage
+	if err := json.NewDecoder(list.Body).Decode(&page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Page != 1 || page.PageSize != 2 || page.Total < 2 || len(page.Items) > 2 {
+		t.Fatalf("merchant page %#v", page)
+	}
+	for _, item := range page.Items {
+		if item.ID == "" || item.Name == "" || item.Status == "" {
+			t.Fatalf("unbounded merchant item %#v", item)
+		}
+	}
+	for _, query := range []string{"?page_size=0", "?page_size=101", "?page=0"} {
+		resp := as.do(t, http.MethodGet, "/api/ops/merchants"+query, "", operatorCookies)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("invalid merchant list query %s status %d", query, resp.StatusCode)
+		}
+	}
+	unauthenticated := as.do(t, http.MethodGet, "/api/ops/merchants", "", nil)
+	unauthenticated.Body.Close()
+	if unauthenticated.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous merchant list %d", unauthenticated.StatusCode)
+	}
+}
+
+func TestLegacyMerchantRoutesRemoved(t *testing.T) {
+	as := newAuthServer(t)
+	cookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
+	for _, route := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/merchants"},
+		{http.MethodPost, "/api/merchants"},
+		{http.MethodPatch, "/api/merchants/removed/status"},
+		{http.MethodDelete, "/api/merchants/removed/memberships/removed"},
+		{http.MethodPost, "/api/merchants/removed/memberships/removed/restore"},
+	} {
+		resp := as.do(t, route.method, route.path, "", cookies)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("retired route %s %s returned %d", route.method, route.path, resp.StatusCode)
+		}
 	}
 }
 
@@ -258,7 +272,7 @@ func TestSecondMerchantRejected(t *testing.T) {
 	cookies := auth.MustAuthenticate(t, as.client, as.srv.URL)
 	resp := as.do(t, http.MethodPost, "/api/merchants", `{"name":"第二商家"}`, cookies)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusConflict {
+	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 }

@@ -1881,7 +1881,7 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_workflow_graph_run_events_run_sequence ON public.workflow_graph_run_events USING btree (graph_run_id, sequence);`,
 
-	// Identity: users / merchants / memberships / registration challenges / auth_sessions
+	// Identity: direct user ownership / merchants / registration challenges / auth_sessions
 	`DROP TABLE IF EXISTS public.merchant_invites;`,
 	`DO $c$ BEGIN
 ALTER TABLE users ADD CONSTRAINT uq_users_email UNIQUE (email);
@@ -1898,31 +1898,168 @@ ALTER TABLE merchants ADD CONSTRAINT ck_merchants_status CHECK (status IN ('acti
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
+	`DO $identity$ BEGIN
+	IF to_regclass('public.memberships') IS NULL THEN
+		RETURN;
+	END IF;
+
+	IF EXISTS (
+		SELECT 1
+		FROM public.memberships AS m
+		LEFT JOIN public.users AS u ON u.id = m.user_id
+		WHERE u.id IS NULL
+	) THEN
+		RAISE EXCEPTION 'cannot migrate memberships: membership references a missing user';
+	END IF;
+	IF EXISTS (
+		SELECT 1
+		FROM public.memberships AS m
+		LEFT JOIN public.merchants AS merchant ON merchant.id = m.merchant_id
+		WHERE merchant.id IS NULL
+	) THEN
+		RAISE EXCEPTION 'cannot migrate memberships: membership references a missing merchant';
+	END IF;
+	IF EXISTS (
+		SELECT 1
+		FROM public.memberships AS m
+		WHERE m.status IS NULL OR m.status NOT IN ('active', 'revoked') OR m.merchant_id IS NULL OR m.user_id IS NULL
+	) THEN
+		RAISE EXCEPTION 'cannot migrate memberships: invalid historical membership row';
+	END IF;
+
+	IF EXISTS (
+		SELECT 1
+		FROM public.users AS u
+		LEFT JOIN LATERAL (
+			SELECT count(*) FILTER (WHERE m.status = 'active') AS active_count,
+				count(*) AS history_count,
+				count(m.merchant_id) AS nonnull_merchant_count,
+				count(DISTINCT m.merchant_id) AS merchant_count,
+				min(m.merchant_id) AS merchant_id
+			FROM public.memberships AS m
+			WHERE m.user_id = u.id
+		) AS history ON true
+		WHERE NOT u.is_operator
+		  AND (history.active_count <> 1
+			OR history.history_count <> history.nonnull_merchant_count
+			OR history.merchant_count <> 1
+			OR history.merchant_id IS NULL)
+	) THEN
+		RAISE EXCEPTION 'cannot migrate memberships: every ordinary user needs exactly one active membership and one historical merchant';
+	END IF;
+
+	IF EXISTS (
+		SELECT 1
+		FROM public.users AS u
+		LEFT JOIN LATERAL (
+			SELECT min(m.merchant_id) AS merchant_id
+			FROM public.memberships AS m
+			WHERE m.user_id = u.id
+		) AS candidate ON true
+		WHERE NOT u.is_operator
+		  AND u.merchant_id IS NOT NULL
+		  AND u.merchant_id <> candidate.merchant_id
+	) THEN
+		RAISE EXCEPTION 'cannot migrate memberships: existing ordinary ownership conflicts with membership history';
+	END IF;
+
+	IF EXISTS (
+		SELECT 1
+		FROM (
+			SELECT u.id, min(m.merchant_id) AS merchant_id
+			FROM public.users AS u
+			JOIN public.memberships AS m ON m.user_id = u.id
+			WHERE NOT u.is_operator
+			GROUP BY u.id
+		) AS candidates
+		GROUP BY candidates.merchant_id
+		HAVING count(*) > 1
+	) THEN
+		RAISE EXCEPTION 'cannot migrate memberships: multiple ordinary users share one merchant';
+	END IF;
+
+	IF EXISTS (
+		SELECT 1
+		FROM public.users AS existing
+		JOIN (
+			SELECT u.id, min(m.merchant_id) AS merchant_id
+			FROM public.users AS u
+			JOIN public.memberships AS m ON m.user_id = u.id
+			WHERE NOT u.is_operator
+			GROUP BY u.id
+		) AS candidates ON candidates.merchant_id = existing.merchant_id
+		WHERE NOT existing.is_operator AND existing.id <> candidates.id
+	) THEN
+		RAISE EXCEPTION 'cannot migrate memberships: membership merchant is already owned by another ordinary user';
+	END IF;
+
+	IF EXISTS (
+		SELECT 1
+		FROM public.users
+		WHERE NOT is_operator AND merchant_id IS NOT NULL
+		GROUP BY merchant_id
+		HAVING count(*) > 1
+	) THEN
+		RAISE EXCEPTION 'cannot migrate memberships: existing ordinary ownership is not unique';
+	END IF;
+
+	UPDATE public.users AS u
+	SET merchant_id = candidates.merchant_id
+	FROM (
+		SELECT u.id, min(m.merchant_id) AS merchant_id
+		FROM public.users AS u
+		JOIN public.memberships AS m ON m.user_id = u.id
+		WHERE NOT u.is_operator
+		GROUP BY u.id
+	) AS candidates
+	WHERE u.id = candidates.id;
+
+	WITH operator_candidates AS (
+		SELECT u.id,
+			CASE
+				WHEN history.active_count = 1
+				 AND history.merchant_count = 1
+				 AND history.history_count = history.nonnull_merchant_count
+				 AND NOT EXISTS (
+					SELECT 1
+					FROM public.users AS ordinary
+					WHERE NOT ordinary.is_operator
+					  AND ordinary.merchant_id = history.merchant_id
+				 )
+				THEN history.merchant_id
+				ELSE NULL
+			END AS merchant_id
+		FROM public.users AS u
+		LEFT JOIN LATERAL (
+			SELECT count(*) FILTER (WHERE m.status = 'active') AS active_count,
+				count(*) AS history_count,
+				count(m.merchant_id) AS nonnull_merchant_count,
+				count(DISTINCT m.merchant_id) AS merchant_count,
+				min(m.merchant_id) AS merchant_id
+			FROM public.memberships AS m
+			WHERE m.user_id = u.id
+		) AS history ON true
+		WHERE u.is_operator
+	)
+	UPDATE public.users AS u
+	SET merchant_id = operator_candidates.merchant_id
+	FROM operator_candidates
+	WHERE u.id = operator_candidates.id;
+
+	DROP TABLE IF EXISTS public.memberships;
+END $identity$;`,
 	`DO $c$ BEGIN
-ALTER TABLE memberships ADD CONSTRAINT fk_memberships_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE;
+ALTER TABLE users ADD CONSTRAINT fk_users_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE SET NULL;
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-ALTER TABLE memberships ADD CONSTRAINT fk_memberships_user_id FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+ALTER TABLE users ADD CONSTRAINT ck_users_merchant_required_for_ordinary CHECK (is_operator OR merchant_id IS NOT NULL);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE memberships ADD CONSTRAINT uq_memberships_merchant_user UNIQUE (merchant_id, user_id);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE memberships ADD CONSTRAINT ck_memberships_role CHECK (role IN ('owner', 'editor', 'viewer'));
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE memberships ADD CONSTRAINT ck_memberships_status CHECK (status IN ('active', 'revoked'));
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
+	`CREATE INDEX IF NOT EXISTS ix_users_merchant_id ON public.users USING btree (merchant_id);`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_users_ordinary_merchant_id ON public.users USING btree (merchant_id) WHERE (is_operator = FALSE AND merchant_id IS NOT NULL);`,
 	`DO $c$ BEGIN
 ALTER TABLE registration_challenges ADD CONSTRAINT ck_registration_challenges_failed_attempts CHECK (failed_attempts >= 0 AND failed_attempts <= 5);
 EXCEPTION WHEN duplicate_object THEN NULL;
@@ -1938,84 +2075,82 @@ ALTER TABLE auth_sessions ADD CONSTRAINT fk_auth_sessions_user_id FOREIGN KEY (u
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
-	`CREATE INDEX IF NOT EXISTS ix_memberships_user_status ON public.memberships USING btree (user_id, status);`,
-	`CREATE INDEX IF NOT EXISTS ix_memberships_merchant_role_status ON public.memberships USING btree (merchant_id, role, status);`,
 	`CREATE INDEX IF NOT EXISTS ix_registration_challenges_email_created ON public.registration_challenges USING btree (email, created_at DESC);`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS uq_registration_challenges_active_email ON public.registration_challenges (email) WHERE consumed_at IS NULL;`,
 	`CREATE INDEX IF NOT EXISTS ix_auth_sessions_user_id ON public.auth_sessions USING btree (user_id);`,
 
-	// B1 root ownership: backfill sole merchant, NOT NULL, FK, indexes
-	`UPDATE products SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE image_sessions SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE media_library_folders SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE media_library_tags SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE media_library_assets SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE media_library_upload_keys SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE media_library_collection_keys SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE workflow_recipes SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE visual_systems SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE agent_sessions SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE agent_tasks SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
-	`UPDATE agent_conversations SET merchant_id = (SELECT id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1) WHERE merchant_id IS NULL AND EXISTS (SELECT 1 FROM merchants);`,
+	// B1 root ownership: existing NULL merchant IDs fail explicitly; inserts must provide their merchant.
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM products WHERE merchant_id IS NULL) THEN
-  ALTER TABLE products ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM products WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: products contains NULL merchant_id';
 END IF;
+ALTER TABLE products ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM image_sessions WHERE merchant_id IS NULL) THEN
-  ALTER TABLE image_sessions ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM image_sessions WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: image_sessions contains NULL merchant_id';
 END IF;
+ALTER TABLE image_sessions ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM media_library_folders WHERE merchant_id IS NULL) THEN
-  ALTER TABLE media_library_folders ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM media_library_folders WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: media_library_folders contains NULL merchant_id';
 END IF;
+ALTER TABLE media_library_folders ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM media_library_tags WHERE merchant_id IS NULL) THEN
-  ALTER TABLE media_library_tags ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM media_library_tags WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: media_library_tags contains NULL merchant_id';
 END IF;
+ALTER TABLE media_library_tags ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM media_library_assets WHERE merchant_id IS NULL) THEN
-  ALTER TABLE media_library_assets ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM media_library_assets WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: media_library_assets contains NULL merchant_id';
 END IF;
+ALTER TABLE media_library_assets ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM media_library_upload_keys WHERE merchant_id IS NULL) THEN
-  ALTER TABLE media_library_upload_keys ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM media_library_upload_keys WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: media_library_upload_keys contains NULL merchant_id';
 END IF;
+ALTER TABLE media_library_upload_keys ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM media_library_collection_keys WHERE merchant_id IS NULL) THEN
-  ALTER TABLE media_library_collection_keys ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM media_library_collection_keys WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: media_library_collection_keys contains NULL merchant_id';
 END IF;
+ALTER TABLE media_library_collection_keys ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM workflow_recipes WHERE merchant_id IS NULL) THEN
-  ALTER TABLE workflow_recipes ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM workflow_recipes WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: workflow_recipes contains NULL merchant_id';
 END IF;
+ALTER TABLE workflow_recipes ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM visual_systems WHERE merchant_id IS NULL) THEN
-  ALTER TABLE visual_systems ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM visual_systems WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: visual_systems contains NULL merchant_id';
 END IF;
+ALTER TABLE visual_systems ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM agent_sessions WHERE merchant_id IS NULL) THEN
-  ALTER TABLE agent_sessions ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM agent_sessions WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: agent_sessions contains NULL merchant_id';
 END IF;
+ALTER TABLE agent_sessions ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM agent_tasks WHERE merchant_id IS NULL) THEN
-  ALTER TABLE agent_tasks ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM agent_tasks WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: agent_tasks contains NULL merchant_id';
 END IF;
+ALTER TABLE agent_tasks ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
-IF NOT EXISTS (SELECT 1 FROM agent_conversations WHERE merchant_id IS NULL) THEN
-  ALTER TABLE agent_conversations ALTER COLUMN merchant_id SET NOT NULL;
+IF EXISTS (SELECT 1 FROM agent_conversations WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: agent_conversations contains NULL merchant_id';
 END IF;
+ALTER TABLE agent_conversations ALTER COLUMN merchant_id SET NOT NULL;
 END $c$;`,
 	`DO $c$ BEGIN
 ALTER TABLE products ADD CONSTRAINT fk_products_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id);
@@ -2087,41 +2222,18 @@ END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_sessions_merchant_activity ON public.agent_sessions USING btree (merchant_id, activity_at DESC, id DESC);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_tasks_merchant_updated ON public.agent_tasks USING btree (merchant_id, updated_at DESC, id DESC);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_conversations_merchant_updated ON public.agent_conversations USING btree (merchant_id, updated_at DESC, id DESC);`,
-	`CREATE OR REPLACE FUNCTION productflow_fill_merchant_id() RETURNS trigger LANGUAGE plpgsql AS $fn$
-BEGIN
-  IF NEW.merchant_id IS NULL OR btrim(NEW.merchant_id) = '' THEN
-    SELECT id INTO NEW.merchant_id FROM merchants ORDER BY created_at ASC, id ASC LIMIT 1;
-    IF NEW.merchant_id IS NULL THEN
-      RAISE EXCEPTION 'merchant_id required: no merchant exists';
-    END IF;
-  END IF;
-  RETURN NEW;
-END;
-$fn$;`,
 	`DROP TRIGGER IF EXISTS trg_products_fill_merchant_id ON products;`,
-	`CREATE TRIGGER trg_products_fill_merchant_id BEFORE INSERT ON products FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_image_sessions_fill_merchant_id ON image_sessions;`,
-	`CREATE TRIGGER trg_image_sessions_fill_merchant_id BEFORE INSERT ON image_sessions FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_media_library_folders_fill_merchant_id ON media_library_folders;`,
-	`CREATE TRIGGER trg_media_library_folders_fill_merchant_id BEFORE INSERT ON media_library_folders FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_media_library_tags_fill_merchant_id ON media_library_tags;`,
-	`CREATE TRIGGER trg_media_library_tags_fill_merchant_id BEFORE INSERT ON media_library_tags FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_media_library_assets_fill_merchant_id ON media_library_assets;`,
-	`CREATE TRIGGER trg_media_library_assets_fill_merchant_id BEFORE INSERT ON media_library_assets FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_media_library_upload_keys_fill_merchant_id ON media_library_upload_keys;`,
-	`CREATE TRIGGER trg_media_library_upload_keys_fill_merchant_id BEFORE INSERT ON media_library_upload_keys FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_media_library_collection_keys_fill_merchant_id ON media_library_collection_keys;`,
-	`CREATE TRIGGER trg_media_library_collection_keys_fill_merchant_id BEFORE INSERT ON media_library_collection_keys FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_workflow_recipes_fill_merchant_id ON workflow_recipes;`,
-	`CREATE TRIGGER trg_workflow_recipes_fill_merchant_id BEFORE INSERT ON workflow_recipes FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_visual_systems_fill_merchant_id ON visual_systems;`,
-	`CREATE TRIGGER trg_visual_systems_fill_merchant_id BEFORE INSERT ON visual_systems FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_agent_sessions_fill_merchant_id ON agent_sessions;`,
-	`CREATE TRIGGER trg_agent_sessions_fill_merchant_id BEFORE INSERT ON agent_sessions FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_agent_tasks_fill_merchant_id ON agent_tasks;`,
-	`CREATE TRIGGER trg_agent_tasks_fill_merchant_id BEFORE INSERT ON agent_tasks FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 	`DROP TRIGGER IF EXISTS trg_agent_conversations_fill_merchant_id ON agent_conversations;`,
-	`CREATE TRIGGER trg_agent_conversations_fill_merchant_id BEFORE INSERT ON agent_conversations FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
 
 	// MP-C price catalog B0: platform price versions + unit-price entries (seed default id = pv-placeholder-v0)
 	`DO $c$ BEGIN
@@ -2218,6 +2330,12 @@ END $c$;`,
 
 	// Brand entity B0: merchant-scoped brand root; optional visual_system link for inheritance wiring.
 	`DO $c$ BEGIN
+IF EXISTS (SELECT 1 FROM brands WHERE merchant_id IS NULL) THEN
+  RAISE EXCEPTION 'merchant_id required: brands contains NULL merchant_id';
+END IF;
+ALTER TABLE brands ALTER COLUMN merchant_id SET NOT NULL;
+END $c$;`,
+	`DO $c$ BEGIN
 ALTER TABLE brands ADD CONSTRAINT fk_brands_merchant_id FOREIGN KEY (merchant_id) REFERENCES merchants(id) ON DELETE CASCADE;
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
@@ -2235,7 +2353,7 @@ END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_brands_merchant_updated ON public.brands USING btree (merchant_id, updated_at DESC, id DESC);`,
 	`CREATE INDEX IF NOT EXISTS ix_brands_visual_system_id ON public.brands USING btree (visual_system_id);`,
 	`DROP TRIGGER IF EXISTS trg_brands_fill_merchant_id ON brands;`,
-	`CREATE TRIGGER trg_brands_fill_merchant_id BEFORE INSERT ON brands FOR EACH ROW EXECUTE FUNCTION productflow_fill_merchant_id();`,
+	`DROP FUNCTION IF EXISTS public.productflow_fill_merchant_id();`,
 
 	// Brand B1: product selects same-merchant brand; style merge reads Brand.visual_system_id current version.
 	`DO $c$ BEGIN

@@ -126,7 +126,7 @@ func (s Service) InvalidateRegistrationChallenge(ctx context.Context, challengeI
 }
 
 // Register consumes a valid challenge and atomically creates the ordinary
-// user, merchant, owner membership, session, and trial quota account.
+// user, its merchant, session, and trial quota account.
 func (s Service) Register(ctx context.Context, email, challengeID, code, password, displayName, merchantName, currentUserID string) (*Principal, string, string, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, "", "", err
@@ -199,32 +199,20 @@ func (s Service) Register(ctx context.Context, email, challengeID, code, passwor
 
 		userID := clockid.New()
 		merchantID = clockid.New()
-		membershipID := clockid.New()
 		sessionID = clockid.New()
-		user := schema.Users{
-			ID: userID, Email: emailNorm, PasswordHash: passwordHash, DisplayName: displayName,
-			IsOperator: false, Status: UserStatusActive, CreatedAt: now, UpdatedAt: now,
-		}
 		merchant := schema.Merchants{
 			ID: merchantID, Name: merchantName, Status: MerchantStatusActive, CreatedAt: now, UpdatedAt: now,
-		}
-		membership := schema.Memberships{
-			ID: membershipID, MerchantID: merchantID, UserID: userID, Role: RoleOwner,
-			Status: MembershipStatusActive, CreatedAt: now, UpdatedAt: now,
 		}
 		session := schema.AuthSessions{
 			ID: sessionID, UserID: userID, ExpiresAt: now.Add(sessionTTL), CreatedAt: now,
 		}
-		if err := gdb.Create(&user).Error; err != nil {
-			if isUniqueViolation(err) {
-				return apperr.Conflict("该邮箱已注册")
-			}
-			return err
-		}
 		if err := gdb.Create(&merchant).Error; err != nil {
 			return err
 		}
-		if err := gdb.Create(&membership).Error; err != nil {
+		if err := createUser(gdb, userID, emailNorm, passwordHash, displayName, false, UserStatusActive, now, &merchantID); err != nil {
+			if isUniqueViolation(err) {
+				return apperr.Conflict("该邮箱已注册")
+			}
 			return err
 		}
 		if err := gdb.Create(&session).Error; err != nil {
@@ -240,7 +228,7 @@ func (s Service) Register(ctx context.Context, email, challengeID, code, passwor
 		}
 		principal = &Principal{
 			UserID: userID, SessionID: sessionID, Email: emailNorm,
-			DisplayName: displayName, IsOperator: false,
+			DisplayName: displayName, IsOperator: false, MerchantID: &merchantID,
 		}
 		return nil
 	})

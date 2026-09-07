@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
@@ -320,10 +321,12 @@ func TestFromSessionRequiresGeneratedImage(t *testing.T) {
 	mediaID := productCreated.CreatedAssets[0].MediaObjectID
 	sessionID := clockid.New()
 	assetID := clockid.New()
-	if _, err := ls.pool.Exec(context.Background(), `
-		INSERT INTO image_sessions (id, title, created_at, updated_at)
-		VALUES ($1, '素材库测试会话', NOW(), NOW())
-	`, sessionID); err != nil {
+	merchantID := auth.MustDevMerchantID(t, ls.db)
+	fixtureCtx := auth.WithMerchantID(context.Background(), merchantID)
+	if _, err := ls.pool.Exec(fixtureCtx, `
+		INSERT INTO image_sessions (id, merchant_id, title, created_at, updated_at)
+		VALUES ($1, $2, '素材库测试会话', NOW(), NOW())
+	`, sessionID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ls.pool.Exec(context.Background(), `

@@ -69,17 +69,13 @@ func TestMerchantAgentToolsIsolation(t *testing.T) {
 		}
 	}
 
-	// 伪造商家声明头：会话成员无权访问他商 → AttachWorkingMerchant 403。
+	// 内部调用声明的商家必须与持久化会话归属一致，伪造目标返回统一404。
 	forgedHdr := http.Header{
 		"Authorization":             []string{"Bearer tok"},
 		"X-ProductFlow-Merchant-Id": []string{foreign.merchantID},
 	}
-	forged := as.do(t, http.MethodGet, "/api/internal/v1/agent-conversations/"+globalConv+"/contract", nil, "", forgedHdr)
-	defer forged.Body.Close()
-	if forged.StatusCode != http.StatusForbidden && forged.StatusCode != http.StatusUnauthorized {
-		raw, _ := io.ReadAll(forged.Body)
-		t.Fatalf("forged merchant header want 403/401 got %d %s", forged.StatusCode, raw)
-	}
+	assertCross404("forged merchant assertion", as.do(t, http.MethodGet,
+		"/api/internal/v1/agent-conversations/"+globalConv+"/contract", nil, "", forgedHdr))
 
 	assertCross404("foreign conversation contract", as.do(t, http.MethodGet,
 		"/api/internal/v1/agent-conversations/"+foreign.globalConvID+"/contract", nil, "", authHdr))
@@ -107,24 +103,24 @@ func TestMerchantAgentToolsIsolation(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	if err := as.db.Model(&schema.Memberships{}).
+	if err := as.db.Model(&schema.Users{}).
 		Where("merchant_id = ? AND status = ?", devMerchant, "active").
-		Updates(map[string]any{"status": "revoked", "revoked_at": now, "updated_at": now}).Error; err != nil {
+		Updates(map[string]any{"status": "disabled", "updated_at": now}).Error; err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = as.db.Model(&schema.Memberships{}).
+		_ = as.db.Model(&schema.Users{}).
 			Where("merchant_id = ?", devMerchant).
-			Updates(map[string]any{"status": "active", "revoked_at": nil, "updated_at": time.Now().UTC()}).Error
+			Updates(map[string]any{"status": "active", "updated_at": time.Now().UTC()}).Error
 	})
 
 	confirm := as.do(t, http.MethodPost,
 		"/api/v2/products/"+*task.ProductID+"/agent-conversations/"+*task.ConversationID+"/workflow-run-request/"+pendingReq.ID+"/confirm",
 		nil, "", nil)
 	defer confirm.Body.Close()
-	if confirm.StatusCode != http.StatusForbidden {
+	if confirm.StatusCode != http.StatusUnauthorized {
 		raw, _ := io.ReadAll(confirm.Body)
-		t.Fatalf("confirm after revoke want 403 got %d %s", confirm.StatusCode, raw)
+		t.Fatalf("confirm after user disabled want 401 got %d %s", confirm.StatusCode, raw)
 	}
 }
 

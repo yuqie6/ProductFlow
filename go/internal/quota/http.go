@@ -16,7 +16,7 @@ import (
 // unknown 裁定：Op ResolveUnknown；到期扫描见 ExpireUnknownHolds（dispatcher）。
 type HTTP struct {
 	DB         *gorm.DB
-	Auth       auth.HTTP // RequireMembership 校验本商成员；请求体里的商家 ID 不授予权限
+	Auth       auth.HTTP // RequireOwnMerchant 校验账号自有商家；请求体里的商家 ID 不授予权限
 	TrialUnits *int64    // 可选；非 nil 时覆盖 QUOTA_TRIAL_UNITS（测试常用 0）
 }
 
@@ -80,8 +80,8 @@ type resolveUnknownRequest struct {
 // Register 挂上商家只读余额/价格摘要与 Op 只读/调账/裁定/默认价格目录路由。
 func (h HTTP) Register(engine *gin.Engine) {
 	merchants := engine.Group("/api/merchants")
-	merchants.GET("/:merchant_id/quota", h.Auth.RequireMembership("merchant_id"), h.getMerchantAccount)
-	merchants.GET("/:merchant_id/quota/price", h.Auth.RequireMembership("merchant_id"), h.getMerchantPrice)
+	merchants.GET("/:merchant_id/quota", h.Auth.RequireOwnMerchant("merchant_id"), h.getMerchantAccount)
+	merchants.GET("/:merchant_id/quota/price", h.Auth.RequireOwnMerchant("merchant_id"), h.getMerchantPrice)
 
 	ops := engine.Group("/api/ops")
 	ops.Use(auth.RequireOperator())

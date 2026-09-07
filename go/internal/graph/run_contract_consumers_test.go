@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/yuqie6/productflow/internal/agent"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -17,7 +18,7 @@ import (
 
 func TestPersistedInvalidConfigRejectsHTTPAndAgentRunConsumers(t *testing.T) {
 	gs := newGraphServer(t)
-	ctx := context.Background()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, gs.db))
 	productID, graphID := gs.createDirectGraph(t)
 	view := loadProjection(t, gs, productID, graphID)
 	image := nodeOfType(t, view, graph.NodeImageGeneration)
@@ -88,7 +89,7 @@ func TestPersistedInvalidConfigRejectsHTTPAndAgentRunConsumers(t *testing.T) {
 
 func TestAgentIntakePersistsCurrentNodeAndTextContracts(t *testing.T) {
 	gs := newGraphServer(t)
-	ctx := context.Background()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, gs.db))
 	svc := agent.RecoveryService(gs.pool, gs.db)
 	svc.Product.Media = gs.media
 	created, err := svc.Product.CreateAgentDraft(ctx, "当前节点合同", clockid.New(), nil)
@@ -107,7 +108,7 @@ func TestAgentIntakePersistsCurrentNodeAndTextContracts(t *testing.T) {
 	if result["graph_expanded"] != true {
 		t.Fatalf("intake must expand the name-only graph: %+v", result)
 	}
-	live, err := graph.TryLive(ctx, gs.db, created.Product.ID)
+	live, err := graph.TryLive(graph.WithProductGuard(ctx, product.GraphGuard{}), gs.db, created.Product.ID)
 	if err != nil || live == nil {
 		t.Fatalf("live graph: %v", err)
 	}

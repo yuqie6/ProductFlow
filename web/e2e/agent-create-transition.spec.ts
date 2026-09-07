@@ -92,7 +92,12 @@ for (const failFirst of [false, true]) {
     await page.route("**/api/**", async (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === "/api/auth/session") {
-        await route.fulfill({ json: { authenticated: true } });
+        await route.fulfill({ json: {
+          authenticated: true,
+          access_required: false,
+          user: { id: "transition-user", email: "transition@example.com", display_name: "Transition", is_operator: false },
+          merchant: { id: "transition-merchant", name: "Transition merchant", status: "active" },
+        } });
       } else if (path.endsWith("/drafts")) {
         drafts += 1;
         await route.fulfill({ json: { product, conversation, task_id: "transition-task", intake_finalized: false } });

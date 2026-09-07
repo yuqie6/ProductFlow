@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -256,6 +257,383 @@ func TestApplyEmptyDatabaseMatchesHeadConstraints(t *testing.T) {
 		WHERE schemaname = 'public' AND indexdef ILIKE '% WHERE %'
 	`)
 	assertSame(t, "partial indexes", wantPartial, gotPartial)
+}
+
+func TestIdentityApplyFreshRemovesMembershipsAndFillers(t *testing.T) {
+	pool, _ := testdb.IsolatedMigrated(t, identityTestDatabaseName("fresh"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	var tableCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'memberships'
+	`).Scan(&tableCount); err != nil {
+		t.Fatal(err)
+	}
+	if tableCount != 0 {
+		t.Fatalf("memberships table still present: %d", tableCount)
+	}
+
+	var nullable string
+	if err := pool.QueryRow(ctx, `
+		SELECT is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'merchant_id'
+	`).Scan(&nullable); err != nil {
+		t.Fatal(err)
+	}
+	if nullable != "YES" {
+		t.Fatalf("users.merchant_id nullable=%q, want YES for Operator without a home", nullable)
+	}
+
+	for _, name := range []string{
+		"fk_users_merchant_id",
+		"ck_users_merchant_required_for_ordinary",
+		"uq_users_ordinary_merchant_id",
+	} {
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*)
+			FROM pg_constraint c
+			JOIN pg_class r ON r.oid = c.conrelid
+			WHERE c.conname = $1
+		`, name).Scan(&tableCount); err != nil {
+			t.Fatal(err)
+		}
+		if name == "uq_users_ordinary_merchant_id" {
+			if err := pool.QueryRow(ctx, `
+				SELECT count(*)
+				FROM pg_indexes
+				WHERE schemaname = 'public' AND indexname = $1
+			`, name).Scan(&tableCount); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if tableCount != 1 {
+			t.Fatalf("identity object %s missing", name)
+		}
+	}
+
+	var triggerCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM pg_trigger
+		WHERE NOT tgisinternal AND tgname LIKE '%fill_merchant_id%'
+	`).Scan(&triggerCount); err != nil {
+		t.Fatal(err)
+	}
+	if triggerCount != 0 {
+		t.Fatalf("merchant fill triggers remain: %d", triggerCount)
+	}
+	var functionCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM pg_proc
+		WHERE oid = to_regprocedure('public.productflow_fill_merchant_id()')
+	`).Scan(&functionCount); err != nil {
+		t.Fatal(err)
+	}
+	if functionCount != 0 {
+		t.Fatalf("merchant fill function remains: %d", functionCount)
+	}
+}
+
+func TestIdentityApplyRepeatKeepsDirectOwnership(t *testing.T) {
+	pool, gdb := testdb.IsolatedMigrated(t, identityTestDatabaseName("repeat"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO merchants (id, name, status, created_at, updated_at)
+		VALUES ('identity-repeat-merchant', 'repeat merchant', 'active', NOW(), NOW());
+		INSERT INTO users (id, email, password_hash, display_name, is_operator, merchant_id, status, created_at, updated_at)
+		VALUES ('identity-repeat-user', 'identity-repeat@example.com', 'hash', 'repeat', FALSE, 'identity-repeat-merchant', 'active', NOW(), NOW());
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatal(err)
+	}
+
+	var merchantID string
+	if err := pool.QueryRow(ctx, `SELECT merchant_id FROM users WHERE id = 'identity-repeat-user'`).Scan(&merchantID); err != nil {
+		t.Fatal(err)
+	}
+	if merchantID != "identity-repeat-merchant" {
+		t.Fatalf("direct ownership changed to %q", merchantID)
+	}
+	var membershipCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'memberships'
+	`).Scan(&membershipCount); err != nil {
+		t.Fatal(err)
+	}
+	if membershipCount != 0 {
+		t.Fatalf("memberships table recreated: %d", membershipCount)
+	}
+}
+
+func TestIdentityApplyConcurrentCallsSerialize(t *testing.T) {
+	pool, gdb := testdb.IsolatedMigrated(t, identityTestDatabaseName("concurrent"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	if _, err := pool.Exec(ctx, `ALTER TABLE users DROP COLUMN merchant_id CASCADE`); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results <- schema.Apply(gdb)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatalf("concurrent schema.Apply: %v", err)
+		}
+	}
+
+	var columnCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'merchant_id'
+	`).Scan(&columnCount); err != nil {
+		t.Fatal(err)
+	}
+	if columnCount != 1 {
+		t.Fatalf("users.merchant_id missing after concurrent Apply: %d", columnCount)
+	}
+}
+
+func TestIdentityApplyMigratesUnambiguousMembershipHistory(t *testing.T) {
+	pool, gdb := testdb.IsolatedMigrated(t, identityTestDatabaseName("legacy"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	prepareLegacyIdentityTables(t, ctx, pool)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO merchants (id, name, status, created_at, updated_at) VALUES
+			('identity-legacy-owned', 'legacy owned', 'active', NOW(), NOW()),
+			('identity-legacy-home', 'legacy home', 'active', NOW(), NOW()),
+			('identity-legacy-other', 'legacy other', 'active', NOW(), NOW()),
+			('identity-legacy-revoked-only', 'legacy revoked only', 'active', NOW(), NOW());
+		INSERT INTO users (id, email, password_hash, display_name, is_operator, status, created_at, updated_at) VALUES
+			('identity-legacy-ordinary', 'identity-legacy-ordinary@example.com', 'hash', 'ordinary', FALSE, 'active', NOW(), NOW()),
+			('identity-legacy-operator', 'identity-legacy-operator@example.com', 'hash', 'operator', TRUE, 'active', NOW(), NOW()),
+			('identity-legacy-ambiguous', 'identity-legacy-ambiguous@example.com', 'hash', 'ambiguous', TRUE, 'active', NOW(), NOW()),
+			('identity-legacy-revoked-only', 'identity-legacy-revoked-only@example.com', 'hash', 'revoked only', TRUE, 'active', NOW(), NOW());
+		INSERT INTO memberships (id, merchant_id, user_id, role, status, created_at, updated_at, revoked_at) VALUES
+			('identity-membership-ordinary-active', 'identity-legacy-owned', 'identity-legacy-ordinary', 'owner', 'active', NOW(), NOW(), NULL),
+			('identity-membership-ordinary-revoked', 'identity-legacy-owned', 'identity-legacy-ordinary', 'owner', 'revoked', NOW(), NOW(), NOW()),
+			('identity-membership-operator-home', 'identity-legacy-home', 'identity-legacy-operator', 'viewer', 'active', NOW(), NOW(), NULL),
+			('identity-membership-ambiguous-home', 'identity-legacy-home', 'identity-legacy-ambiguous', 'viewer', 'active', NOW(), NOW(), NULL),
+			('identity-membership-ambiguous-other', 'identity-legacy-other', 'identity-legacy-ambiguous', 'viewer', 'revoked', NOW(), NOW(), NOW()),
+			('identity-membership-revoked-only', 'identity-legacy-revoked-only', 'identity-legacy-revoked-only', 'viewer', 'revoked', NOW(), NOW(), NOW());
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT id, merchant_id FROM users
+		WHERE id IN ('identity-legacy-ordinary', 'identity-legacy-operator', 'identity-legacy-ambiguous', 'identity-legacy-revoked-only')
+		ORDER BY id
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]*string{}
+	for rows.Next() {
+		var id string
+		var merchantID *string
+		if err := rows.Scan(&id, &merchantID); err != nil {
+			t.Fatal(err)
+		}
+		got[id] = merchantID
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if got["identity-legacy-ordinary"] == nil || *got["identity-legacy-ordinary"] != "identity-legacy-owned" {
+		t.Fatalf("ordinary ownership %#v", got["identity-legacy-ordinary"])
+	}
+	if got["identity-legacy-operator"] == nil || *got["identity-legacy-operator"] != "identity-legacy-home" {
+		t.Fatalf("operator home %#v", got["identity-legacy-operator"])
+	}
+	if got["identity-legacy-ambiguous"] != nil {
+		t.Fatalf("ambiguous operator unexpectedly mapped: %#v", got["identity-legacy-ambiguous"])
+	}
+	if got["identity-legacy-revoked-only"] != nil {
+		t.Fatalf("revoked-only operator unexpectedly mapped: %#v", got["identity-legacy-revoked-only"])
+	}
+	assertMembershipsRemoved(t, ctx, pool)
+}
+
+func TestIdentityApplyAmbiguityRollsBackAndCanRetry(t *testing.T) {
+	pool, gdb := testdb.IsolatedMigrated(t, identityTestDatabaseName("rollback"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	prepareLegacyIdentityTables(t, ctx, pool)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO merchants (id, name, status, created_at, updated_at)
+		VALUES ('identity-rollback-merchant-a', 'rollback A', 'active', NOW(), NOW()),
+		       ('identity-rollback-merchant-b', 'rollback B', 'active', NOW(), NOW());
+		INSERT INTO users (id, email, password_hash, display_name, is_operator, status, created_at, updated_at)
+		VALUES ('identity-rollback-user', 'identity-rollback@example.com', 'hash', 'rollback', FALSE, 'active', NOW(), NOW()),
+		       ('identity-rollback-shared-user', 'identity-rollback-shared@example.com', 'hash', 'rollback shared', FALSE, 'active', NOW(), NOW());
+		INSERT INTO memberships (id, merchant_id, user_id, role, status, created_at, updated_at)
+		VALUES ('identity-rollback-a', 'identity-rollback-merchant-a', 'identity-rollback-user', 'owner', 'active', NOW(), NOW()),
+		       ('identity-rollback-b', 'identity-rollback-merchant-b', 'identity-rollback-user', 'owner', 'active', NOW(), NOW()),
+		       ('identity-rollback-shared', 'identity-rollback-merchant-a', 'identity-rollback-shared-user', 'owner', 'active', NOW(), NOW());
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := schema.Apply(gdb); err == nil {
+		t.Fatal("ambiguous membership migration unexpectedly succeeded")
+	}
+	var columnCount, membershipCount, rowCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'merchant_id'
+	`).Scan(&columnCount); err != nil {
+		t.Fatal(err)
+	}
+	if columnCount != 0 {
+		t.Fatalf("failed migration left users.merchant_id column: %d", columnCount)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'memberships'
+	`).Scan(&membershipCount); err != nil {
+		t.Fatal(err)
+	}
+	if membershipCount != 1 {
+		t.Fatalf("failed migration removed memberships: %d", membershipCount)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM memberships`).Scan(&rowCount); err != nil {
+		t.Fatal(err)
+	}
+	if rowCount != 3 {
+		t.Fatalf("failed migration changed membership rows: %d", rowCount)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE memberships
+		SET merchant_id = 'identity-rollback-merchant-a', status = 'revoked'
+		WHERE id = 'identity-rollback-b';
+		UPDATE memberships
+		SET merchant_id = 'identity-rollback-merchant-b'
+		WHERE id = 'identity-rollback-shared';
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatalf("retry after repairing history: %v", err)
+	}
+	var merchantID string
+	if err := pool.QueryRow(ctx, `SELECT merchant_id FROM users WHERE id = 'identity-rollback-user'`).Scan(&merchantID); err != nil {
+		t.Fatal(err)
+	}
+	if merchantID != "identity-rollback-merchant-a" {
+		t.Fatalf("repaired ownership %q", merchantID)
+	}
+	if err := pool.QueryRow(ctx, `SELECT merchant_id FROM users WHERE id = 'identity-rollback-shared-user'`).Scan(&merchantID); err != nil {
+		t.Fatal(err)
+	}
+	if merchantID != "identity-rollback-merchant-b" {
+		t.Fatalf("repaired shared ownership %q", merchantID)
+	}
+	assertMembershipsRemoved(t, ctx, pool)
+}
+
+func TestApplyRejectsNullRootOwnership(t *testing.T) {
+	pool, gdb := testdb.IsolatedMigrated(t, identityTestDatabaseName("root_null"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE products ALTER COLUMN merchant_id DROP NOT NULL;
+		INSERT INTO products (id, name, merchant_id, created_at, updated_at)
+		VALUES ('identity-root-null-product', 'root null', NULL, NOW(), NOW());
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err == nil {
+		t.Fatal("NULL root ownership unexpectedly accepted")
+	}
+	var nullable string
+	if err := pool.QueryRow(ctx, `
+		SELECT is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'products' AND column_name = 'merchant_id'
+	`).Scan(&nullable); err != nil {
+		t.Fatal(err)
+	}
+	if nullable != "YES" {
+		t.Fatalf("failed root migration changed nullability to %q", nullable)
+	}
+	var merchantID *string
+	if err := pool.QueryRow(ctx, `SELECT merchant_id FROM products WHERE id = 'identity-root-null-product'`).Scan(&merchantID); err != nil {
+		t.Fatal(err)
+	}
+	if merchantID != nil {
+		t.Fatalf("NULL root ownership was backfilled to %q", *merchantID)
+	}
+}
+
+func identityTestDatabaseName(suffix string) string {
+	return fmt.Sprintf("pf_identity_%s_%d", suffix, time.Now().UnixNano()%1_000_000_000)
+}
+
+func prepareLegacyIdentityTables(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+		ALTER TABLE users DROP COLUMN merchant_id CASCADE;
+		CREATE TABLE memberships (
+			id varchar(36) PRIMARY KEY,
+			merchant_id varchar(36) NOT NULL,
+			user_id varchar(36) NOT NULL,
+			role varchar(32) NOT NULL,
+			status varchar(32) NOT NULL,
+			created_at timestamptz NOT NULL,
+			updated_at timestamptz NOT NULL,
+			revoked_at timestamptz
+		);
+	`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertMembershipsRemoved(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'memberships'
+	`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("memberships table remains: %d", count)
+	}
 }
 
 func tableSet(t *testing.T, ctx context.Context, pool *pgxpool.Pool) map[string]struct{} {

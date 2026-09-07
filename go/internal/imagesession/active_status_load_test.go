@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
@@ -186,7 +187,8 @@ func TestImageSessionStatusActiveSetScale(t *testing.T) {
 func seedActiveStatusSession(t *testing.T, gdb *gorm.DB, n int, prompt string) string {
 	t.Helper()
 	now := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
-	session := schema.ImageSessions{ID: clockid.New(), Title: fmt.Sprintf("active status %d", n), CreatedAt: now, UpdatedAt: now}
+	merchantID := auth.MustDevMerchantID(t, gdb)
+	session := schema.ImageSessions{ID: clockid.New(), MerchantID: merchantID, Title: fmt.Sprintf("active status %d", n), CreatedAt: now, UpdatedAt: now}
 	if err := gdb.Create(&session).Error; err != nil {
 		t.Fatal(err)
 	}

@@ -6,17 +6,17 @@ ProductFlow 当前实现包含商品视觉生产工作台以及 User/Merchant �
 
 当前尚未正式商用发布，没有真实商户用户。主仓库仍处于可破坏性更新阶段，跟随研发版本可能需要重建数据库和 storage；在线运行时只维护一套 schema-v3 图、API 和执行模型。现有开发基线的 bootstrap 仍只创建唯一开发商家；公开注册已经实现，并通过真实浏览器与真实 SMTP/IMAP 邮件收取验证。完整账户/管理员商品管理与真实支付尚未实现；已有额度账本和稳定发行恢复/升级机制的证据见架构与 release 文档。
 
-用户确认的最终方向是可自托管的多商家 SaaS，项目方也部署同一产品经营自己的站点。普通账号对应一个自有商家，不建设工作区切换或团队产品；管理员跨商家管理商品是待交付目标，现有隔离基础不等于完整管理后台；首个正式版的隔离、体验、竞争能力与部署要求由 [产品方向与正式版路线图](ROADMAP.md) 维护。本 PRD 以下仅描述已接线能力。
+用户确认的最终方向是可自托管的多商家 SaaS，项目方也部署同一产品经营自己的站点。普通账号对应一个自有商家，不建设工作区切换或团队产品；管理员已有指定商家的商品读、事实编辑和删除接口，完整管理页面与操作审计仍待交付；首个正式版的隔离、体验、竞争能力与部署要求由 [产品方向与正式版路线图](ROADMAP.md) 维护。本 PRD 以下仅描述已接线能力。
 
 ### 1.1 账号入口
 
-部署者完成 `ADMIN_ACCESS_KEY` bootstrap 后，站点 Operator 可在现有 `/settings` 配置注册邮件 SMTP。公开用户在注册模式提交邮箱、验证码、密码和商家名称，验证成功后创建普通 `User`、该用户自己的 `Merchant`、Owner Membership 和试用额度；API 的 `display_name` 为可选字段，缺省使用邮箱前缀。SMTP 配置字段为 `smtp_host`、`smtp_port`、`smtp_security`（`starttls` 或 `tls`）、`smtp_username`、`smtp_password`（secret）、`smtp_from_address` 和 `smtp_from_name`。
+部署者完成 `ADMIN_ACCESS_KEY` bootstrap 后，站点 Operator 可在现有 `/settings` 配置注册邮件 SMTP。公开用户在注册模式提交邮箱、验证码、密码和商家名称，验证成功后创建普通 `User`、该用户自己的 `Merchant` 和试用额度；API 的 `display_name` 为可选字段，缺省使用邮箱前缀。SMTP 配置字段为 `smtp_host`、`smtp_port`、`smtp_security`（`starttls` 或 `tls`）、`smtp_username`、`smtp_password`（secret）、`smtp_from_address` 和 `smtp_from_name`。
 
 开发栈从 `.env.dev` 的 `SMTP_HOST`、`SMTP_PORT`、`SMTP_SECURITY`、`SMTP_USERNAME`、`SMTP_PASSWORD`、`SMTP_FROM_ADDRESS`、`SMTP_FROM_NAME` 读取启动默认；设置页写入的数据库值覆盖对应默认，点击恢复默认会删除该数据库覆盖并回到当前环境默认。`smtp_password` 不回显、不进入普通导出或日志。
 
 用户入口沿现有 `/login` 的注册模式提供，不新增独立 `/register` 路由。
 
-验证码为六位随机码，有效期 10 分钟，重发间隔 60 秒，每个 challenge 最多 5 次错误验证；重发会使旧 challenge 失效。现有邮箱和密码登录保留。真实浏览器链路已验证发码成功、邮件经 SMTP 发出并由 IMAP 收取、注册成功进入 `/products`，注册会话属于普通 User 并拥有自己的 Merchant 和 Owner Membership；旧验证码重放返回 410，密码登录仍返回 200。该证据覆盖注册切片，不代表整站发布或密码恢复已经完成。推荐和返利本阶段不实现，未来另行决定；现有 Membership 为身份实现遗留，不继续扩展成员或团队产品。
+验证码为六位随机码，有效期 10 分钟，重发间隔 60 秒，每个 challenge 最多 5 次错误验证；重发会使旧 challenge 失效。现有邮箱和密码登录保留。真实浏览器链路已验证发码成功、邮件经 SMTP 发出并由 IMAP 收取、注册成功进入 `/products`，注册会话属于普通 User 并拥有自己的 Merchant；旧验证码重放返回 410，密码登录仍返回 200。该证据覆盖注册切片，不代表整站发布或密码恢复已经完成。推荐和返利本阶段不实现，未来另行决定；账号通过 users.merchant_id 直接归属商家，不保留成员角色或商家切换。
 
 ## 2. 目标用户
 

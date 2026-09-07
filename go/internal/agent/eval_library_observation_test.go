@@ -78,6 +78,7 @@ func TestEvalLibraryObservationFixtures(t *testing.T) {
 		}
 		t.Run(task.ID, func(t *testing.T) {
 			as := newEvalLibraryServer(t)
+			ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 			seeded := seedEvalWorld(t, as, task, worlds[task.World])
 			if evalTurnCollectionPath(seeded) != "/api/v2/agent-conversations/"+seeded.ConvID+"/turns" {
 				t.Fatal("global fixture routed through product scope")
@@ -92,7 +93,7 @@ func TestEvalLibraryObservationFixtures(t *testing.T) {
 			if (seeded.GraphID != "" && filters["workflow_id"] != "" && filters["workflow_id"] != seeded.GraphID) || (seeded.ProductID != "" && filters["product_id"] != "" && filters["product_id"] != seeded.ProductID) {
 				t.Fatal("global target filters retain fixture identities")
 			}
-			page, err := as.svc.ListLibraryAssets(context.Background(), seeded.ConvID, "", "", 100, LibraryReadOptions{IncludeArchived: true, WorkflowID: seeded.GraphID})
+			page, err := as.svc.ListLibraryAssets(ctx, seeded.ConvID, "", "", 100, LibraryReadOptions{IncludeArchived: true, WorkflowID: seeded.GraphID})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,11 +141,11 @@ func TestEvalLibraryObservationFixtures(t *testing.T) {
 					}
 				}
 				raw, _ := json.Marshal(payload)
-				draft, err := as.svc.Library.AppendOrganizationDraftRevision(context.Background(), seeded.ConvID, raw, "", "")
+				draft, err := as.svc.Library.AppendOrganizationDraftRevision(ctx, seeded.ConvID, raw, "", "")
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := as.svc.ConfirmLibraryDraftHTTP(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), seeded.ConvID, draft.CurrentRevision.Version, clockid.New()); err != nil {
+				if _, err := as.svc.ConfirmLibraryDraftHTTP(ctx, seeded.ConvID, draft.CurrentRevision.Version, clockid.New()); err != nil {
 					t.Fatal(err)
 				}
 				for _, raw := range payload["operations"].([]any) {
@@ -198,6 +199,7 @@ func TestEvalLibraryObservationFixtures(t *testing.T) {
 	}
 	t.Run("pagination-and-linked", func(t *testing.T) {
 		as := newEvalLibraryServer(t)
+		ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 		var task EvalTask
 		for _, candidate := range tasks {
 			if candidate.ID == "media-library-organization-batch-rename" {
@@ -212,10 +214,10 @@ func TestEvalLibraryObservationFixtures(t *testing.T) {
 		}
 		seeded := seedEvalWorld(t, as, task, world)
 		linkedID := seeded.AssetIDs[world.ListedAssets[0].ID]
-		if _, err := as.svc.Library.SyncWorkflow(context.Background(), seeded.ProductID, seeded.GraphID, []string{linkedID}); err != nil {
+		if _, err := as.svc.Library.SyncWorkflow(ctx, seeded.ProductID, seeded.GraphID, []string{linkedID}); err != nil {
 			t.Fatal(err)
 		}
-		full, err := as.svc.ListLibraryAssets(context.Background(), seeded.ConvID, "", "", 100, LibraryReadOptions{WorkflowID: seeded.GraphID})
+		full, err := as.svc.ListLibraryAssets(ctx, seeded.ConvID, "", "", 100, LibraryReadOptions{WorkflowID: seeded.GraphID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -228,7 +230,7 @@ func TestEvalLibraryObservationFixtures(t *testing.T) {
 		seen := map[string]bool{}
 		after := ""
 		for {
-			page, err := as.svc.ListLibraryAssets(context.Background(), seeded.ConvID, "", "", 1, LibraryReadOptions{FoldersAfterID: after, WorkflowID: seeded.GraphID})
+			page, err := as.svc.ListLibraryAssets(ctx, seeded.ConvID, "", "", 1, LibraryReadOptions{FoldersAfterID: after, WorkflowID: seeded.GraphID})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -247,15 +249,15 @@ func TestEvalLibraryObservationFixtures(t *testing.T) {
 		if len(seen) != 3 {
 			t.Fatal(seen)
 		}
-		page, err := as.svc.ListLibraryAssets(context.Background(), seeded.ConvID, "", "", 1)
+		page, err := as.svc.ListLibraryAssets(ctx, seeded.ConvID, "", "", 1)
 		if err != nil || page.NextCursor == nil {
 			t.Fatalf("missing asset continuation: %v", err)
 		}
-		next, err := as.svc.ListLibraryAssets(context.Background(), seeded.ConvID, "", *page.NextCursor, 1)
+		next, err := as.svc.ListLibraryAssets(ctx, seeded.ConvID, "", *page.NextCursor, 1)
 		if err != nil || len(next.Items) != 1 || next.Items[0].ID == page.Items[0].ID || next.NextCursor != nil {
 			t.Fatalf("invalid asset continuation: %v", err)
 		}
-		if _, err := as.svc.ListLibraryAssets(context.Background(), seeded.ConvID, "changed", *page.NextCursor, 1); err == nil {
+		if _, err := as.svc.ListLibraryAssets(ctx, seeded.ConvID, "changed", *page.NextCursor, 1); err == nil {
 			t.Fatal("cursor reused across filters")
 		}
 	})

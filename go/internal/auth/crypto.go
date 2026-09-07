@@ -18,13 +18,6 @@ const (
 	MerchantStatusActive    = "active"
 	MerchantStatusSuspended = "suspended"
 
-	MembershipStatusActive  = "active"
-	MembershipStatusRevoked = "revoked"
-
-	RoleOwner  = "owner"
-	RoleEditor = "editor"
-	RoleViewer = "viewer"
-
 	sessionCookieUserKey    = "user_id"
 	sessionCookieSessionKey = "auth_session_id"
 	sessionTTL              = 14 * 24 * time.Hour

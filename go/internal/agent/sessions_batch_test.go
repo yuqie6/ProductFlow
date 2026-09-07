@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
@@ -12,7 +13,8 @@ import (
 
 func TestLoadSessionsKeepsConversationCountAndPerSessionLimit(t *testing.T) {
 	_, gdb := testdb.Open(t)
-	ctx := context.Background()
+	merchantID := auth.MustDevMerchantID(t, gdb)
+	ctx := auth.WithMerchantID(context.Background(), merchantID)
 	now := time.Now().UTC()
 	productID := clockid.New()
 	sessionID := clockid.New()
@@ -20,13 +22,13 @@ func TestLoadSessionsKeepsConversationCountAndPerSessionLimit(t *testing.T) {
 	createdIDs := make([]string, 0, 21)
 
 	if err := gdb.WithContext(ctx).Exec(
-		"INSERT INTO products (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
-		productID, "批量投影商品", now, now,
+		"INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+		productID, merchantID, "批量投影商品", now, now,
 	).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := gdb.WithContext(ctx).Create(&schema.AgentSessions{
-		ID: sessionID, Title: "批量投影", Status: "active", ProductID: &productIDRef,
+		ID: sessionID, MerchantID: merchantID, Title: "批量投影", Status: "active", ProductID: &productIDRef,
 		CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -42,7 +44,7 @@ func TestLoadSessionsKeepsConversationCountAndPerSessionLimit(t *testing.T) {
 		createdIDs = append(createdIDs, id)
 		at := now.Add(time.Duration(index) * time.Second)
 		if err := gdb.WithContext(ctx).Create(&schema.AgentConversations{
-			ID: id, ProductID: &productIDRef, HarnessRunID: "batch-harness-" + id,
+			ID: id, MerchantID: merchantID, ProductID: &productIDRef, HarnessRunID: "batch-harness-" + id,
 			Status: "collecting", CreatedAt: at, UpdatedAt: at, SessionID: &sessionID,
 			ScopeType: "product_workflow",
 		}).Error; err != nil {
@@ -73,12 +75,13 @@ func TestLoadSessionsKeepsConversationCountAndPerSessionLimit(t *testing.T) {
 
 func TestConversationUpdateBumpsSessionActivityAt(t *testing.T) {
 	_, gdb := testdb.Open(t)
-	ctx := context.Background()
+	merchantID := auth.MustDevMerchantID(t, gdb)
+	ctx := auth.WithMerchantID(context.Background(), merchantID)
 	now := time.Now().UTC().Add(-time.Hour)
 	sessionID := clockid.New()
 	convID := clockid.New()
 	if err := gdb.WithContext(ctx).Create(&schema.AgentSessions{
-		ID: sessionID, Title: "活动时间", Status: "active",
+		ID: sessionID, MerchantID: merchantID, Title: "活动时间", Status: "active",
 		CreatedAt: now, UpdatedAt: now, ActivityAt: now,
 	}).Error; err != nil {
 		t.Fatal(err)
@@ -89,7 +92,7 @@ func TestConversationUpdateBumpsSessionActivityAt(t *testing.T) {
 	})
 	later := now.Add(30 * time.Minute)
 	if err := gdb.WithContext(ctx).Create(&schema.AgentConversations{
-		ID: convID, HarnessRunID: convID, Status: "collecting",
+		ID: convID, MerchantID: merchantID, HarnessRunID: convID, Status: "collecting",
 		CreatedAt: later, UpdatedAt: later, SessionID: &sessionID, ScopeType: "global",
 	}).Error; err != nil {
 		t.Fatal(err)

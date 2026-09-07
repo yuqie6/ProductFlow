@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -472,7 +473,11 @@ func promoteNextQueuedRun(ctx context.Context, tx *gorm.DB, graphID string) erro
 	if err := tx.WithContext(ctx).Select("product_id").Where("id = ?", graphID).Take(&graph).Error; err != nil {
 		return err
 	}
-	if err := activateQueuedRun(ctx, tx, graph.ProductID, rec.ID); err != nil {
+	merchantID, err := merchantIDForGraphRun(ctx, tx, rec.ID)
+	if err != nil {
+		return err
+	}
+	if err := activateQueuedRun(auth.WithMerchantID(ctx, merchantID), tx, graph.ProductID, rec.ID); err != nil {
 		return err
 	}
 	var after schema.WorkflowGraphRuns

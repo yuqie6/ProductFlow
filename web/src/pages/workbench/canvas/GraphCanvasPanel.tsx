@@ -17,7 +17,7 @@ import { Kbd } from "../../../components/ui/kbd";
 import { toast } from "../../../components/ui/toast";
 import { Tooltip } from "../../../components/ui/tooltip";
 import { api, ApiError } from "../../../lib/api";
-import { bindMerchantGeneration, getMerchantGeneration } from "../../../lib/merchantBoundary";
+import { bindAccountGeneration, getAccountGeneration } from "../../../lib/accountBoundary";
 import { AGENT_IMAGE_TYPE_TRANSLATIONS } from "../../product-create/imageTypeSelection";
 import { useI18n } from "../../../lib/preferences";
 import type { AgentProductImageTypeKey, GraphChangeSet, GraphNodeCatalog, GraphNodeType, GraphProjection, GraphRunListResponse, GraphRunPreviewResponse, GraphRunSubmitInput } from "../../../lib/types";
@@ -487,8 +487,8 @@ export function GraphCanvasPanel({
       setRunEventsFallback(false);
       return;
     }
-    const generation = getMerchantGeneration();
-    return subscribeGraphRunEvents(api.graphRunEventsUrl(productId, graph.id, liveRunId), bindMerchantGeneration(generation, (event) => {
+    const generation = getAccountGeneration();
+    return subscribeGraphRunEvents(api.graphRunEventsUrl(productId, graph.id, liveRunId), bindAccountGeneration(generation, (event) => {
       runEventCursorRef.current[event.run_id] = event.sequence;
       queryClient.setQueryData<GraphRunListResponse | undefined>(["graph-runs", productId, graph.id], (previous) => applyGraphRunEvent(previous, event));
       if (event.kind === "run.started"

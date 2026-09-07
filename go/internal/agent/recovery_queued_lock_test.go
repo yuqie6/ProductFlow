@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"gorm.io/gorm"
 )
 
@@ -21,13 +22,14 @@ func TestQueuedRecoverySkipsLockedConversationPrefix(t *testing.T) {
 
 func TestQueuedRecoveryReportsCancellationAfterDiscovery(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
+	merchantCtx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	drainAgentRecovery(t, as)
 	resp := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, resp, http.StatusCreated)
 	var session SessionResponse
 	as.decode(t, resp, &session)
 	conv := session.Conversations[0].ConversationID
-	if _, err := as.svc.CreateTask(context.Background(), session.ID, "cancel-recovery", "recover queued task", &conv); err != nil {
+	if _, err := as.svc.CreateTask(merchantCtx, session.ID, "cancel-recovery", "recover queued task", &conv); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -49,7 +51,7 @@ func TestQueuedRecoveryReportsCancellationAfterDiscovery(t *testing.T) {
 func testQueuedRecoveryLockedConversation(t *testing.T, late bool) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	drainAgentRecovery(t, as)
-	ctx := context.Background()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	var sessions [2]SessionResponse
 	for i := range sessions {
 		resp := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)

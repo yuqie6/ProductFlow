@@ -27,7 +27,7 @@ func TestQueueOverviewMatchesSharedSnapshot(t *testing.T) {
 
 func TestQueuedPositionsReturnsOnlyRequestedGlobalRanks(t *testing.T) {
 	_, gdb := testdb.Open(t)
-	_ = auth.MustDevMerchantID(t, gdb)
+	merchantID := auth.MustDevMerchantID(t, gdb)
 	tx := gdb.Begin()
 	if tx.Error != nil {
 		t.Fatal(tx.Error)
@@ -40,7 +40,7 @@ func TestQueuedPositionsReturnsOnlyRequestedGlobalRanks(t *testing.T) {
 	start := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	sessionIDs := []string{clockid.New(), clockid.New()}
 	for _, id := range sessionIDs {
-		if err := tx.Create(&schema.ImageSessions{ID: id, Title: "queue ranks", CreatedAt: start, UpdatedAt: start}).Error; err != nil {
+		if err := tx.Create(&schema.ImageSessions{ID: id, MerchantID: merchantID, Title: "queue ranks", CreatedAt: start, UpdatedAt: start}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -57,7 +57,7 @@ func TestQueuedPositionsReturnsOnlyRequestedGlobalRanks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ctx := context.Background()
+	ctx := auth.WithMerchantID(context.Background(), merchantID)
 	positions := queuedPositions(ctx, tx, []string{prefix + "b", prefix + "c", prefix + "c", prefix + "d", "missing", ""})
 	if len(positions) != 2 || positions[prefix+"b"] != 2 || positions[prefix+"c"] != 3 {
 		t.Fatalf("requested positions must retain global timestamp/id rank: %v", positions)

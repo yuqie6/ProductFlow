@@ -5,14 +5,10 @@ import type { SessionState } from "./types";
 /** 是否可进入系统配置（矩阵 A3）。 */
 export function canAccessOpsSettings(session: SessionState | undefined | null): boolean {
   if (!session?.authenticated) return false;
-  if (!session.access_required) return true;
-  return Boolean(session.user?.is_operator);
+  return session.user?.is_operator === true;
 }
 
 /** 当前工作商家是否已停用。 */
 export function isWorkingMerchantSuspended(session: SessionState | undefined | null): boolean {
-  const memberships = session?.memberships;
-  if (!memberships?.length) return false;
-  const active = memberships.find((item) => item.status === "active") ?? memberships[0];
-  return active?.merchant_status === "suspended";
+  return session?.merchant?.status === "suspended";
 }

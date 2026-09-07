@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"gorm.io/gorm"
 )
@@ -29,10 +30,11 @@ func TestImageSessionHTTPTargetScale(t *testing.T) {
 		t.Fatal("HTTP load gate requires DATABASE_URL")
 	}
 	pool, gdb := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_ihttp_%d", time.Now().UnixNano()))
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
-	defer cancel()
-	seedTargetScaleImageSessions(t, ctx, pool)
 	ss := newSessionServerWithDatabase(t, pool, gdb)
+	merchantID := auth.MustDevMerchantID(t, gdb)
+	ctx, cancel := context.WithTimeout(auth.WithMerchantID(context.Background(), merchantID), 4*time.Minute)
+	defer cancel()
+	seedTargetScaleImageSessions(t, ctx, pool, merchantID)
 	ss.client.Timeout = 10 * time.Second
 	seedImageSessionHTTPPayload(t, ss)
 	for table, want := range map[string]int{

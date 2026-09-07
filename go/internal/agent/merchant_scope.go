@@ -28,7 +28,7 @@ func bindConversationMerchant(ctx context.Context, conv conversationRow) (contex
 	return auth.WithMerchantID(ctx, merchantID), nil
 }
 
-// requireBrowserMerchant 浏览器确认/写路径：已登录但无有效 Membership 时拒绝（撤销后确认）。
+// requireBrowserMerchant 浏览器确认/写路径：已登录但无账号自有商家时拒绝。
 func requireBrowserMerchant(ctx context.Context) error {
 	if _, ok := auth.MerchantIDFrom(ctx); ok {
 		return nil

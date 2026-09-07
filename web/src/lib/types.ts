@@ -40,25 +40,38 @@ export type WorkflowNodeStatus = "queued" | "running" | "succeeded" | "failed" |
 export type WorkflowNodeDisplayStatus = WorkflowNodeStatus | "idle";
 export type WorkflowRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown";
 
-export interface SessionState {
-  authenticated: boolean;
+export interface SessionMerchant {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface SessionUser {
+  id: string;
+  email: string;
+  display_name: string;
+  is_operator: boolean;
+}
+
+export interface AnonymousSessionState {
+  authenticated: false;
   access_required: boolean;
   needs_bootstrap?: boolean;
   registration_available?: boolean;
-  user?: {
-    id: string;
-    email: string;
-    display_name: string;
-    is_operator: boolean;
-  };
-  memberships?: Array<{
-    merchant_id: string;
-    merchant_name: string;
-    role: string;
-    status: string;
-    merchant_status?: string;
-  }>;
+  user?: never;
+  merchant?: never;
 }
+
+export interface AuthenticatedSessionState {
+  authenticated: true;
+  access_required: boolean;
+  needs_bootstrap?: boolean;
+  registration_available?: boolean;
+  user: SessionUser;
+  merchant: SessionMerchant | null;
+}
+
+export type SessionState = AnonymousSessionState | AuthenticatedSessionState;
 
 export interface ProductSummary {
   id: string;

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
@@ -18,7 +19,7 @@ import (
 func gradeEvalPersistedWrites(t *testing.T, as *agentServer, seeded seededEvalWorld, expectations []EvalWriteExpect) []string {
 	t.Helper()
 	var failures []string
-	ctx := context.Background()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	for _, expected := range expectations {
 		var params any
 		switch expected.Tool {
@@ -369,6 +370,7 @@ func evalEqual(path string, actual, expected any) bool {
 
 func TestEvalPersistedConfigRejectsWrongTargetAndValue(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	tasks, worlds, err := LoadEvalTasks(DefaultEvalRoot(), "l2")
 	if err != nil {
 		t.Fatal(err)
@@ -384,17 +386,17 @@ func TestEvalPersistedConfigRejectsWrongTargetAndValue(t *testing.T) {
 		extraDelete, pass    bool
 	}{{"node-prompt-2", "白底棚拍", "hero", false, false}, {"node-prompt-1", "错误目标", "hero", false, false}, {"node-prompt-1", "白底棚拍", "detail", false, false}, {"node-prompt-1", "白底棚拍", "hero", true, false}, {"node-prompt-1", "白底棚拍", "hero", false, true}} {
 		seeded := seedEvalWorld(t, as, task, worlds[task.World])
-		live, err := as.svc.Graph.Get(context.Background(), seeded.ProductID, seeded.GraphID)
+		live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		raw, _ := json.Marshal(map[string]any{"base_graph_revision": live.Revision, "summary": "eval config", "operations": []any{map[string]any{"op": "update_node_config", "node_ref": seeded.NodeIDs[test.ref], "config": map[string]any{"image_type_key": test.imageType, "prompt": map[string]any{"design_goal": test.goal}}}}})
-		if _, err := as.svc.ApplyGraphTool(context.Background(), seeded.ConvID, raw, clockid.New()); err != nil {
+		if _, err := as.svc.ApplyGraphTool(ctx, seeded.ConvID, raw, clockid.New()); err != nil {
 			t.Fatal(err)
 		}
 		if test.extraDelete {
 			raw, _ := json.Marshal(map[string]any{"base_graph_revision": live.Revision + 1, "summary": "extra delete", "operations": []any{map[string]any{"op": "delete_node", "node_ref": seeded.NodeIDs["node-image-2"]}}})
-			if _, err := as.svc.ApplyGraphTool(context.Background(), seeded.ConvID, raw, clockid.New()); err != nil {
+			if _, err := as.svc.ApplyGraphTool(ctx, seeded.ConvID, raw, clockid.New()); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -407,6 +409,7 @@ func TestEvalPersistedConfigRejectsWrongTargetAndValue(t *testing.T) {
 
 func TestEvalPersistedProposalAndLibraryContent(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	tasks, worlds, err := LoadEvalTasks(DefaultEvalRoot(), "l2")
 	if err != nil {
 		t.Fatal(err)
@@ -432,7 +435,7 @@ func TestEvalPersistedProposalAndLibraryContent(t *testing.T) {
 				}
 			}
 			if task.Skill == "graph-editing" {
-				live, err := as.svc.Graph.Get(context.Background(), seeded.ProductID, seeded.GraphID)
+				live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -451,7 +454,7 @@ func TestEvalPersistedProposalAndLibraryContent(t *testing.T) {
 					}
 				}
 				raw, _ := json.Marshal(params)
-				if _, err := as.svc.ProposeGraphTool(context.Background(), seeded.ConvID, raw, clockid.New()); err != nil {
+				if _, err := as.svc.ProposeGraphTool(ctx, seeded.ConvID, raw, clockid.New()); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -462,7 +465,7 @@ func TestEvalPersistedProposalAndLibraryContent(t *testing.T) {
 					op["target"].(map[string]any)["display_name"] = "错误名称"
 				}
 				raw, _ := json.Marshal(payload)
-				if _, err := as.svc.Library.AppendOrganizationDraftRevision(context.Background(), seeded.ConvID, raw, "", ""); err != nil {
+				if _, err := as.svc.Library.AppendOrganizationDraftRevision(ctx, seeded.ConvID, raw, "", ""); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -471,7 +474,7 @@ func TestEvalPersistedProposalAndLibraryContent(t *testing.T) {
 				t.Fatalf("%s valid=%t errors=%v", id, valid, failures)
 			}
 			if task.Skill == "graph-editing" {
-				if _, err := as.svc.DiscardProposalTool(context.Background(), seeded.ConvID, "", clockid.New()); err != nil {
+				if _, err := as.svc.DiscardProposalTool(ctx, seeded.ConvID, "", clockid.New()); err != nil {
 					t.Fatal(err)
 				}
 			}

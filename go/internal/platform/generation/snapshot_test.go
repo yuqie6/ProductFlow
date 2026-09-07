@@ -31,7 +31,8 @@ func TestQueueOverviewUsesOneStatementSnapshot(t *testing.T) {
 			t.Run(domain+"_from_"+initial, func(t *testing.T) {
 				_, gdb := testdb.Open(t)
 				resetGenerationRows(t, gdb)
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				merchantID := auth.MustDevMerchantID(t, gdb)
+				ctx, cancel := context.WithTimeout(auth.WithMerchantID(context.Background(), merchantID), 10*time.Second)
 				defer cancel()
 				now := time.Now().UTC()
 				if domain == "session" {
@@ -102,7 +103,8 @@ func TestQueueOverviewUsesOneStatementSnapshot(t *testing.T) {
 func TestLoadSnapshotAdmissionRunningDiffersFromOverviewRunning(t *testing.T) {
 	_, gdb := testdb.Open(t)
 	resetGenerationRows(t, gdb)
-	ctx := context.Background()
+	merchantID := auth.MustDevMerchantID(t, gdb)
+	ctx := auth.WithMerchantID(context.Background(), merchantID)
 	now := time.Now().UTC()
 	if err := gdb.Create(&schema.AppSettings{
 		Key: MaxConcurrentSettingKey, Value: "5", CreatedAt: now, UpdatedAt: now,
@@ -173,6 +175,8 @@ func TestQueueOverviewGraphClassification(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, gdb := testdb.Open(t)
 			resetGenerationRows(t, gdb)
+			merchantID := auth.MustDevMerchantID(t, gdb)
+			ctx := auth.WithMerchantID(context.Background(), merchantID)
 			now := time.Now().UTC()
 			insertGraphRun(t, gdb, now, tc.nodes)
 			if tc.terminal {
@@ -184,7 +188,7 @@ func TestQueueOverviewGraphClassification(t *testing.T) {
 			id := insertImageSession(t, gdb, now)
 			insertSessionTask(t, gdb, id, "cancelled", now)
 			insertSessionTask(t, gdb, id, "failed", now)
-			snap, err := LoadQueueOverview(context.Background(), gdb)
+			snap, err := LoadQueueOverview(ctx, gdb)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -216,13 +220,13 @@ func resetGenerationRows(t *testing.T, db *gorm.DB) {
 
 func insertGraphRun(t *testing.T, db *gorm.DB, now time.Time, nodeStatuses []string) {
 	t.Helper()
-	_ = auth.MustDevMerchantID(t, db)
+	merchantID := auth.MustDevMerchantID(t, db)
 	productID := clockid.New()
 	graphID := clockid.New()
 	runID := clockid.New()
 	if err := db.Exec(`
-		INSERT INTO products (id, name, created_at, updated_at) VALUES (?, 'capacity', ?, ?)
-	`, productID, now, now).Error; err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES (?, ?, 'capacity', ?, ?)
+	`, productID, merchantID, now, now).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Exec(`
@@ -251,11 +255,11 @@ func insertGraphRun(t *testing.T, db *gorm.DB, now time.Time, nodeStatuses []str
 
 func insertImageSession(t *testing.T, db *gorm.DB, now time.Time) string {
 	t.Helper()
-	_ = auth.MustDevMerchantID(t, db)
+	merchantID := auth.MustDevMerchantID(t, db)
 	id := clockid.New()
 	if err := db.Exec(`
-		INSERT INTO image_sessions (id, title, created_at, updated_at) VALUES (?, 'capacity', ?, ?)
-	`, id, now, now).Error; err != nil {
+		INSERT INTO image_sessions (id, merchant_id, title, created_at, updated_at) VALUES (?, ?, 'capacity', ?, ?)
+	`, id, merchantID, now, now).Error; err != nil {
 		t.Fatal(err)
 	}
 	return id

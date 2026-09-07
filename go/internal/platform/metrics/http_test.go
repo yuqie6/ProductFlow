@@ -155,9 +155,10 @@ func TestSnapshotGenerationAdmissionRunningUsesSharedCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	_ = auth.MustDevMerchantID(t, gdb)
+	merchantID := auth.MustDevMerchantID(t, gdb)
+	ctx = auth.WithMerchantID(ctx, merchantID)
 	productID, graphID, runID := clockid.New(), clockid.New(), clockid.New()
-	if err := gdb.Exec(`INSERT INTO products (id, name, created_at, updated_at) VALUES (?, 'admission-metric', ?, ?)`, productID, now, now).Error; err != nil {
+	if err := gdb.Exec(`INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES (?, ?, 'admission-metric', ?, ?)`, productID, merchantID, now, now).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := gdb.Exec(`INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at) VALUES (?, ?, 'admission-metric', TRUE, 3, 1, ?, ?)`, graphID, productID, now, now).Error; err != nil {

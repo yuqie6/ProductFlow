@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"gorm.io/gorm"
@@ -14,7 +15,8 @@ import (
 
 func TestTurnBatchPreservesScopeOrderAndHarness(t *testing.T) {
 	pool, db := testdb.Open(t)
-	ctx := context.Background()
+	merchantID := auth.MustDevMerchantID(t, db)
+	ctx := auth.WithMerchantID(context.Background(), merchantID)
 	prefix := clockid.New()[:20]
 	productID, sessionID := prefix+"-p", prefix+"-s"
 	globalID, convID, taskID := prefix+"-g", prefix+"-c", prefix+"-task"
@@ -23,12 +25,12 @@ func TestTurnBatchPreservesScopeOrderAndHarness(t *testing.T) {
 		sql  string
 		args []any
 	}{
-		{`INSERT INTO products (id,name,created_at,updated_at) VALUES ($1,'fixture',NOW(),NOW())`, []any{productID}},
-		{`INSERT INTO agent_sessions (id,title,status,created_at,updated_at,activity_at) VALUES ($1,'fixture','active',NOW(),NOW(),NOW())`, []any{sessionID}},
-		{`INSERT INTO agent_conversations (id,session_id,product_id,harness_run_id,status,scope_type,created_at,updated_at)
-		 VALUES ($1,$3,NULL,$1,'collecting','global',NOW(),NOW()), ($2,$3,$4,$2,'collecting','product_workflow',NOW(),NOW())`, []any{globalID, convID, sessionID, productID}},
-		{`INSERT INTO agent_tasks (id,session_id,conversation_id,product_id,harness_run_id,title,goal,status,created_at,updated_at)
-		 VALUES ($1,$2,$3,$4,$5,'fixture','fixture','queued',NOW(),NOW())`, []any{taskID, sessionID, convID, productID, taskHarness}},
+		{`INSERT INTO products (id,merchant_id,name,created_at,updated_at) VALUES ($1,$2,'fixture',NOW(),NOW())`, []any{productID, merchantID}},
+		{`INSERT INTO agent_sessions (id,merchant_id,title,status,created_at,updated_at,activity_at) VALUES ($1,$2,'fixture','active',NOW(),NOW(),NOW())`, []any{sessionID, merchantID}},
+		{`INSERT INTO agent_conversations (id,merchant_id,session_id,product_id,harness_run_id,status,scope_type,created_at,updated_at)
+		 VALUES ($1,$5,$3,NULL,$1,'collecting','global',NOW(),NOW()), ($2,$5,$3,$4,$2,'collecting','product_workflow',NOW(),NOW())`, []any{globalID, convID, sessionID, productID, merchantID}},
+		{`INSERT INTO agent_tasks (id,merchant_id,session_id,conversation_id,product_id,harness_run_id,title,goal,status,created_at,updated_at)
+		 VALUES ($1,$6,$2,$3,$4,$5,'fixture','fixture','queued',NOW(),NOW())`, []any{taskID, sessionID, convID, productID, taskHarness, merchantID}},
 	} {
 		if _, err := pool.Exec(ctx, seed.sql, seed.args...); err != nil {
 			t.Fatal(err)

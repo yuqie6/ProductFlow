@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 )
@@ -23,9 +24,9 @@ func TestBackfillDocumentOriginUpgradesDivergedSeed(t *testing.T) {
 	authoredBriefID := clockid.New()
 	generatedID := clockid.New()
 	if err := tx.Exec(`
-		INSERT INTO products (id, name, created_at, updated_at)
-		VALUES (?, 'origin回填', NOW(), NOW())
-	`, productID).Error; err != nil {
+		INSERT INTO products (id, name, created_at, updated_at, merchant_id)
+		VALUES (?, 'origin回填', NOW(), NOW(), ?)
+	`, productID, auth.MustDevMerchantID(t, tx)).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Exec(`

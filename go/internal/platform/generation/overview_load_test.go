@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"gorm.io/gorm"
 )
@@ -21,10 +22,11 @@ func TestQueueOverviewActiveGraphScale(t *testing.T) {
 		t.Fatal("queue overview gate requires DATABASE_URL")
 	}
 	pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_qoverview_%d", time.Now().UnixNano()))
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	merchantID := auth.MustDevMerchantID(t, db)
+	ctx, cancel := context.WithTimeout(auth.WithMerchantID(context.Background(), merchantID), 3*time.Minute)
 	defer cancel()
-	for _, query := range []string{
-		`INSERT INTO products (id, name, created_at, updated_at) SELECT 'overview-product-' || g, 'fixture', NOW(), NOW() FROM generate_series(1,25000) g`,
+	queries := []string{
+		`INSERT INTO products (id, merchant_id, name, created_at, updated_at) SELECT 'overview-product-' || g, $1, 'fixture', NOW(), NOW() FROM generate_series(1,25000) g`,
 		`INSERT INTO workflow_graphs (id, product_id, title, active, schema_version, revision, created_at, updated_at)
 		 SELECT 'overview-graph-' || g, 'overview-product-' || g, 'fixture', TRUE, 3, 1, NOW(), NOW() FROM generate_series(1,25000) g`,
 		`INSERT INTO workflow_graph_runs (id, graph_id, status, run_scope, graph_revision, snapshot_json, is_retryable, started_at)
@@ -36,8 +38,15 @@ func TestQueueOverviewActiveGraphScale(t *testing.T) {
 		 n, NOW(), 0 FROM generate_series(1,25000) g CROSS JOIN generate_series(1,4) n`,
 		`ANALYZE workflow_graph_runs`,
 		`ANALYZE workflow_graph_node_runs`,
-	} {
-		if _, err := pool.Exec(ctx, query); err != nil {
+	}
+	for i, query := range queries {
+		var err error
+		if i == 0 {
+			_, err = pool.Exec(ctx, query, merchantID)
+		} else {
+			_, err = pool.Exec(ctx, query)
+		}
+		if err != nil {
 			t.Fatal(err)
 		}
 	}

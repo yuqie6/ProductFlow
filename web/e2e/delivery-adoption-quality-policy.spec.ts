@@ -46,12 +46,7 @@ const SESSION: SessionState = {
     display_name: "Policy test",
     is_operator: true,
   },
-  memberships: [{
-    merchant_id: "policy-merchant",
-    merchant_name: "Policy merchant",
-    role: "owner",
-    status: "active",
-  }],
+  merchant: { id: "policy-merchant", name: "Policy merchant", status: "active" },
 };
 
 const CATALOG: GraphNodeCatalog = {

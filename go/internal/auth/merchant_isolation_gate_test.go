@@ -119,11 +119,11 @@ func TestMerchantIsolationGateB10(t *testing.T) {
 			t.Fatalf("A session %d", stateA.StatusCode)
 		}
 		var bodyA struct {
-			Memberships []auth.MembershipView `json:"memberships"`
+			Merchant *auth.MerchantView `json:"merchant"`
 		}
 		_ = json.NewDecoder(stateA.Body).Decode(&bodyA)
-		if len(bodyA.Memberships) != 1 || bodyA.Memberships[0].MerchantID != dual.MerchantAID {
-			t.Fatalf("A memberships %#v", bodyA.Memberships)
+		if bodyA.Merchant == nil || bodyA.Merchant.ID != dual.MerchantAID {
+			t.Fatalf("A merchant %#v", bodyA.Merchant)
 		}
 
 		stateB := do(http.MethodGet, "/api/auth/session", "", dual.CookiesB, nil)
@@ -132,25 +132,25 @@ func TestMerchantIsolationGateB10(t *testing.T) {
 			t.Fatalf("B session %d", stateB.StatusCode)
 		}
 		var bodyB struct {
-			Memberships []auth.MembershipView `json:"memberships"`
+			Merchant *auth.MerchantView `json:"merchant"`
 		}
 		_ = json.NewDecoder(stateB.Body).Decode(&bodyB)
-		if len(bodyB.Memberships) != 1 || bodyB.Memberships[0].MerchantID != dual.MerchantBID {
-			t.Fatalf("B memberships %#v", bodyB.Memberships)
+		if bodyB.Merchant == nil || bodyB.Merchant.ID != dual.MerchantBID {
+			t.Fatalf("B merchant %#v", bodyB.Merchant)
 		}
 
-		// 产品注册第二商仍拒（夹具 ≠ 开放第二外部商）。
+		// 旧多商家创建入口已经删除。
 		create2 := do(http.MethodPost, "/api/merchants", `{"name":"产品侧第二商"}`, dual.CookiesA, nil)
 		defer create2.Body.Close()
-		if create2.StatusCode != http.StatusConflict {
+		if create2.StatusCode != http.StatusNotFound {
 			raw, _ := io.ReadAll(create2.Body)
-			t.Fatalf("CreateMerchant still blocked want 409 got %d %s", create2.StatusCode, raw)
+			t.Fatalf("retired merchant create want 404 got %d %s", create2.StatusCode, raw)
 		}
 	})
 
 	t.Run("partition_A_ops", func(t *testing.T) {
-		// 正：Op 可读现有 settings provider-config
-		ok := do(http.MethodGet, "/api/settings/provider-config", "", dual.CookiesA, nil)
+		// 正：Operator 可读现有 settings provider-config。
+		ok := do(http.MethodGet, "/api/settings/provider-config", "", dual.OperatorCookies, nil)
 		ok.Body.Close()
 		if ok.StatusCode != http.StatusOK {
 			t.Fatalf("op provider-config %d", ok.StatusCode)
@@ -209,44 +209,41 @@ func TestMerchantIsolationGateB10(t *testing.T) {
 		assertCross404("B reads A product", do(http.MethodGet, "/api/v2/products/"+productA.ID, "", dual.CookiesB, nil))
 	})
 
-	t.Run("scenario_跨商绑定_声明头", func(t *testing.T) {
-		hdr := http.Header{auth.MerchantHeaderName(): []string{dual.MerchantBID}}
-		resp := do(http.MethodGet, "/api/v2/products/"+productB.ID, "", dual.CookiesA, hdr)
+	t.Run("scenario_旧声明头不改变归属", func(t *testing.T) {
+		hdr := http.Header{"X-ProductFlow-Merchant-Id": []string{dual.MerchantBID}}
+		resp := do(http.MethodGet, "/api/v2/products/"+productA.ID, "", dual.CookiesA, hdr)
 		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
+		if resp.StatusCode != http.StatusOK {
 			raw, _ := io.ReadAll(resp.Body)
-			t.Fatalf("A forged B merchant header want 403 got %d %s", resp.StatusCode, raw)
+			t.Fatalf("A own product with forged merchant header want 200 got %d %s", resp.StatusCode, raw)
 		}
 	})
 
-	t.Run("scenario_成员撤销后读写", func(t *testing.T) {
+	t.Run("scenario_账号停用后读写", func(t *testing.T) {
 		now := time.Now().UTC()
-		if err := gdb.Model(&schema.Memberships{}).
-			Where("merchant_id = ? AND user_id = ?", dual.MerchantBID, dual.UserBID).
-			Updates(map[string]any{"status": auth.MembershipStatusRevoked, "revoked_at": now, "updated_at": now}).Error; err != nil {
+		if err := gdb.Model(&schema.Users{}).
+			Where("id = ?", dual.UserBID).
+			Updates(map[string]any{"status": auth.UserStatusDisabled, "updated_at": now}).Error; err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
-			_ = gdb.Model(&schema.Memberships{}).
-				Where("merchant_id = ? AND user_id = ?", dual.MerchantBID, dual.UserBID).
-				Updates(map[string]any{"status": auth.MembershipStatusActive, "revoked_at": nil, "updated_at": time.Now().UTC()}).Error
+			_ = gdb.Model(&schema.Users{}).
+				Where("id = ?", dual.UserBID).
+				Updates(map[string]any{"status": auth.UserStatusActive, "updated_at": time.Now().UTC()}).Error
 		})
 
 		denied := do(http.MethodGet, "/api/v2/products/"+productB.ID, "", dual.CookiesB, nil)
 		defer denied.Body.Close()
 		raw, _ := io.ReadAll(denied.Body)
-		if denied.StatusCode != http.StatusForbidden {
-			t.Fatalf("revoked B get want 403 got %d %s", denied.StatusCode, raw)
-		}
-		if !strings.Contains(string(raw), "不属于任何商家") {
-			t.Fatalf("revoked detail %s", raw)
+		if denied.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("disabled B get want 401 got %d %s", denied.StatusCode, raw)
 		}
 
 		listLeak := do(http.MethodGet, "/api/v2/products?page=1&page_size=50", "", dual.CookiesB, nil)
 		defer listLeak.Body.Close()
-		if listLeak.StatusCode != http.StatusForbidden {
+		if listLeak.StatusCode != http.StatusUnauthorized {
 			leakBody, _ := io.ReadAll(listLeak.Body)
-			t.Fatalf("revoked B list want 403 got %d %s", listLeak.StatusCode, leakBody)
+			t.Fatalf("disabled B list want 401 got %d %s", listLeak.StatusCode, leakBody)
 		}
 	})
 }
@@ -260,7 +257,7 @@ func TestMerchantIsolationGateSuiteInventory(t *testing.T) {
 		pkg       string
 	}
 	inventory := []entry{
-		{"A", "TestOperatorSuspendBlocksMerchantWrites / TestOperatorProviderConfigOnly / gate partition_A", "TestMerchantRoleForbiddenOnSettingsAndQueue / TestSecondMerchantRejected", "auth"},
+		{"A", "TestOperatorSuspendBlocksMerchantWrites / TestOperatorProviderConfigOnly / gate partition_A", "TestOrdinaryForbiddenOnSettingsAndQueue / TestSecondMerchantRejected", "auth"},
 		{"B", "TestMerchantProductChainIsolation / TestMerchantRootOwnershipProductIsolation / gate 合法读写", "同测跨商 404", "product"},
 		{"C", "TestMerchantGraphIsolation", "同测跨商 changeset/run/SSE 404", "graph"},
 		{"D", "TestMerchantRecipeIsolation", "同测跨商 recipe/apply 404", "recipe"},

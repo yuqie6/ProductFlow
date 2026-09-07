@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
@@ -126,6 +127,7 @@ func TestRecoverUnfinishedTurnsPreservesExpiredHasMore(t *testing.T) {
 
 func TestRecoverUnfinishedTurnsPreservesQueuedTaskHasMore(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
+	merchantCtx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	drainAgentRecovery(t, as)
 	session := as.do(t, http.MethodPost, "/api/v2/agent-sessions", nil, "", nil)
 	as.mustStatus(t, session, http.StatusCreated)
@@ -133,7 +135,7 @@ func TestRecoverUnfinishedTurnsPreservesQueuedTaskHasMore(t *testing.T) {
 	as.decode(t, session, &created)
 	convID := created.Conversations[0].ConversationID
 	for i := range 2 {
-		if _, err := as.svc.CreateTask(context.Background(), created.ID, "queued-recovery-"+string(rune('a'+i)), "补首轮 Turn", &convID); err != nil {
+		if _, err := as.svc.CreateTask(merchantCtx, created.ID, "queued-recovery-"+string(rune('a'+i)), "补首轮 Turn", &convID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -190,6 +192,7 @@ func TestRecoverUnfinishedTurnsPreservesPendingRestageHasMore(t *testing.T) {
 
 func TestRecoverUnfinishedTurnsHasMoreORsExpiredQueuedAndPending(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
+	merchantCtx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	drainAgentRecovery(t, as)
 	expired := createClaimedJournalTurn(t, as)
 	expireClaimedTurn(t, as, expired)
@@ -198,7 +201,7 @@ func TestRecoverUnfinishedTurnsHasMoreORsExpiredQueuedAndPending(t *testing.T) {
 	var created SessionResponse
 	as.decode(t, session, &created)
 	convID := created.Conversations[0].ConversationID
-	if _, err := as.svc.CreateTask(context.Background(), created.ID, "queued-or", "补首轮 Turn", &convID); err != nil {
+	if _, err := as.svc.CreateTask(merchantCtx, created.ID, "queued-or", "补首轮 Turn", &convID); err != nil {
 		t.Fatal(err)
 	}
 	pending := createClaimedJournalTurn(t, as)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -93,6 +94,7 @@ func TestRecoverExpiredProposalTurnDoesNotCreateSecondProposal(t *testing.T) {
 
 func TestRecoverExpiredDraftTurnDoesNotCreateSecondDraft(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	if _, err := recoverUnfinishedTurns(context.Background(), as.svc, 1000); err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +106,8 @@ func TestRecoverExpiredDraftTurnDoesNotCreateSecondDraft(t *testing.T) {
 	claimed := createClaimedTurnForConversation(t, as, convID, nil)
 	payload := libraryRenamePayload(t, as)
 	var revID string
-	err := tx.WithGorm(context.Background(), as.db, func(pgxTx *gorm.DB) error {
-		id, err := as.svc.Library.AppendOrganizationDraftRevisionTx(context.Background(), pgxTx, convID, payload, claimed.turn.ID, "draft-1")
+	err := tx.WithGorm(ctx, as.db, func(pgxTx *gorm.DB) error {
+		id, err := as.svc.Library.AppendOrganizationDraftRevisionTx(ctx, pgxTx, convID, payload, claimed.turn.ID, "draft-1")
 		revID = id
 		return err
 	})

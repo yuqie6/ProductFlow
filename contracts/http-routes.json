@@ -31,23 +31,38 @@
   },
   {
     "method": "GET",
-    "path": "/api/merchants",
-    "name": "list_my_merchants"
+    "path": "/api/ops/merchants",
+    "name": "list_operator_merchants"
   },
   {
-    "method": "POST",
-    "path": "/api/merchants",
-    "name": "create_merchant"
+    "method": "PATCH",
+    "path": "/api/ops/merchants/{merchant_id}/status",
+    "name": "set_merchant_status"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ops/merchants/{merchant_id}/products",
+    "name": "list_operator_merchant_products"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ops/merchants/{merchant_id}/products/{product_id}",
+    "name": "get_operator_product"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ops/merchants/{merchant_id}/products/{product_id}/facts",
+    "name": "get_operator_product_facts"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/ops/merchants/{merchant_id}/products/{product_id}/facts",
+    "name": "update_operator_product_facts"
   },
   {
     "method": "DELETE",
-    "path": "/api/merchants/{merchant_id}/memberships/{user_id}",
-    "name": "revoke_merchant_membership"
-  },
-  {
-    "method": "POST",
-    "path": "/api/merchants/{merchant_id}/memberships/{user_id}/restore",
-    "name": "restore_merchant_membership"
+    "path": "/api/ops/merchants/{merchant_id}/products/{product_id}",
+    "name": "delete_operator_product"
   },
   {
     "method": "GET",

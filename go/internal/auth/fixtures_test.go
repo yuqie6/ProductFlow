@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func seedDirectMember(t *testing.T, db *gorm.DB, merchantID, email, password, displayName, role string, operator bool) schema.Users {
+func seedDirectUser(t *testing.T, db *gorm.DB, merchantID, email, password, displayName string, operator bool) schema.Users {
 	t.Helper()
 	now := time.Now().UTC()
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
@@ -22,27 +22,19 @@ func seedDirectMember(t *testing.T, db *gorm.DB, merchantID, email, password, di
 	}
 	user := schema.Users{
 		ID: clockid.New(), Email: strings.ToLower(email), PasswordHash: string(hash), DisplayName: displayName,
-		IsOperator: operator, Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now,
-	}
-	membership := schema.Memberships{
-		ID: clockid.New(), MerchantID: merchantID, UserID: user.ID, Role: role,
-		Status: auth.MembershipStatusActive, CreatedAt: now, UpdatedAt: now,
+		IsOperator: operator, MerchantID: &merchantID, Status: auth.UserStatusActive, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := db.Create(&user).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&membership).Error; err != nil {
-		t.Fatal(err)
-	}
 	t.Cleanup(func() {
 		_ = db.Where("user_id = ?", user.ID).Delete(&schema.AuthSessions{}).Error
-		_ = db.Where("id = ?", membership.ID).Delete(&schema.Memberships{}).Error
 		_ = db.Where("id = ?", user.ID).Delete(&schema.Users{}).Error
 	})
 	return user
 }
 
-func loginDirectMember(t *testing.T, as *authServer, email, password string) []*http.Cookie {
+func loginDirectUser(t *testing.T, as *authServer, email, password string) []*http.Cookie {
 	t.Helper()
 	resp := as.do(t, http.MethodPost, "/api/auth/session", `{"email":"`+email+`","password":"`+password+`"}`, nil)
 	if resp.StatusCode != http.StatusOK {
@@ -58,7 +50,7 @@ func loginDirectMember(t *testing.T, as *authServer, email, password string) []*
 			}
 		}
 		resp.Body.Close()
-		t.Fatalf("login direct member %d %s", resp.StatusCode, raw)
+		t.Fatalf("login direct user %d %s", resp.StatusCode, raw)
 	}
 	cookies := resp.Cookies()
 	resp.Body.Close()

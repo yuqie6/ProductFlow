@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"gorm.io/gorm"
 )
@@ -27,22 +28,26 @@ func TestAgentReadHTTPTargetScale(t *testing.T) {
 	pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_aread_%d", time.Now().UnixNano()))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	seedTargetScaleAgentSessions(t, ctx, pool)
-	for _, query := range []string{
-		`UPDATE agent_sessions SET title=repeat('t',128), summary=repeat('s',1024)`,
-		`UPDATE products SET name=repeat('p',192) WHERE id='plan-product-0'`,
-		`INSERT INTO agent_conversations (id, product_id, harness_run_id, status, created_at, updated_at, session_id, scope_type)
-		 SELECT 'wide-conv-' || s || '-' || c, 'plan-product-0', 'wide-conv-' || s || '-' || c,
+	merchantID := auth.MustDevMerchantID(t, db)
+	seedTargetScaleAgentSessions(t, ctx, pool, merchantID)
+	for _, seed := range []struct {
+		query string
+		args  []any
+	}{
+		{query: `UPDATE agent_sessions SET title=repeat('t',128), summary=repeat('s',1024)`},
+		{query: `UPDATE products SET name=repeat('p',192) WHERE id='plan-product-0'`},
+		{query: `INSERT INTO agent_conversations (id, merchant_id, product_id, harness_run_id, status, created_at, updated_at, session_id, scope_type)
+		 SELECT 'wide-conv-' || s || '-' || c, $1, 'plan-product-0', 'wide-conv-' || s || '-' || c,
 		 'collecting', NOW(), NOW(), 'plan-sess-' || lpad(s::text,5,'0'), 'product_workflow'
-		 FROM generate_series(0,19) s CROSS JOIN generate_series(1,100) c`,
-		`INSERT INTO agent_turn_projections (id, conversation_id, idempotency_key, request_hash, input_text,
+		 FROM generate_series(0,19) s CROSS JOIN generate_series(1,100) c`, args: []any{merchantID}},
+		{query: `INSERT INTO agent_turn_projections (id, conversation_id, idempotency_key, request_hash, input_text,
 		 input_asset_ids_json, status, resume_required, tool_steps_json, output_text, thinking_text, created_at, updated_at)
 		 SELECT 'wide-turn-' || lpad(g::text,4,'0'), 'plan-conv-00000', 'read-key-' || g, repeat('b',64), repeat('i',512),
 		 '[]', 'succeeded', FALSE, '[]', repeat('o',8192), repeat('h',2048), NOW() - g*INTERVAL '1 second', NOW()
-		 FROM generate_series(1,1000) g`,
-		`ANALYZE agent_sessions`, `ANALYZE agent_conversations`, `ANALYZE agent_turn_projections`,
+		 FROM generate_series(1,1000) g`},
+		{query: `ANALYZE agent_sessions`}, {query: `ANALYZE agent_conversations`}, {query: `ANALYZE agent_turn_projections`},
 	} {
-		if _, err := pool.Exec(ctx, query); err != nil {
+		if _, err := pool.Exec(ctx, seed.query, seed.args...); err != nil {
 			t.Fatal(err)
 		}
 	}

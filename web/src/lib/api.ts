@@ -247,7 +247,7 @@ export const api = {
     merchantId: string,
     status: "active" | "suspended",
   ): Promise<{ id: string; name: string; status: string }> {
-    return request(`/api/merchants/${encodeURIComponent(merchantId)}/status`, {
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
     });

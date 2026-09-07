@@ -1,6 +1,6 @@
-// Package auth 管理 User 密码会话与商家成员：POST/GET/DELETE /api/auth/session，cookie 名 session。
+// Package auth 管理 User 密码会话与直接商家归属：POST/GET/DELETE /api/auth/session，cookie 名 session。
 //
-// B0 用可撤销 AuthSession 替换共享 admin 布尔登录。空实例可用 ADMIN_ACCESS_KEY 引导唯一开发商家；
+// 登录使用可撤销 AuthSession。空实例可用 ADMIN_ACCESS_KEY 引导管理员及其开发商家；
 // 之后禁止 admin_key 登录回退。浏览器中的商家 ID 不授予权限。
 package auth
 
@@ -52,7 +52,7 @@ type Mailer interface {
 	SendVerificationCode(context.Context, string, string) error
 }
 
-// Register 挂上会话、引导、公开注册与商家路由。
+// Register 挂上会话、引导、公开注册与 Operator 商家路由。
 func (h HTTP) Register(engine *gin.Engine) {
 	svc := h.svc()
 	h.Service = svc
@@ -64,35 +64,10 @@ func (h HTTP) Register(engine *gin.Engine) {
 	group.POST("/registration-code", h.registrationCode)
 	group.POST("/register", h.register)
 
-	merchants := engine.Group("/api/merchants")
-	merchants.Use(func(c *gin.Context) {
-		if PrincipalFrom(c) == nil {
-			required, err := h.accessRequired(c)
-			if err != nil {
-				httpx.AbortErr(c, err)
-				return
-			}
-			if required {
-				httpx.Unauthorized(c, "请先登录")
-				return
-			}
-		}
-		c.Next()
-	})
-	merchants.GET("", h.listMerchants)
-	merchants.POST("", h.createMerchant)
-	merchants.PATCH("/:merchant_id/status", h.setMerchantStatus)
-	merchants.DELETE("/:merchant_id/memberships/:user_id", h.revokeMembership)
-	merchants.POST("/:merchant_id/memberships/:user_id/restore", h.restoreMembership)
-
-}
-
-func (h HTTP) accessRequired(c *gin.Context) (bool, error) {
-	runtime, err := h.Store.Runtime(c.Request.Context())
-	if err != nil {
-		return false, apperr.Internal("读取运行时设置失败")
-	}
-	return runtime.AdminAccessRequired, nil
+	ops := engine.Group("/api/ops")
+	ops.Use(RequireOperator())
+	ops.GET("/merchants", h.listMerchants)
+	ops.PATCH("/merchants/:merchant_id/status", h.RequireOperatorMerchantTarget("merchant_id"), h.setMerchantStatus)
 }
 
 func (h HTTP) ensureMerchantQuota(ctx context.Context, merchantID string) error {
@@ -115,10 +90,6 @@ type bootstrapRequest struct {
 	MerchantName string `json:"merchant_name"`
 }
 
-type merchantCreateRequest struct {
-	Name string `json:"name"`
-}
-
 type registrationCodeRequest struct {
 	Email string `json:"email"`
 }
@@ -132,17 +103,38 @@ type registerRequest struct {
 	MerchantName string `json:"merchant_name"`
 }
 
-func (h HTTP) create(c *gin.Context) {
-	runtime, err := h.Store.Runtime(c.Request.Context())
+func (h HTTP) listMerchants(c *gin.Context) {
+	page, err := parseMerchantListInt(c, "page", 1, 1, merchantListMaxPage)
 	if err != nil {
-		httpx.AbortDetail(c, http.StatusInternalServerError, "读取运行时设置失败")
+		httpx.AbortErr(c, err)
 		return
 	}
-	if !runtime.AdminAccessRequired {
-		// 未开启门禁时不发 User 会话，也不回退 admin 布尔 cookie。
-		c.JSON(http.StatusOK, gin.H{"ok": true, "access_required": false})
+	pageSize, err := parseMerchantListInt(c, "page_size", merchantListDefaultPageSize, 1, merchantListMaxPageSize)
+	if err != nil {
+		httpx.AbortErr(c, err)
 		return
 	}
+	pageResult, err := h.svc().ListMerchants(c.Request.Context(), page, pageSize)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, pageResult)
+}
+
+func parseMerchantListInt(c *gin.Context, key string, def, min, max int) (int, error) {
+	raw := strings.TrimSpace(c.Query(key))
+	if raw == "" {
+		return def, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < min || value > max {
+		return 0, apperr.Validation("商家列表参数无效")
+	}
+	return value, nil
+}
+
+func (h HTTP) create(c *gin.Context) {
 	var payload sessionCreateRequest
 	if err := bindJSONStrict(c, &payload); err != nil {
 		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
@@ -189,26 +181,21 @@ func (h HTTP) bootstrap(c *gin.Context) {
 		httpx.AbortErr(c, apperr.Internal("写入会话失败"))
 		return
 	}
-	merchantID := firstMerchantID(c, h, principal.UserID)
-	if merchantID != "" {
-		if err := h.ensureMerchantQuota(c.Request.Context(), merchantID); err != nil {
+	if principal.MerchantID != nil {
+		if err := h.ensureMerchantQuota(c.Request.Context(), *principal.MerchantID); err != nil {
 			httpx.AbortErr(c, err)
 			return
 		}
+	}
+	merchantID := ""
+	if principal.MerchantID != nil {
+		merchantID = *principal.MerchantID
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"ok":          true,
 		"user_id":     principal.UserID,
 		"merchant_id": merchantID,
 	})
-}
-
-func firstMerchantID(c *gin.Context, h HTTP, userID string) string {
-	rows, err := h.svc().ListMemberships(c.Request.Context(), userID)
-	if err != nil || len(rows) == 0 {
-		return ""
-	}
-	return rows[0].MerchantID
 }
 
 func (h HTTP) state(c *gin.Context) {
@@ -218,7 +205,7 @@ func (h HTTP) state(c *gin.Context) {
 		return
 	}
 	needsBootstrap := false
-	if runtime.AdminAccessRequired && h.DB != nil {
+	if h.DB != nil {
 		n, err := h.svc().UserCount(c.Request.Context())
 		if err != nil {
 			httpx.AbortErr(c, err)
@@ -227,7 +214,7 @@ func (h HTTP) state(c *gin.Context) {
 		needsBootstrap = n == 0
 	}
 	principal := PrincipalFrom(c)
-	authenticated := !runtime.AdminAccessRequired || principal != nil
+	authenticated := principal != nil
 	body := gin.H{
 		"authenticated":   authenticated,
 		"access_required": runtime.AdminAccessRequired,
@@ -247,12 +234,12 @@ func (h HTTP) state(c *gin.Context) {
 			"display_name": principal.DisplayName,
 			"is_operator":  principal.IsOperator,
 		}
-		memberships, err := h.svc().ListMemberships(c.Request.Context(), principal.UserID)
+		merchant, err := h.svc().OwnMerchant(c.Request.Context(), principal.UserID)
 		if err != nil {
 			httpx.AbortErr(c, err)
 			return
 		}
-		body["memberships"] = memberships
+		body["merchant"] = merchant
 	}
 	c.JSON(http.StatusOK, body)
 }
@@ -382,43 +369,6 @@ func (h HTTP) destroy(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-func (h HTTP) listMerchants(c *gin.Context) {
-	principal := PrincipalFrom(c)
-	if principal == nil {
-		c.JSON(http.StatusOK, gin.H{"items": []MembershipView{}})
-		return
-	}
-	items, err := h.svc().ListMemberships(c.Request.Context(), principal.UserID)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"items": items})
-}
-
-func (h HTTP) createMerchant(c *gin.Context) {
-	actor, ok := ActorFrom(c)
-	if !ok {
-		httpx.Unauthorized(c, "请先登录")
-		return
-	}
-	var payload merchantCreateRequest
-	if err := bindJSONStrict(c, &payload); err != nil {
-		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
-		return
-	}
-	merchant, err := h.svc().CreateMerchant(c.Request.Context(), actor, payload.Name)
-	if err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	if err := h.ensureMerchantQuota(c.Request.Context(), merchant.ID); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"id": merchant.ID, "name": merchant.Name, "status": merchant.Status})
-}
-
 type merchantStatusRequest struct {
 	Status string `json:"status"`
 }
@@ -446,32 +396,6 @@ func (h HTTP) setMerchantStatus(c *gin.Context) {
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{"id": merchant.ID, "name": merchant.Name, "status": merchant.Status})
-}
-
-func (h HTTP) revokeMembership(c *gin.Context) {
-	actor, ok := ActorFrom(c)
-	if !ok {
-		httpx.Unauthorized(c, "请先登录")
-		return
-	}
-	if err := h.svc().RevokeMembership(c.Request.Context(), actor, c.Param("merchant_id"), c.Param("user_id")); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-func (h HTTP) restoreMembership(c *gin.Context) {
-	actor, ok := ActorFrom(c)
-	if !ok {
-		httpx.Unauthorized(c, "请先登录")
-		return
-	}
-	if err := h.svc().RestoreMembership(c.Request.Context(), actor, c.Param("merchant_id"), c.Param("user_id")); err != nil {
-		httpx.AbortErr(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func writeAuthSession(c *gin.Context, userID, sessionID string) error {

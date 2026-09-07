@@ -9,6 +9,7 @@ type Users struct {
 	PasswordHash string    `gorm:"column:password_hash;type:varchar(255);not null"`
 	DisplayName  string    `gorm:"column:display_name;type:varchar(160);not null"`
 	IsOperator   bool      `gorm:"column:is_operator;type:boolean;not null;default:false"`
+	MerchantID   *string   `gorm:"column:merchant_id;type:varchar(36)"`
 	Status       string    `gorm:"column:status;type:varchar(32);not null"`
 	CreatedAt    time.Time `gorm:"column:created_at;type:timestamptz;not null"`
 	UpdatedAt    time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
@@ -16,7 +17,7 @@ type Users struct {
 
 func (Users) TableName() string { return "users" }
 
-// Merchants 对应表 merchants。租户根；B0 仅允许实例内唯一可运营商家。
+// Merchants 对应表 merchants。账号商品、素材、任务和额度的隔离根。
 type Merchants struct {
 	ID        string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	Name      string    `gorm:"column:name;type:varchar(160);not null"`
@@ -26,20 +27,6 @@ type Merchants struct {
 }
 
 func (Merchants) TableName() string { return "merchants" }
-
-// Memberships 对应表 memberships。用户在商家的角色与状态；授权每次读当前行。
-type Memberships struct {
-	ID         string     `gorm:"column:id;type:varchar(36);primaryKey"`
-	MerchantID string     `gorm:"column:merchant_id;type:varchar(36);not null"`
-	UserID     string     `gorm:"column:user_id;type:varchar(36);not null"`
-	Role       string     `gorm:"column:role;type:varchar(32);not null"`
-	Status     string     `gorm:"column:status;type:varchar(32);not null"`
-	CreatedAt  time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
-	UpdatedAt  time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
-	RevokedAt  *time.Time `gorm:"column:revoked_at;type:timestamptz"`
-}
-
-func (Memberships) TableName() string { return "memberships" }
 
 // RegistrationChallenges 对应表 registration_challenges；验证码只存 bcrypt 哈希。
 type RegistrationChallenges struct {

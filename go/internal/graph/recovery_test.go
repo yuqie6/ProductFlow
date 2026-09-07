@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 )
@@ -128,8 +129,8 @@ func insertGraphRun(t *testing.T, pool *pgxpool.Pool, startedAt time.Time, nodeS
 	runID := clockid.New()
 	nodeRunID := clockid.New()
 	if _, err := pool.Exec(context.Background(), `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, 'recovery', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, name, created_at, updated_at, merchant_id) VALUES ($1, 'recovery', NOW(), NOW(), $2)
+	`, productID, auth.MustDevMerchantID(t, testdb.Gorm(t))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(context.Background(), `

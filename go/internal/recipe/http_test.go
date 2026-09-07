@@ -553,9 +553,9 @@ func TestOfficialRecipesHidden(t *testing.T) {
 	rs := newRecipeServer(t)
 	officialID := clockid.New()
 	_, err := rs.pool.Exec(context.Background(), `
-		INSERT INTO workflow_recipes (id, kind, origin, official_key, created_at, updated_at)
-		VALUES ($1, 'recipe_fragment', 'official', $2, NOW(), NOW())
-	`, officialID, officialID)
+		INSERT INTO workflow_recipes (id, kind, origin, official_key, created_at, updated_at, merchant_id)
+		VALUES ($1, 'recipe_fragment', 'official', $2, NOW(), NOW(), $3)
+	`, officialID, officialID, auth.MustDevMerchantID(t, rs.db))
 	if err != nil {
 		t.Fatal(err)
 	}

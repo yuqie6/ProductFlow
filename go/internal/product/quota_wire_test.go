@@ -61,7 +61,10 @@ func countQuotaEvents(t *testing.T, db *gorm.DB, merchantID, eventType, key stri
 
 func drainMerchantQuota(t *testing.T, db *gorm.DB, merchantID string) {
 	t.Helper()
-	acct := loadQuotaAccount(t, db, merchantID)
+	acct, err := (&quota.Service{DB: db}).EnsureAccount(context.Background(), merchantID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if acct.AvailableUnits <= 0 {
 		return
 	}

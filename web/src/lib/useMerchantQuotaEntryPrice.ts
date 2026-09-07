@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "./api";
-import { activeMerchantId } from "./merchantBoundary";
+import { ownMerchantId } from "./accountBoundary";
 import {
   isQuotaEntryPriceReady,
   resolveQuotaEntryPrice,
@@ -27,7 +27,7 @@ export function useMerchantQuotaEntryPrice(entryCode: string): MerchantQuotaEntr
     queryKey: ["session"],
     queryFn: api.getSessionState,
   });
-  const merchantId = activeMerchantId(sessionQuery.data);
+  const merchantId = ownMerchantId(sessionQuery.data);
   const quotaPriceQuery = useQuery({
     queryKey: ["merchant-quota-price", merchantId],
     queryFn: () => api.getMerchantQuotaPrice(merchantId),

@@ -187,6 +187,13 @@ func TestRegistrationCodeAndRegisterAtomicSuccess(t *testing.T) {
 		t.Fatalf("register %d %s", resp.StatusCode, raw)
 	}
 	cookies := resp.Cookies()
+	var registration struct {
+		MerchantID string `json:"merchant_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&registration); err != nil {
+		resp.Body.Close()
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	if len(cookies) == 0 {
 		t.Fatal("registration did not set session cookie")
@@ -198,15 +205,11 @@ func TestRegistrationCodeAndRegisterAtomicSuccess(t *testing.T) {
 	if user.IsOperator || user.Status != auth.UserStatusActive {
 		t.Fatalf("registered user %#v", user)
 	}
-	var membership schema.Memberships
-	if err := rs.db.Where("user_id = ?", user.ID).Take(&membership).Error; err != nil {
-		t.Fatal(err)
-	}
-	if membership.Role != auth.RoleOwner {
-		t.Fatalf("role %s", membership.Role)
+	if user.MerchantID == nil || *user.MerchantID == "" || registration.MerchantID != *user.MerchantID {
+		t.Fatalf("registered merchant user=%#v response=%q", user.MerchantID, registration.MerchantID)
 	}
 	var quota schema.MerchantQuotaAccounts
-	if err := rs.db.Where("merchant_id = ?", membership.MerchantID).Take(&quota).Error; err != nil {
+	if err := rs.db.Where("merchant_id = ?", *user.MerchantID).Take(&quota).Error; err != nil {
 		t.Fatal(err)
 	}
 	if quota.AvailableUnits != 100 || quota.ReservedUnits != 0 {
@@ -376,14 +379,11 @@ func TestRegistrationQuotaFailureRollsBackIdentityAndChallenge(t *testing.T) {
 		t.Fatalf("quota failure status=%d body=%s", failed.StatusCode, raw)
 	}
 	failed.Body.Close()
-	var users, merchants, memberships, sessions, accounts int64
+	var users, merchants, sessions, accounts int64
 	if err := rs.db.Model(&schema.Users{}).Where("email = ?", email).Count(&users).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := rs.db.Model(&schema.Merchants{}).Where("name = ?", merchantName).Count(&merchants).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := rs.db.Model(&schema.Memberships{}).Where("merchant_id IN (SELECT id FROM merchants WHERE name = ?)", merchantName).Count(&memberships).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := rs.db.Model(&schema.AuthSessions{}).Where("user_id IN (SELECT id FROM users WHERE email = ?)", email).Count(&sessions).Error; err != nil {
@@ -392,8 +392,8 @@ func TestRegistrationQuotaFailureRollsBackIdentityAndChallenge(t *testing.T) {
 	if err := rs.db.Model(&schema.MerchantQuotaAccounts{}).Where("merchant_id IN (SELECT id FROM merchants WHERE name = ?)", merchantName).Count(&accounts).Error; err != nil {
 		t.Fatal(err)
 	}
-	if users != 0 || merchants != 0 || memberships != 0 || sessions != 0 || accounts != 0 {
-		t.Fatalf("rollback rows users=%d merchants=%d memberships=%d sessions=%d accounts=%d", users, merchants, memberships, sessions, accounts)
+	if users != 0 || merchants != 0 || sessions != 0 || accounts != 0 {
+		t.Fatalf("rollback rows users=%d merchants=%d sessions=%d accounts=%d", users, merchants, sessions, accounts)
 	}
 	var row schema.RegistrationChallenges
 	if err := rs.db.Where("id = ?", challenge.ChallengeID).Take(&row).Error; err != nil {

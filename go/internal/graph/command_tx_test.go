@@ -76,6 +76,7 @@ func TestWriteTxDoesNotCommit(t *testing.T) {
 	if tx.Error != nil {
 		t.Fatal(tx.Error)
 	}
+	t.Cleanup(func() { _ = tx.Rollback().Error })
 	productID := insertCommandProduct(t, ctx, tx, "只 flush")
 	result := writeProductSource(t, ctx, tx, productID, "只 flush")
 	var count int

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -271,9 +272,10 @@ func TestProductContextConfirmedFactsAndLiveGraphRoles(t *testing.T) {
 	targetID := clockid.New()
 	edgeID := clockid.New()
 	factID := clockid.New()
+	merchantID := auth.MustDevMerchantID(t, as.db)
 	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '资料商品', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES ($1, $2, '资料商品', NOW(), NOW())
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := as.pool.Exec(context.Background(), `
@@ -420,9 +422,10 @@ func seedProductGoalTask(t *testing.T, as *agentServer) TaskResponse {
 	t.Helper()
 	productID := clockid.New()
 	graphID := clockid.New()
+	merchantID := auth.MustDevMerchantID(t, as.db)
 	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, 'Goal 商品', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES ($1, $2, 'Goal 商品', NOW(), NOW())
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := as.pool.Exec(context.Background(), `

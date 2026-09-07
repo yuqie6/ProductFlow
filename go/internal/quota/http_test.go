@@ -32,8 +32,8 @@ type quotaHTTPServer struct {
 type dualQuotaFixture struct {
 	MerchantAID string
 	MerchantBID string
-	CookiesA    []*http.Cookie // Operator + Owner of A
-	CookiesB    []*http.Cookie // non-Op Owner of B
+	CookiesA    []*http.Cookie // Operator with own A
+	CookiesB    []*http.Cookie // ordinary account owning B
 }
 
 func newQuotaHTTPServer(t *testing.T) *quotaHTTPServer {
@@ -116,7 +116,7 @@ func seedDualQuotaHTTP(t *testing.T, qs *quotaHTTPServer) dualQuotaFixture {
 		IsOperator: true, Status: "active", CreatedAt: now, UpdatedAt: now,
 	}
 	userB := schema.Users{
-		ID: clockid.New(), Email: emailB, PasswordHash: string(hashB), DisplayName: "Quota B Owner",
+		ID: clockid.New(), Email: emailB, PasswordHash: string(hashB), DisplayName: "Quota B",
 		IsOperator: false, Status: "active", CreatedAt: now, UpdatedAt: now,
 	}
 	merchantA := schema.Merchants{
@@ -125,27 +125,20 @@ func seedDualQuotaHTTP(t *testing.T, qs *quotaHTTPServer) dualQuotaFixture {
 	merchantB := schema.Merchants{
 		ID: clockid.New(), Name: "quota-http-B-" + suffix, Status: "active", CreatedAt: now, UpdatedAt: now,
 	}
-	memA := schema.Memberships{
-		ID: clockid.New(), MerchantID: merchantA.ID, UserID: userA.ID, Role: "owner",
-		Status: "active", CreatedAt: now, UpdatedAt: now,
-	}
-	memB := schema.Memberships{
-		ID: clockid.New(), MerchantID: merchantB.ID, UserID: userB.ID, Role: "owner",
-		Status: "active", CreatedAt: now, UpdatedAt: now,
-	}
-	for _, row := range []any{&userA, &userB, &merchantA, &merchantB, &memA, &memB} {
+	userA.MerchantID = &merchantA.ID
+	userB.MerchantID = &merchantB.ID
+	for _, row := range []any{&merchantA, &merchantB, &userA, &userB} {
 		if err := qs.db.Create(row).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
 	t.Cleanup(func() {
 		_ = qs.db.Where("user_id IN ?", []string{userA.ID, userB.ID}).Delete(&schema.AuthSessions{}).Error
-		_ = qs.db.Where("id IN ?", []string{memA.ID, memB.ID}).Delete(&schema.Memberships{}).Error
 		_ = qs.db.Where("merchant_id IN ?", []string{merchantA.ID, merchantB.ID}).Delete(&schema.MerchantQuotaEvents{}).Error
 		_ = qs.db.Where("merchant_id IN ?", []string{merchantA.ID, merchantB.ID}).Delete(&schema.MerchantQuotaHolds{}).Error
 		_ = qs.db.Where("merchant_id IN ?", []string{merchantA.ID, merchantB.ID}).Delete(&schema.MerchantQuotaAccounts{}).Error
-		_ = qs.db.Where("id IN ?", []string{merchantA.ID, merchantB.ID}).Delete(&schema.Merchants{}).Error
 		_ = qs.db.Where("id IN ?", []string{userA.ID, userB.ID}).Delete(&schema.Users{}).Error
+		_ = qs.db.Where("id IN ?", []string{merchantA.ID, merchantB.ID}).Delete(&schema.Merchants{}).Error
 	})
 
 	login := func(email, password string) []*http.Cookie {
@@ -181,11 +174,11 @@ func TestMerchantQuotaCrossMerchantDenied(t *testing.T) {
 	dual := seedDualQuotaHTTP(t, qs)
 
 	deny := qs.do(t, http.MethodGet, "/api/merchants/"+dual.MerchantAID+"/quota", "", dual.CookiesB)
-	if deny.StatusCode != http.StatusForbidden {
+	if deny.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-merchant status %d detail %q", deny.StatusCode, readDetail(t, deny))
 	}
 	detail := readDetail(t, deny)
-	if detail != "不是该商家成员" {
+	if detail != auth.CrossMerchantDetail {
 		t.Fatalf("detail %q", detail)
 	}
 
@@ -343,7 +336,7 @@ func TestPriceCatalogHTTP(t *testing.T) {
 	}
 
 	cross := qs.do(t, http.MethodGet, "/api/merchants/"+dual.MerchantAID+"/quota/price", "", dual.CookiesB)
-	if cross.StatusCode != http.StatusForbidden {
+	if cross.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-merchant price %d %s", cross.StatusCode, readDetail(t, cross))
 	}
 	_ = readDetail(t, cross)

@@ -23,7 +23,7 @@ for (const width of [390, 1440]) {
       await page.route("**/api/auth/session", (route) => route.fulfill({ json: {
         authenticated: true, access_required: true,
         user: { id: "operator", email: "operator@example.com", display_name: "Operator", is_operator: true },
-        memberships: [{ merchant_id: "merchant", merchant_name: "Shop", role: "owner", status: "active", merchant_status: "active" }],
+        merchant: { id: "merchant", name: "Shop", status: "active" },
       } }));
       await page.route("**/api/settings/provider-config", (route) => route.fulfill({ json: { profiles: [], bindings: [] } }));
       await page.route("**/api/settings", (route) => {

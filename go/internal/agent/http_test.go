@@ -368,9 +368,10 @@ func TestAgentInternalNotConfigured(t *testing.T) {
 func TestAgentWorkbenchMissingAndTurnGateway(t *testing.T) {
 	as := newAgentServer(t, HTTPGateway{}, "")
 	productID := clockid.New()
+	merchantID := auth.MustDevMerchantID(t, as.db)
 	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '没有工作区的商品', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES ($1, $2, '没有工作区的商品', NOW(), NOW())
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	wb := as.do(t, http.MethodGet, "/api/v2/products/"+productID+"/agent-workbench", nil, "", nil)
@@ -1854,9 +1855,10 @@ func TestAgentWorkbenchEnsureWithGraph(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "")
 	productID := clockid.New()
 	graphID := clockid.New()
+	merchantID := auth.MustDevMerchantID(t, as.db)
 	if _, err := as.pool.Exec(context.Background(), `
-		INSERT INTO products (id, name, created_at, updated_at) VALUES ($1, '有图的商品', NOW(), NOW())
-	`, productID); err != nil {
+		INSERT INTO products (id, merchant_id, name, created_at, updated_at) VALUES ($1, $2, '有图的商品', NOW(), NOW())
+	`, productID, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := as.pool.Exec(context.Background(), `

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 )
 
@@ -37,10 +38,10 @@ func TestGraphSummaryQueryPlanTargetScale(t *testing.T) {
 	}
 
 	name := fmt.Sprintf("pf_gplan_%d", time.Now().UnixNano()%1_000_000_000)
-	_, pool, _ := isolatedMigratedDB(t, testdb.Pool(t), rawURL, name)
+	_, pool, gdb := isolatedMigratedDB(t, testdb.Pool(t), rawURL, name)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	seedTargetScaleGraphData(t, ctx, pool)
+	seedTargetScaleGraphData(t, ctx, pool, auth.MustDevMerchantID(t, gdb))
 
 	runIDs := make([]string, 0, 20)
 	rows, err := pool.Query(ctx, `
@@ -110,13 +111,13 @@ func TestGraphSummaryQueryPlanTargetScale(t *testing.T) {
 	assertPlanShape(t, "node detail", detailNodePlan, 20)
 }
 
-func seedTargetScaleGraphData(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+func seedTargetScaleGraphData(t *testing.T, ctx context.Context, pool *pgxpool.Pool, merchantID string) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO products (id, name, created_at, updated_at)
-		SELECT 'plan-product-' || g, 'query-plan-' || g, NOW(), NOW()
+		INSERT INTO products (id, name, created_at, updated_at, merchant_id)
+		SELECT 'plan-product-' || g, 'query-plan-' || g, NOW(), NOW(), $1
 		FROM generate_series(0, 4) AS g
-	`); err != nil {
+	`, merchantID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

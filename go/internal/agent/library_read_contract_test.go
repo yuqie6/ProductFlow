@@ -12,6 +12,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/library"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
@@ -22,7 +23,8 @@ func libraryReadAsset(t *testing.T, as *agentServer) library.Asset {
 	if err := png.Encode(&content, image.NewRGBA(image.Rect(0, 0, 8, 8))); err != nil {
 		t.Fatal(err)
 	}
-	items, err := as.svc.Library.Upload(context.Background(), []library.UploadItem{{Content: content.Bytes(), Filename: "read-contract-" + clockid.New() + ".png", MIMEType: "image/png"}}, nil, clockid.New())
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
+	items, err := as.svc.Library.Upload(ctx, []library.UploadItem{{Content: content.Bytes(), Filename: "read-contract-" + clockid.New() + ".png", MIMEType: "image/png"}}, nil, clockid.New())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +67,7 @@ func libraryReadOperation(item LibraryAssetMetadata, kind string, target map[str
 
 func TestLibraryReadFactsDriveConfirmedOperations(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
-	ctx := context.Background()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	asset := libraryReadAsset(t, as)
 	folder, err := as.svc.Library.CreateFolder(ctx, "目标目录-"+clockid.New())
 	if err != nil {
@@ -169,6 +171,7 @@ func TestLibraryReadFactsDriveConfirmedOperations(t *testing.T) {
 
 func TestLibraryReadWrongFactsCannotConfirm(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	asset := libraryReadAsset(t, as)
 	other := libraryReadAsset(t, as)
 	for _, fault := range []string{"revision", "zero_revision", "before", "other_asset", "missing_folder"} {
@@ -191,7 +194,7 @@ func TestLibraryReadWrongFactsCannotConfirm(t *testing.T) {
 				op["target"] = map[string]any{"folder_id": clockid.New()}
 			}
 			raw, _ := json.Marshal(map[string]any{"schema_version": 1, "confirmation_summary": "错误输入", "operations": []any{op}})
-			draft, err := as.svc.Library.AppendOrganizationDraftRevision(context.Background(), conv, raw, "", "")
+			draft, err := as.svc.Library.AppendOrganizationDraftRevision(ctx, conv, raw, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -211,7 +214,7 @@ func TestLibraryReadWrongFactsCannotConfirm(t *testing.T) {
 
 func TestLibraryReadPaginationScopeAndWorkflowConflicts(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
-	ctx := context.Background()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
 	asset := libraryReadAsset(t, as)
 	conv := libraryReadConversation(t, as)
 	marker := "paged-" + clockid.New()
