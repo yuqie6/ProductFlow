@@ -410,11 +410,12 @@ func TestProviderPreparationQuotaFailureRollsBackBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if _, err := es.pool.Exec(context.Background(), "ALTER TABLE merchant_quota_holds DROP CONSTRAINT "+constraint); err != nil {
+		if _, err := es.pool.Exec(context.Background(), "ALTER TABLE merchant_quota_holds DROP CONSTRAINT IF EXISTS "+constraint); err != nil {
 			t.Error(err)
 		}
 	})
-	if err := (Executor{DB: es.db, Media: es.media, Provider: provider}).Execute(ctx, taskID); err == nil {
+	executor := Executor{DB: es.db, Media: es.media, Provider: provider}
+	if err := executor.Execute(ctx, taskID); err == nil {
 		t.Fatal("quota database failure must propagate")
 	}
 	if provider.lastSize != "" {
@@ -426,6 +427,50 @@ func TestProviderPreparationQuotaFailureRollsBackBoundary(t *testing.T) {
 	}
 	if status != "running" || phase != "claimed" || attemptPhase != "claimed" {
 		t.Fatalf("partial provider boundary: task=%s phase=%s attempt=%s", status, phase, attemptPhase)
+	}
+
+	var oldAttempt string
+	if err := es.pool.QueryRow(ctx, "SELECT active_attempt_id FROM local_image_edit_tasks WHERE id=$1", taskID).Scan(&oldAttempt); err != nil {
+		t.Fatal(err)
+	}
+	var holds int64
+	if err := es.db.Model(&schema.MerchantQuotaHolds{}).Where("idempotency_key = ?", editQuotaKey(taskID, oldAttempt)).Count(&holds).Error; err != nil {
+		t.Fatal(err)
+	}
+	if holds != 0 {
+		t.Fatalf("rolled back preparation left %d holds", holds)
+	}
+	if outcome, err := recoverLocalEditState(ctx, es.db, taskID, time.Minute, time.Now().UTC().Add(2*time.Minute)); err != nil || outcome != "requeued" {
+		t.Fatalf("recovery=%s err=%v", outcome, err)
+	}
+	var effect string
+	if err := es.pool.QueryRow(ctx, "SELECT effect_result FROM local_image_edit_provider_attempts WHERE task_id=$1 AND attempt_id=$2", taskID, oldAttempt).Scan(&effect); err != nil {
+		t.Fatal(err)
+	}
+	if effect != "failed" {
+		t.Fatalf("old effect=%s", effect)
+	}
+	if _, err := es.pool.Exec(ctx, "ALTER TABLE merchant_quota_holds DROP CONSTRAINT "+constraint); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.Execute(ctx, taskID); err != nil {
+		t.Fatal(err)
+	}
+	if provider.lastSize == "" {
+		t.Fatal("recovered attempt did not call provider")
+	}
+	if err := es.pool.QueryRow(ctx, "SELECT status FROM local_image_edit_tasks WHERE id=$1", taskID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "succeeded" {
+		t.Fatalf("recovered status=%s", status)
+	}
+	var newAttempt, holdStatus string
+	if err := es.pool.QueryRow(ctx, `SELECT a.attempt_id,h.status FROM local_image_edit_provider_attempts a JOIN merchant_quota_holds h ON h.idempotency_key='local-edit:'||a.task_id||':'||a.attempt_id WHERE a.task_id=$1 AND a.attempt_id<>$2`, taskID, oldAttempt).Scan(&newAttempt, &holdStatus); err != nil {
+		t.Fatal(err)
+	}
+	if newAttempt == oldAttempt || holdStatus != quota.StatusSettled {
+		t.Fatalf("new attempt=%s hold=%s", newAttempt, holdStatus)
 	}
 }
 
