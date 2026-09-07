@@ -804,8 +804,8 @@ export function GlobalAgentDock() {
   const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
 
   const panelClass = dockMode === "fullscreen"
-    ? "pointer-events-auto fixed inset-2 sm:inset-4 z-[70] flex flex-col overflow-hidden rounded-2xl border border-border-l2 bg-surface-raised text-text-primary shadow-[0_25px_80px_rgb(0_0_0_/_0.5)] backdrop-blur"
-    : `pointer-events-auto fixed z-[70] flex flex-col overflow-hidden rounded-2xl border border-border-l2 bg-surface-raised text-text-primary shadow-[0_20px_60px_rgb(15_23_42_/_0.25)] dark:shadow-[0_24px_70px_rgb(0_0_0_/_0.55)] ${isDraggingWindow || isResizingWindow ? "select-none transition-none" : "transition-[width,height,transform] duration-150"
+    ? "pointer-events-auto fixed inset-2 sm:inset-4 z-[70] flex flex-col overflow-hidden rounded-2xl border border-border-l2 bg-surface-raised text-text-primary shadow-elev-3 backdrop-blur"
+    : `pointer-events-auto fixed z-[70] flex flex-col overflow-hidden rounded-2xl border border-border-l2 bg-surface-raised text-text-primary shadow-elev-3 ${isDraggingWindow || isResizingWindow ? "select-none transition-none" : "transition-[width,height,transform] duration-150"
     }`;
 
   const panelStyle = dockMode === "fullscreen"
@@ -1270,7 +1270,7 @@ export function GlobalAgentDock() {
             right: "auto",
             bottom: "auto",
           } : undefined}
-          className={`pointer-events-auto fixed z-[60] flex h-12 w-12 items-center justify-center rounded-full border border-accent/30 bg-accent text-accent-fg shadow-[0_10px_28px_rgb(15_23_42_/_0.25)] dark:shadow-[0_12px_32px_rgb(0_0_0_/_0.45)] transition-transform hover:scale-105 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${bubblePos ? "" : "bottom-[calc(4.25rem+env(safe-area-inset-bottom))] right-3 sm:bottom-5 sm:right-5"
+          className={`pointer-events-auto fixed z-[60] flex h-12 w-12 items-center justify-center rounded-full border border-accent/30 bg-accent text-accent-fg shadow-elev-3 transition-transform hover:scale-105 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${bubblePos ? "" : "bottom-[calc(4.25rem+env(safe-area-inset-bottom))] right-3 sm:bottom-5 sm:right-5"
             } ${isDraggingBubble ? "cursor-grabbing select-none transition-none" : "cursor-grab"}`}
         >
           <Bot size={20} aria-hidden="true" />

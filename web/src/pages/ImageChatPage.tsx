@@ -1128,7 +1128,7 @@ export function ImageChatPage() {
         onPointerDown={handleMobileEdgeSwipeStart}
       >
         <aside
-          className="relative hidden w-full shrink-0 flex-col border-b border-border-l1 bg-surface-raised/95 dark:border-border-l1/80 dark:bg-surface-panel dark:shadow-[12px_0_36px_rgba(0,0,0,0.24)] dark:backdrop-blur-xl lg:flex lg:w-[var(--image-chat-left-panel-width)] lg:border-b-0 lg:border-r"
+          className="relative hidden w-full shrink-0 flex-col border-b border-border-l1 bg-surface-panel lg:flex lg:w-[var(--image-chat-left-panel-width)] lg:border-b-0 lg:border-r"
           style={leftPanelStyle}
         >
           <button
@@ -1361,7 +1361,7 @@ export function ImageChatPage() {
         </section>
 
         <aside
-          className="relative hidden w-full shrink-0 flex-col border-t border-border-l1 bg-surface-raised dark:border-border-l1/80 dark:bg-surface-panel dark:shadow-[-12px_0_36px_rgba(0,0,0,0.24)] dark:backdrop-blur-xl lg:flex lg:w-[var(--image-chat-right-panel-width)] lg:border-l lg:border-t-0"
+          className="relative hidden w-full shrink-0 flex-col border-t border-border-l1 bg-surface-panel lg:flex lg:w-[var(--image-chat-right-panel-width)] lg:border-l lg:border-t-0"
           style={rightPanelStyle}
         >
           <button
@@ -1487,7 +1487,7 @@ export function ImageChatPage() {
             </div>
           </div>
 
-          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border-l1 bg-surface-raised/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-[0_-8px_24px_rgba(15,23,42,0.10)] backdrop-blur dark:border-border-l2 dark:bg-surface-base/90 dark:shadow-[0_-18px_40px_rgba(0,0,0,0.32)] lg:sticky lg:inset-x-auto lg:bottom-0 lg:p-4">
+          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border-l1 bg-surface-raised/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-elev-2 backdrop-blur dark:border-border-l2 dark:bg-surface-base/90 lg:sticky lg:inset-x-auto lg:bottom-0 lg:p-4">
             {baseRequirementMessage ? (
               <div className="mb-2 rounded-xl border border-state-warning bg-state-warning-soft px-3 py-2 text-xs font-medium text-state-warning dark:border-state-warning/35 dark:bg-state-warning/10 dark:text-state-warning">
                 {baseRequirementMessage}
@@ -1638,7 +1638,7 @@ export function ImageChatPage() {
       </Drawer.Root>
 
       <div className="fixed inset-x-0 z-40 px-3 lg:hidden" style={{ bottom: "calc(4.1rem + env(safe-area-inset-bottom))" }}>
-        <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-2xl border border-border-l1 bg-surface-raised p-2 shadow-[0_-6px_18px_rgba(15,23,42,0.12)] dark:border-border-l1 dark:bg-surface-base dark:shadow-[0_-12px_28px_rgba(0,0,0,0.30)]">
+        <div className="mx-auto flex max-w-2xl items-center gap-2 rounded-2xl border border-border-l1 bg-surface-raised p-2 shadow-elev-2 dark:border-border-l1 dark:bg-surface-base">
           {selectedRound ? (
             <div className="flex shrink-0 items-center gap-1.5">
               <a
@@ -1696,7 +1696,7 @@ export function ImageChatPage() {
       >
         <Drawer.Portal>
           <Drawer.Overlay className="fixed inset-0 z-[70] bg-overlay lg:hidden" />
-          <Drawer.Content className="mobile-generation-sheet fixed inset-x-0 bottom-0 z-[71] flex max-h-[80dvh] flex-col rounded-t-[1.5rem] border-t border-border-l1 bg-surface-raised shadow-[0_-12px_34px_rgba(15,23,42,0.16)] outline-none dark:border-border-l1 dark:bg-surface-panel dark:shadow-[0_-18px_42px_rgba(0,0,0,0.34)] lg:hidden">
+          <Drawer.Content className="mobile-generation-sheet fixed inset-x-0 bottom-0 z-[71] flex max-h-[80dvh] flex-col rounded-t-[1.5rem] border-t border-border-l1 bg-surface-raised shadow-elev-2 outline-none dark:border-border-l1 dark:bg-surface-panel lg:hidden">
             <Drawer.Title className="sr-only">{t("chat.mobileGenerationSheet")}</Drawer.Title>
             <Drawer.Handle className="mx-auto mt-2 flex h-7 w-24 items-center justify-center rounded-full text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:text-text-muted dark:focus-visible:ring-accent">
               <span className="h-1.5 w-12 rounded-full bg-surface-subtle dark:bg-surface-subtle" />

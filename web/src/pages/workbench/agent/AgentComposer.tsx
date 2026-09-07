@@ -149,7 +149,7 @@ export function AgentComposer({
   };
 
   return (
-    <div data-agent-composer className="shrink-0 border-t border-border-l1 bg-surface-base/95 px-3 py-3 backdrop-blur sm:px-4 sm:py-4">
+    <div data-agent-composer className="shrink-0 border-t border-border-l1 bg-surface-panel px-3 py-3 sm:px-4 sm:py-4">
       <div className="mx-auto w-full max-w-[48rem]">
         {error || uploadNotice ? (
           <div role="alert" className="mb-2 rounded-lg border border-state-error/20 bg-state-error/10 px-3 py-2 text-xs leading-5 text-state-error">
@@ -158,7 +158,7 @@ export function AgentComposer({
         ) : null}
 
         <div
-          className={`overflow-hidden rounded-surface border bg-surface-raised shadow-elev-2 transition-[border-color,box-shadow] duration-fast focus-within:border-accent/70 focus-within:shadow-elev-3 ${dragging ? "border-accent/80" : "border-border-l3"
+          className={`overflow-hidden rounded-surface border bg-surface-raised shadow-elev-1 transition-[border-color,box-shadow] duration-fast focus-within:border-accent focus-within:ring-2 focus-within:ring-focus-ring motion-reduce:transition-none ${dragging ? "border-accent/80" : "border-border-l3"
             }`}
           onDragOver={(event) => {
             if (!onUploadFiles) {

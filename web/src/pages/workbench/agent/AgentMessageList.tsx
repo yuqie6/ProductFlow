@@ -315,7 +315,7 @@ function UserTurnBubble({
               type="button"
               onClick={() => onPreviewAsset?.(assetId)}
               aria-label={t("agentWorkbench.previewTurnAsset")}
-              className="h-16 w-16 overflow-hidden rounded-xl border border-border-l2 bg-surface-subtle shadow-sm transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="h-16 w-16 overflow-hidden rounded-xl border border-border-l2 bg-surface-subtle shadow-elev-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"
             >
               <img
                 src={getAssetThumbnailUrl(assetId)}
@@ -326,7 +326,7 @@ function UserTurnBubble({
           ))}
         </div>
       ) : null}
-      <div className="rounded-[20px] bg-accent-soft px-4 py-3 text-sm leading-6 text-text-primary">
+      <div className="rounded-surface bg-surface-subtle px-4 py-3 text-sm leading-6 text-text-primary">
         <div className="whitespace-pre-wrap break-words">{text}</div>
       </div>
       <div className="mt-1 flex min-h-6 items-center justify-end gap-0.5 text-[11px] text-text-muted">

@@ -47,7 +47,7 @@ export function ConversationPanel({
     <section
       data-agent-conversation-panel={variant === "product" ? "" : undefined}
       data-global-agent-conversation={variant === "global" ? "" : undefined}
-      className={`flex min-h-0 flex-col overflow-hidden bg-surface-base text-text-primary ${className}`}
+      className={`flex min-h-0 flex-col overflow-hidden bg-surface-panel text-text-primary ${className}`}
     >
       {children !== undefined ? children : (
         <>

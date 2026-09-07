@@ -36,7 +36,7 @@ export function ImageChatMainStage({
   t,
 }: ImageChatMainStageProps) {
   return (
-    <div className="relative flex min-h-[18rem] flex-1 items-center justify-center overflow-hidden rounded-3xl border border-border-l1 bg-surface-raised shadow-sm dark:border-border-l3/80 dark:bg-surface-panel shadow-elev-1 sm:min-h-[22rem] lg:min-h-[360px]">
+    <div className="relative flex min-h-[18rem] flex-1 items-center justify-center overflow-hidden rounded-surface border border-border-l1 bg-surface-panel sm:min-h-[22rem] lg:min-h-[360px]">
       <div className="absolute inset-0 bg-[radial-gradient(var(--color-canvas-dot)_1px,transparent_1px)] [background-size:20px_20px]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-3 px-5 py-4">
         {selectedRound ? (
@@ -47,11 +47,7 @@ export function ImageChatMainStage({
           <div className="hidden min-w-0 max-w-[calc(100%-5.5rem)] truncate rounded-full bg-surface-raised/90 px-3 py-1.5 text-xs font-medium text-text-secondary shadow-sm ring-1 ring-border-l1 backdrop-blur dark:bg-surface-base/82 dark:text-text-primary dark:ring-border-l1 lg:block">
             {placeholderStatusLabel(selectedPlaceholder, t)} · {placeholderSizeLabel(selectedPlaceholder)}
           </div>
-        ) : (
-          <div className="hidden rounded-full bg-surface-raised/90 px-3 py-1.5 text-xs font-medium text-text-muted shadow-sm ring-1 ring-border-l1 backdrop-blur dark:border dark:border-accent/35 dark:bg-surface-base/82 dark:text-accent dark:ring-accent/20 lg:block">
-            {t("chat.waitingFirstResult")}
-          </div>
-        )}
+        ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
           {branchBaseRound ? (
             <div className="hidden h-8 items-center gap-1.5 rounded-full bg-accent px-3 text-xs font-semibold text-accent-fg shadow-sm dark:bg-accent/20 dark:text-accent dark:ring-1 dark:ring-accent/40 sm:inline-flex">
@@ -75,7 +71,7 @@ export function ImageChatMainStage({
               src={api.toApiUrl(selectedRound.generated_asset.preview_url)}
               alt={t("chat.currentResultAlt")}
               decoding="async"
-              className="max-h-full max-w-full object-contain drop-shadow-2xl"
+              className="max-h-full max-w-full object-contain"
             />
           </button>
         </div>

@@ -745,7 +745,7 @@ export function AgentProductCreateForm({
         </div>
       ) : null}
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border-l1 bg-surface-raised shadow-[0_-10px_30px_-12px_rgb(2_6_23/0.25)] dark:border-border-l1 dark:bg-surface-panel dark:shadow-[0_-14px_36px_rgb(0_0_0/0.45)]">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border-l1 bg-surface-raised shadow-elev-2 dark:border-border-l1 dark:bg-surface-panel">
         <div className="mx-auto flex w-full max-w-[920px] flex-col-reverse gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-text-secondary">
             <span data-create-outcome={createOutcome} className="w-full text-text-primary">

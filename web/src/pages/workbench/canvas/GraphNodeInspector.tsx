@@ -406,12 +406,12 @@ export function GraphNodeInspector({
           </div>
 
           {node.unused && node.bound_asset_id ? (
-            <div className="mt-3 rounded-xl border border-border-l1 bg-surface-subtle px-3 py-2 text-xs text-text-secondary">
+            <div className="mt-3 border-l-2 border-border-l2 pl-3 text-xs leading-5 text-text-secondary">
               {t("graph.inspector.unused")}
             </div>
           ) : null}
           {node.node_type === "image_asset" && !node.bound_asset_id ? (
-            <div className="mt-3 rounded-xl border border-border-l1 bg-surface-subtle px-3 py-2 text-xs text-text-secondary">
+            <div className="mt-3 border-l-2 border-border-l2 pl-3 text-xs leading-5 text-text-secondary">
               {t("graph.inspector.unbound")}
             </div>
           ) : null}
@@ -424,7 +424,7 @@ export function GraphNodeInspector({
             </div>
           ) : null}
           {seedDocument || seedPromptForImage ? (
-            <div className="mt-3 rounded-xl border border-border-l1 bg-surface-subtle px-3 py-2 text-xs text-text-secondary">
+            <div className="mt-3 border-l-2 border-border-l2 pl-3 text-xs leading-5 text-text-secondary">
               {t("graph.inspector.seedDocument")}
             </div>
           ) : null}
@@ -440,7 +440,7 @@ export function GraphNodeInspector({
             </div>
           ) : null}
           {activeRun ? (
-            <div className="mt-3 flex items-start gap-2 rounded-xl border border-accent/30 bg-accent-soft px-3 py-2.5 text-xs text-text-primary">
+            <div className="mt-3 flex items-start gap-2 border-t border-border-l1 pt-3 text-xs text-text-primary">
               <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
               <div>
                 <div className="font-semibold">{t(`detail.nodeStatus.${nodeStatus}`)}</div>

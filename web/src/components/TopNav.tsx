@@ -168,7 +168,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
 
   return (
     <>
-      <nav className="z-50 flex flex-col gap-3 overflow-visible border-b border-border-l1 bg-surface-raised/95 px-3 py-3 shadow-[0_1px_0_rgba(15,23,42,0.03)] backdrop-blur dark:border-border-l2 dark:bg-surface-base/92 sm:px-4 lg:grid lg:min-h-14 lg:grid-cols-[minmax(180px,1fr)_auto_minmax(180px,1fr)] lg:items-center lg:gap-4 lg:px-6">
+      <nav className="z-50 flex flex-col gap-3 overflow-visible border-b border-border-l1 bg-surface-panel px-3 py-3 dark:border-border-l2 dark:bg-surface-base/92 sm:px-4 lg:grid lg:min-h-14 lg:grid-cols-[minmax(180px,1fr)_auto_minmax(180px,1fr)] lg:items-center lg:gap-4 lg:px-6">
         <div className="flex min-w-0 items-center justify-between gap-2 text-sm">
           <div className="flex min-w-0 max-w-[calc(100%-10.75rem)] items-center space-x-2 overflow-hidden lg:max-w-none">
             <button
@@ -288,7 +288,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
 
       <div
         aria-label={t("nav.mobile")}
-        className="fixed inset-x-0 bottom-0 z-50 border-t border-border-l1 bg-surface-raised/96 px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+0.4rem)] shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur dark:border-border-l2 dark:bg-surface-base/94 dark:shadow-[0_-18px_40px_rgba(0,0,0,0.35)] lg:hidden"
+        className="fixed inset-x-0 bottom-0 z-50 border-t border-border-l1 bg-surface-raised/96 px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+0.4rem)] shadow-elev-2 backdrop-blur dark:border-border-l2 dark:bg-surface-base/94 lg:hidden"
       >
         <div
           className="mx-auto grid w-full max-w-xl gap-1"
