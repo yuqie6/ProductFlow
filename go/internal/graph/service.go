@@ -443,6 +443,7 @@ func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req 
 // ListRuns 给 GET .../runs：按 started_at DESC 列出该图最近最多 20 条 GraphRun 摘要。
 // 图不属于该商品返回 NotFound。不写库、不入队。完整 snapshot、node input/output 走单个 run 详情，不要把本列表当详情接口。
 func (s Service) ListRuns(ctx context.Context, productID, graphID string) (GraphRunListResponse, error) {
+	ctx = s.guardCtx(ctx)
 	var out GraphRunListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		runs, err := listGraphRuns(ctx, pgxTx, productID, graphID, 20)
@@ -461,6 +462,7 @@ func (s Service) ListRuns(ctx context.Context, productID, graphID string) (Graph
 
 // GetRun 读取指定 GraphRun。找不到 run 返回 NotFound，不返回零值当成功。
 func (s Service) GetRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
+	ctx = s.guardCtx(ctx)
 	var out GraphRunResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		run, err := loadGraphRun(ctx, pgxTx, productID, graphID, runID)
@@ -476,6 +478,7 @@ func (s Service) GetRun(ctx context.Context, productID, graphID, runID string) (
 // GetRunStatus 只读取指定 GraphRun 的 identity/status，供 SSE 终态兜底检查。
 // 不读取 snapshot、node_runs 或 provider 输入/输出；完整详情仍由 GetRun 提供。
 func (s Service) GetRunStatus(ctx context.Context, productID, graphID, runID string) (string, error) {
+	ctx = s.guardCtx(ctx)
 	var status string
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var err error
@@ -488,6 +491,7 @@ func (s Service) GetRunStatus(ctx context.Context, productID, graphID, runID str
 // GetRunForProduct 按 run id 读取运行，并校验属于该商品。workflowID 非空时还须匹配 graph_id。
 // run 不存在、不属于该商品或 graph_id 不匹配返回 NotFound。
 func (s Service) GetRunForProduct(ctx context.Context, productID, runID, workflowID string) (GraphRunResponse, error) {
+	ctx = s.guardCtx(ctx)
 	var out GraphRunResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		run, err := loadGraphRunByID(ctx, pgxTx, runID)

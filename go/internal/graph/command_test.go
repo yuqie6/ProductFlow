@@ -17,6 +17,15 @@ import (
 
 type cmdTestProducts struct{}
 
+func (cmdTestProducts) Require(ctx context.Context, tx *gorm.DB, productID string) error {
+	var id string
+	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM products WHERE id = $1`, productID).Scan(&id)
+	if errors.Is(err, sqldb.ErrNoRows) {
+		return apperr.NotFound("商品不存在")
+	}
+	return err
+}
+
 func (cmdTestProducts) Lock(ctx context.Context, tx *gorm.DB, productID string) error {
 	var id string
 	err := pfdb.QueryRow(ctx, tx, `SELECT id FROM products WHERE id = $1 FOR UPDATE`, productID).Scan(&id)

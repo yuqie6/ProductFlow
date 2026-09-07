@@ -31,6 +31,7 @@ func TestRuntimeFactsExcludePendingAndConflictedValues(t *testing.T) {
 	}
 }
 
+func (g *batchSourceGuard) Require(context.Context, *gorm.DB, string) error              { return nil }
 func (g *batchSourceGuard) Lock(context.Context, *gorm.DB, string) error                { return nil }
 func (g *batchSourceGuard) HasAssets(context.Context, *gorm.DB, string, []string) error { return nil }
 func (g *batchSourceGuard) LoadSource(_ context.Context, _ *gorm.DB, productID string) (*SourceProduct, error) {

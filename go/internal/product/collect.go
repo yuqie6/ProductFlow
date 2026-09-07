@@ -61,6 +61,12 @@ func AssetIDsExist(ctx context.Context, tx *gorm.DB, productID string, ids []str
 // GraphGuard 供 graph.Service / WriteTx 注入，SQL 留在本包。
 type GraphGuard struct{}
 
+// Require 实现 graph.ProductGuard：确认商品属于当前工作商家，不加行锁。
+func (GraphGuard) Require(ctx context.Context, tx *gorm.DB, productID string) error {
+	_, err := loadProduct(ctx, tx, productID)
+	return err
+}
+
 // Lock 实现 graph.ProductGuard：锁商品行。SQL 留在本包，避免 graph import product 循环。
 // 商品不存在返回 NotFound。
 func (GraphGuard) Lock(ctx context.Context, tx *gorm.DB, productID string) error {

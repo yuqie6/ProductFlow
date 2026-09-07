@@ -564,6 +564,9 @@ func loadGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID st
 // loadGraphRunStatus 只读取 GraphRun 的 identity/status，供 SSE 终态兜底检查。
 // 商品和工作流校验也只取 graph id，不能把完整 GraphRun 投影带回读路径。
 func loadGraphRunStatus(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) (string, error) {
+	if err := requireOwnedProduct(ctx, tx, productID); err != nil {
+		return "", err
+	}
 	var graphRec schema.WorkflowGraphs
 	if err := tx.WithContext(ctx).Select("id").Where("id = ? AND product_id = ?", graphID, productID).Take(&graphRec).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

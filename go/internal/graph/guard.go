@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"gorm.io/gorm"
 )
@@ -38,6 +39,9 @@ type BoundAssetMetadata struct {
 
 // ProductGuard 把商品行锁、绑定资产和资料快照留在 product 包，避免 graph 查询 products。
 type ProductGuard interface {
+	// Require 确认商品属于当前工作商家；缺失或跨商统一 404（NotFoundCrossMerchant）。
+	// 只读校验，不加行锁；写路径继续用 Lock。
+	Require(ctx context.Context, tx *gorm.DB, productID string) error
 	Lock(ctx context.Context, tx *gorm.DB, productID string) error
 	HasAssets(ctx context.Context, tx *gorm.DB, productID string, ids []string) error
 	LoadSource(ctx context.Context, tx *gorm.DB, productID string) (*SourceProduct, error)
@@ -45,6 +49,18 @@ type ProductGuard interface {
 	LoadFactSet(ctx context.Context, tx *gorm.DB, factSetID, productID string) (*FactSet, error)
 	LoadFactSets(ctx context.Context, tx *gorm.DB, factSetIDs []string) (map[string]*FactSet, error)
 	BoundAssetMetas(ctx context.Context, tx *gorm.DB, productID string, assetIDs []string) (map[string]BoundAssetMetadata, error)
+}
+
+// requireOwnedProduct 在已有工作商家时校验 product 归属；无商家上下文（worker/recovery）跳过。
+func requireOwnedProduct(ctx context.Context, tx *gorm.DB, productID string) error {
+	if _, ok := auth.MerchantIDFrom(ctx); !ok {
+		return nil
+	}
+	guard, err := requireProductGuard(ctx)
+	if err != nil {
+		return err
+	}
+	return guard.Require(ctx, tx, productID)
 }
 
 // WithProductGuard 把守卫挂到 ctx 上，供 WriteTx / CreateEmpty / Project 使用。

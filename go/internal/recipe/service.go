@@ -121,8 +121,12 @@ func (s Service) Get(ctx context.Context, recipeID string) (RecipeView, error) {
 // Create 从当前 live schema-v3 显式提取并保存配方。
 // 图不存在返回 NotFound；非 active 或 revision 已变返回 Conflict；选区非法或标题为空返回 Validation。
 func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error) {
+	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		if _, err := getProductTarget(ctx, pgxTx, in.ProductID, false); err != nil {
+			return err
+		}
 		payload, err := extractLive(ctx, pgxTx, in)
 		if err != nil {
 			return err
@@ -188,8 +192,12 @@ func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error)
 // 调用时机：HTTP POST .../versions。已归档 Conflict；expected_recipe_version 对不上 Conflict。
 // 不改目标商品的 live 图。
 func (s Service) Append(ctx context.Context, in AppendInput) (RecipeView, error) {
+	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		if _, err := getProductTarget(ctx, pgxTx, in.ProductID, false); err != nil {
+			return err
+		}
 		rec, err := loadRecipe(ctx, pgxTx, in.RecipeID, true)
 		if err != nil {
 			return err

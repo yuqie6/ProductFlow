@@ -54,6 +54,9 @@ func jsonPtrBytes(s *string) []byte {
 }
 
 func loadGraph(ctx context.Context, tx *gorm.DB, productID, graphID string) (graphRow, error) {
+	if err := requireOwnedProduct(ctx, tx, productID); err != nil {
+		return graphRow{}, err
+	}
 	var rec schema.WorkflowGraphs
 	err := tx.WithContext(ctx).Where("id = ? AND product_id = ?", graphID, productID).Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -66,6 +69,9 @@ func loadGraph(ctx context.Context, tx *gorm.DB, productID, graphID string) (gra
 }
 
 func loadGraphForUpdate(ctx context.Context, tx *gorm.DB, productID, graphID string) (graphRow, error) {
+	if err := requireOwnedProduct(ctx, tx, productID); err != nil {
+		return graphRow{}, err
+	}
 	var rec schema.WorkflowGraphs
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ? AND product_id = ?", graphID, productID).Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -78,6 +84,9 @@ func loadGraphForUpdate(ctx context.Context, tx *gorm.DB, productID, graphID str
 }
 
 func loadActiveGraph(ctx context.Context, tx *gorm.DB, productID string) (graphRow, error) {
+	if err := requireOwnedProduct(ctx, tx, productID); err != nil {
+		return graphRow{}, err
+	}
 	var rec schema.WorkflowGraphs
 	err := tx.WithContext(ctx).Where("product_id = ? AND active = ?", productID, true).Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -90,6 +99,9 @@ func loadActiveGraph(ctx context.Context, tx *gorm.DB, productID string) (graphR
 }
 
 func loadActiveGraphForUpdate(ctx context.Context, tx *gorm.DB, productID string) (*graphRow, error) {
+	if err := requireOwnedProduct(ctx, tx, productID); err != nil {
+		return nil, err
+	}
 	var rec schema.WorkflowGraphs
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("product_id = ? AND active = ?", productID, true).Take(&rec).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

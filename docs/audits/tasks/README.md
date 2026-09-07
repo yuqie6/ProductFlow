@@ -20,8 +20,9 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [merchant-graph-recipe.md](merchant-graph-recipe.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-graph-recipe | 2026-09-07T13:36:00+08:00 |
-| [compete-facts-impact-preview.md](compete-facts-impact-preview.md) | 图片质量 | 实现 | 开放 | — | — |
+| [merchant-image-session.md](merchant-image-session.md) | 商家平台 | 实现 | 认领 | sub-merchant/merchant-image-session | 2026-09-07T13:45:00+08:00 |
+| [merchant-library-binding.md](merchant-library-binding.md) | 商家平台 | 实现 | 开放 | — | — |
+| [compete-facts-impact-preview.md](compete-facts-impact-preview.md) | 图片质量 | 实现 | 认领 | sub-compete/compete-facts-impact-preview | 2026-09-07T13:45:00+08:00 |
 | [workbench-default-entry-walkthrough.md](workbench-default-entry-walkthrough.md) | 工作流体验 | 证据 | 认领 | sub-delivery/workbench-default-entry-walkthrough | 2026-09-07T13:42:00+08:00 |
 | [release-n-to-n1-upgrade.md](release-n-to-n1-upgrade.md) | 平台可靠性 | 实现 | 开放 | — | — |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 阻塞 | — | — |
