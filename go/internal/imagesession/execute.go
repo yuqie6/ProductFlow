@@ -680,11 +680,13 @@ func (e Executor) finishFailed(ctx context.Context, taskID, attemptID, sessionID
 		}
 	}
 	noRetry := isNonRetryableGenerationError(cause)
-	var terminal bool
-	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		var task schema.ImageSessionGenerationTasks
-		if err := pgxTx.Where("id = ?", taskID).Take(&task).Error; err != nil {
+		if err := pgxTx.Clauses(pfdb.ForUpdate()).Where("id = ? AND session_id = ?", taskID, sessionID).Take(&task).Error; err != nil {
 			return err
+		}
+		if task.Status != "running" || task.ActiveAttemptID == nil || *task.ActiveAttemptID != attemptID {
+			return nil
 		}
 		now := time.Now().UTC()
 		if !noRetry && task.Attempts < maxAttempts {
@@ -721,16 +723,11 @@ func (e Executor) finishFailed(ctx context.Context, taskID, attemptID, sessionID
 			}).Error; err != nil {
 			return err
 		}
-		terminal = true
+		if err := (Executor{DB: pgxTx}).finalizeQuotaOnTerminalFailure(ctx, sessionID, taskID); err != nil {
+			return err
+		}
 		return notifyTaskSession(ctx, pgxTx, taskID)
 	})
-	if err != nil {
-		return err
-	}
-	if terminal {
-		return e.finalizeQuotaOnTerminalFailure(ctx, sessionID, taskID)
-	}
-	return nil
 }
 
 func isNonRetryableGenerationError(err error) bool {
