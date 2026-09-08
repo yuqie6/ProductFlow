@@ -35,6 +35,25 @@ func TestQueueAfterImageSuccessReturnsInsertAndStageErrors(t *testing.T) {
 	}
 
 	svc := Service{DB: ds.db, Media: ds.media}
+	// A readable source which is not a generated image remains an optional skip.
+	if err := ds.db.Exec("UPDATE workflow_graph_artifacts SET artifact_type='prompt' WHERE product_image_asset_id=?", assetID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.WithGorm(context.Background(), ds.db, func(db *gorm.DB) error {
+		return svc.QueueAfterImageSuccess(context.Background(), db, nodeID, assetID)
+	}); err != nil {
+		t.Fatalf("non-generated source no longer skipped: %v", err)
+	}
+	var skippedJobs int
+	if err := ds.pool.QueryRow(context.Background(), "SELECT count(*) FROM delivery_rendition_jobs WHERE source_asset_id=$1", assetID).Scan(&skippedJobs); err != nil {
+		t.Fatal(err)
+	}
+	if skippedJobs != 0 {
+		t.Fatalf("invalid source queued %d jobs", skippedJobs)
+	}
+	if err := ds.db.Exec("UPDATE workflow_graph_artifacts SET artifact_type='image' WHERE product_image_asset_id=?", assetID).Error; err != nil {
+		t.Fatal(err)
+	}
 	err = tx.WithGorm(context.Background(), ds.db, func(pgxTx *gorm.DB) error {
 		return svc.QueueAfterImageSuccess(context.Background(), pgxTx, nodeID, assetID)
 	})

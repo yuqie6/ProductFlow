@@ -118,6 +118,7 @@ type GeneratedImageWriter interface {
 }
 
 // DeliveryQueuer 在图片节点成功后排队确定性交付派生。实现放在 delivery，避免 graph import delivery。
+// Graph 提供原图事务内的保存点；实现使用传入的 tx 写作业和信封，错误会回滚本次排队。
 type DeliveryQueuer interface {
 	QueueAfterImageSuccess(ctx context.Context, tx *gorm.DB, nodeID, sourceAssetID string) error
 }

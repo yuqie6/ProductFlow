@@ -865,7 +865,10 @@ func (e Executor) persistImageArtifact(
 				return err
 			}
 			if e.Deps.Delivery != nil {
-				if err := e.Deps.Delivery.QueueAfterImageSuccess(ctx, pgxTx, *nodeRun.NodeID, assetID); err != nil {
+				// Optional delivery writes must roll back independently, including SQL failures.
+				if err := tx.WithGorm(ctx, pgxTx, func(deliveryTx *gorm.DB) error {
+					return e.Deps.Delivery.QueueAfterImageSuccess(ctx, deliveryTx, *nodeRun.NodeID, assetID)
+				}); err != nil {
 					e.logger().Warn("image success kept; delivery rendition queue failed",
 						zap.String("node_id", *nodeRun.NodeID), zap.Error(err))
 				}

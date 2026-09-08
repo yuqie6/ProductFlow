@@ -216,7 +216,11 @@ func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx *gorm.DB, nod
 		return err
 	}
 	if err := validateSource(ctx, pgxTx, source); err != nil {
-		return nil
+		var validation apperr.Error
+		if errors.As(err, &validation) && validation.Status == 400 {
+			return nil
+		}
+		return err
 	}
 	existing, err := loadBySourceHash(ctx, pgxTx, source.ID, normalized.Hash)
 	if err != nil {

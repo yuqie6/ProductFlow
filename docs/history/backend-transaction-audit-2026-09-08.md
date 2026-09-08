@@ -61,7 +61,8 @@
 | 连续生图 unknown/取消在准确计费键缺失时仍提交终态 | 删除缺失预留兜底，MarkUnknown/Release 错误原样回滚 | 初始/手动重试四个红色场景修复；八种终态组合、恢复原键与整包通过 | `5636f688` |
 | Graph 付费调用缺预留仍提交 unknown，通用 effect 又不能直接区分非付费调用 | effect 保存可空 quota_key，准备与预留同事务；未知、取消、恢复复用准确额度身份 | 真实调用故障复现与回滚、非付费文稿/合成、迁移及 Graph 整包通过 | `1dedc721` |
 | Graph/连续生图/局部编辑的商家归属读取丢失数据库及取消原因 | 各既有查询保留 apperr 文案并 Join 原错误，不增加共享查询或第二份规则 | 三个真实数据库读取故障和取消回归；Graph 终态事务回滚及恢复 | `19889e5a` |
-| Graph 商品服务经 context 隐式传播，事务函数及测试 helper 隐藏装配前置 | Service/Executor 保留 Products；Graph 事务函数和商品/配方调用显式传入既有 ProductGuard，删除 context 通道 | 商品/配方、跨商家和事务/执行/恢复合同验收见本节 | 随本次提交 |
+| Graph 商品服务经 context 隐式传播，事务函数及测试 helper 隐藏装配前置 | Service/Executor 保留 Products；Graph 事务函数和商品/配方调用显式传入既有 ProductGuard，删除 context 通道 | 商品/配方、跨商家和事务/执行/恢复合同验收见本节 | `fc193c91` |
+| 原图事务吞掉可选交付错误，SQL 故障污染原图、普通错误留下交付写入 | Graph 用原 tx.WithGorm 保存点隔离交付；delivery 只跳过业务校验失败，读取错误返回 | 实际交付服务的 dispatch SQL/源图读取/暂存后错误及外层结算回滚；原图结算与重排幂等 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -524,3 +525,18 @@ activeQuotaKey 删除 LIKE 前缀与 created_at DESC，查询准确 generationQu
 补齐命令夹具显式依赖后，最终 Graph 整包 PASS 107.733 秒。商品/配方首轮整包结果继续有效：相关代码、依赖及环境未变，后续只修改 Graph 内部测试的守卫参数。原事务不提交测试、revision/rebase 冲突、批量商品/fact 查询、跨商家读写、提案和运行消费者、Provider 请求证据、额度回滚及取消/恢复回归随包执行。全 Go 编译证据不能代替这些行为回归；本轮不提供真实模型质量或生产容量结论。
 
 最终逐文件比对 34 个交付代码/测试文件与固定验收 checkout 一致，完整 diff 自审确认仅修改依赖参数、装配及必要测试，未改变 SQL、取锁次序、状态判断或 Provider 请求。代码扫描无旧 context 服务通道残留；历史段落保留当时事实。共享 just docs-check 曾因 dashboard 归档文件尚未出现失败，未修改该任务文件；归档完成后共享检查 PASS。日志保留 /tmp/pf-explicit-graph-suite.log、/tmp/pf-explicit-graph-final.log、/tmp/pf-explicit-agent-focus.log、/tmp/pf-explicit-agent-final.log 与 /tmp/pf-explicit-graph-compile.log。测试进程终止后清理本轮临时 checkout、依赖链接和转换脚本；未迁移数据库或启动真实 Provider。节点执行职责和其余生成入口的重复机制仍按实际因果继续审计。
+
+
+## 原图成功事务隔离可选交付排队
+
+本切片由主代理负责 Graph execute_node.go/providers.go、新增 delivery_queue_atomicity_test.go、delivery service.go/service_queue_test.go 与本记录。当前并行 eval 仅占自己的评测文件，共享业务服务未重启。沿节点执行 → 图片资产/artifact → current 晋升 → 交付排队 → 节点终态 → 额度结算追踪，Graph 已明确约定可选派生失败不影响原图，却在原图 GORM 事务内直接吞掉 QueueAfterImageSuccess 错误。原测试只有普通 Go 错误，无法证明真实数据库故障隔离。
+
+实际图创建/运行使用本地测试 Provider、真实 product 写入与 delivery.Service，全部持久化发生在独立 PostgreSQL 测试库。给 dispatch 设置拒绝交付信封的约束，旧实现原图最终 unknown；交付服务成功写入作业与信封后再返回普通错误，旧实现保留 1 job + 1 dispatch。两场景红色复现整组 3.469 秒。测试编写时先修正 JSON 字段显式转 jsonb、artifact 经 node_run 关联运行的查询，及终态清除 active attempt 后须从 effect.quota_key 查询额度的断言；这些夹具错误不作为业务缺陷证据。
+
+Graph 复用 tx.WithGorm 的嵌套保存点，仅包围可选交付调用：其写入出错则回滚保存点，原图事务继续；交付暂存成功仍受外层原图/额度事务最终提交约束。没有在事务外另开根连接、提交交付或增加独立队列机制。进一步沿 callee 核实 validateSource 的查询错误被统一返回 nil；源图 artifact 表读取故障实测仍将原图推为 unknown（FAIL 2.449 秒）。delivery 现在只跳过明确的 400 业务校验，原数据库读取错误返回给保存点入口，日志继续使用既有原错误。
+
+针对性最终 PASS 8.325 秒：dispatch SQL 失败、暂存作业/信封后普通错误、源图读取失败均保留 succeeded 原图和准确 settled 预留，零交付作业/信封；解除故障后，对保留原图调用原交付入口两次只得到一组 job/dispatch。外层额度结算故障则同时回滚原图 artifact、交付作业与信封，运行保留 unknown，不允许保存点变成独立提交。保留既有 failDelivery 回归，并扩展交付测试证明可读取但非生成原图仍跳过排队。
+
+这保证可选派生失败的隔离和既有入口的幂等重排，不提供自动补排调度，也不将 Graph succeeded 当作交付件已经完成。日志可解释排队故障，但本切片没有新增持久化失败投影或 UI 提示。没有真实模型费用、生产操作或迁移。
+
+最终当前 checkout 的 Graph/交付整包分别 PASS 106.167/7.384 秒，包含源图业务校验跳过的回归；Graph go vet -stdversion=false、交付标准 go vet、just docs-check 与 diff 空白检查通过。保存点初版整包 103.145/7.619 秒仅代表加入源图错误传播前的代码，最终结果以上述复验为准。日志保留 /tmp/pf-optional-delivery-suite.log 和 /tmp/pf-optional-delivery-final.log。完整自审包含新增测试文件、所有 QueueAfterImageSuccess 生产调用者及实际数据库读取分支；故障约束和重命名仅作用于测试库，无运行中的本轮测试进程。按本切片文件选择性提交，不包含评测任务修改。
