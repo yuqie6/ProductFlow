@@ -47,6 +47,14 @@ Save product facts against the displayed version. A conflict retains your draft 
 
 Quota values are internal units. Adjustments require a signed quantity and a reason; retrying an uncertain submission checks the same operation. Read the resulting balance and ledger record to confirm it. Task records are read-only; merchant suspension controls and manual unknown-consumption resolution are not provided on this page.
 
+### 1.4 Product overview and continuing work
+
+`/products` shows the number of owned products and products with a current adopted delivery above the directory. Agent tasks, graph runs, image sessions and local edits each have their own work counts. Adoption does not mean every image passed quality checks, and the four sources are not added together as a production task total.
+
+Choose a rolling seven- or thirty-day window for historical records. Current work, including running, waiting and unknown outcomes, remains visible regardless of age. Recent failures are historical records, not a count of unresolved cases. Work type, state and pagination filters do not change merchant-wide statistics or the product directory search and sorting.
+
+Open the associated product, Agent session or image session from a record. Graph runs and local edits open their product. Image session links load the requested session directly; unavailable or unauthorized targets show an error without creating a new session.
+
 ## 2. Create a Product
 
 Open `/products/new`.

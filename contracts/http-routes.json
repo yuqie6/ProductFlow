@@ -840,6 +840,11 @@
     "name": "list_products_endpoint"
   },
   {
+    "method": "GET",
+    "path": "/api/v2/products/overview",
+    "name": "get_merchant_product_overview_endpoint"
+  },
+  {
     "method": "POST",
     "path": "/api/v2/products",
     "name": "create_canonical_product_endpoint"

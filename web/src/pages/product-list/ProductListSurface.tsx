@@ -32,6 +32,7 @@ const SORT_OPTIONS = [
 }>;
 
 interface ProductListSurfaceProps {
+  overview?: ReactNode;
   products: ProductSummary[];
   total: number;
   page: number;
@@ -54,6 +55,7 @@ interface ProductListSurfaceProps {
 }
 
 export function ProductListSurface({
+  overview,
   products,
   total,
   page,
@@ -93,6 +95,8 @@ export function ProductListSurface({
           <span>{t("products.new")}</span>
         </Link>
       </div>
+
+      {overview}
 
       <div className="relative rounded-lg border border-border-l1 bg-surface-raised dark:border-border-l1 dark:bg-surface-panel">
         <div className="grid grid-cols-1 items-center gap-2.5 border-b border-border-l1 p-2.5 sm:grid-cols-[minmax(220px,360px)_minmax(0,1fr)] sm:gap-4 sm:px-3.5 sm:py-2.5 dark:border-border-l1">

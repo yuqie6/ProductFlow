@@ -152,7 +152,7 @@ function globalAgentConversationPath(conversationId: string): string {
   return `/api/v2/agent-conversations/${encodeURIComponent(conversationId)}`;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(toApiUrl(path), {
     ...init,
     credentials: "include",

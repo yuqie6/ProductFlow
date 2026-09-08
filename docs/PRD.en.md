@@ -109,7 +109,7 @@ The code is a random six-digit value valid for 10 minutes, with a 60-second rese
 - `/home`: authenticated feature navigation and real product showcase.
 - `/account`: personal profile, password and session management.
 - `/password-recovery`: public email-code recovery.
-- `/products`: product list and automatic covers.
+- `/products`: owned-product overview, current work and recent records grouped by source, product list and automatic covers. Adoption counts use the current delivery version. Work records open existing product, Agent or image-session views.
 - `/products/new`: full-screen Agent creation flow.
 - `/products/:productId`: Agent, workflow canvas, inspector, runs, recipes, and image library.
 - `/image-chat`: iterative text/image generation.

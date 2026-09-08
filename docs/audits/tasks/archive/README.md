@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [saas-merchant-dashboard.md](saas-merchant-dashboard.md) | 完成 | 自有商品与四来源工作概览、继续业务和ImageChat身份隔离；真实API/浏览器验收 |
 | [saas-preferences-settings.md](saas-preferences-settings.md) | 完成 | 本人偏好跨会话保存、自有商家改名、账号切换及停用期间个人安全可用；真实 API/浏览器验证 |
 | [saas-ops-console.md](saas-ops-console.md) | 完成 | 显式商家商品管理、授权媒体、原账本调账与真实操作记录；隔离 PG 和真实浏览器验收 |
 | [eval-intake-observation.md](eval-intake-observation.md) | 完成 | 创建确认走真实Go反馈与写后状态，保留4xx拒绝和幂等冲突；无付费重采 |

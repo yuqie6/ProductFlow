@@ -45,6 +45,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	api := engine.Group("/api", admin, auth.RequireWorkingMerchant())
 	api.POST("/v2/products", h.createV2)
 	api.GET("/v2/products", h.list)
+	api.GET("/v2/products/overview", h.overview)
 	api.GET("/v2/products/:product_id/image-library", h.galleryBootstrap)
 	api.POST("/v2/products/:product_id/image-folders", h.createFolder)
 	api.PATCH("/v2/products/:product_id/image-folders/:folder_id", h.renameFolder)
@@ -207,6 +208,48 @@ func (h HTTP) list(c *gin.Context) {
 				item.CoverImageDownloadURL, item.CoverImagePreviewURL, item.CoverImageThumbnailURL = &d, &p, &t
 			}
 		}
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+// overview 是 GET /api/v2/products/overview：200 返回商家商品与四来源工作概览。
+// days/kind/state/page/page_size 非法 400；统计不随记录筛选或分页变化。
+func (h HTTP) overview(c *gin.Context) {
+	days, err := parseQueryInt(c, "days", defaultOverviewDays, 1, 30)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	if days != 7 && days != 30 {
+		httpx.AbortErr(c, apperr.Validation("请求参数无效"))
+		return
+	}
+	kind, err := parseOverviewEnum(c, "kind", "all", "all", "agent_task", "workflow_run", "image_session", "local_edit")
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	state, err := parseOverviewEnum(c, "state", "all", "all", "active", "waiting", "unknown", "failed")
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	page, err := parseQueryInt(c, "page", defaultOverviewPage, 1, maxOverviewPage)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	pageSize, err := parseQueryInt(c, "page_size", defaultOverviewPageSize, 1, maxOverviewPageSize)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	out, err := h.Service.Overview(c.Request.Context(), overviewQuery{
+		Days: days, Kind: kind, State: state, Page: page, PageSize: pageSize,
+	})
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -1002,6 +1045,23 @@ func parseProductListSort(c *gin.Context) (string, error) {
 	default:
 		return "", apperr.Validation("请求参数无效")
 	}
+}
+
+func parseOverviewEnum(c *gin.Context, key, def string, allowed ...string) (string, error) {
+	values, present := c.Request.URL.Query()[key]
+	if !present {
+		return def, nil
+	}
+	raw := ""
+	if len(values) > 0 {
+		raw = values[0]
+	}
+	for _, value := range allowed {
+		if raw == value {
+			return raw, nil
+		}
+	}
+	return "", apperr.Validation("请求参数无效")
 }
 
 func operatorAssetURLs(merchantID, assetID string) (string, string, string) {

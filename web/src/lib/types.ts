@@ -125,6 +125,29 @@ export interface OpsTask {
   failure_reason: string | null;
 }
 
+export type MerchantWorkKind = OpsTask["kind"];
+export type MerchantWorkState = "all" | "active" | "waiting" | "unknown" | "failed";
+export interface MerchantWorkRecord extends OpsTask {
+  product_name: string | null;
+  session_id: string | null;
+}
+export interface MerchantOverviewInput {
+  days: 7 | 30;
+  kind: "all" | MerchantWorkKind;
+  state: MerchantWorkState;
+  page: number;
+  page_size: number;
+}
+export interface MerchantOverview {
+  as_of: string;
+  recent_window: { days: 7 | 30; from: string; to: string };
+  products: { total: number; current_adopted: number };
+  work: {
+    by_source: Record<MerchantWorkKind, { active: number; waiting: number; unknown: number; recent_failed: number }>;
+    records: { items: MerchantWorkRecord[]; total: number; page: number; page_size: number };
+  };
+}
+
 export interface OpsAction {
   id: string;
   actor_user_id: string;

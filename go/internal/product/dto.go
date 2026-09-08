@@ -120,6 +120,69 @@ type ListResponse struct {
 	PageSize int       `json:"page_size"`
 }
 
+// ProductOverviewResponse 是 GET /api/v2/products/overview 的商家工作概览。
+// Products 与 by_source 不受 records 的 kind/state/page 筛选影响；记录页只投影真实业务身份。
+type ProductOverviewResponse struct {
+	AsOf         time.Time                 `json:"as_of"`
+	Days         int                       `json:"days"`
+	Kind         string                    `json:"kind"`
+	State        string                    `json:"state"`
+	RecentWindow ProductOverviewTimeWindow `json:"recent_window"`
+	Products     ProductOverviewProducts   `json:"products"`
+	Work         ProductOverviewWork       `json:"work"`
+}
+
+type ProductOverviewTimeWindow struct {
+	Days int       `json:"days"`
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+}
+
+type ProductOverviewProducts struct {
+	Total          int64 `json:"total"`
+	CurrentAdopted int64 `json:"current_adopted"`
+}
+
+type ProductOverviewWork struct {
+	BySource ProductOverviewBySource   `json:"by_source"`
+	Records  ProductOverviewRecordPage `json:"records"`
+}
+
+type ProductOverviewBySource struct {
+	AgentTask    ProductOverviewSourceCounts `json:"agent_task"`
+	WorkflowRun  ProductOverviewSourceCounts `json:"workflow_run"`
+	ImageSession ProductOverviewSourceCounts `json:"image_session"`
+	LocalEdit    ProductOverviewSourceCounts `json:"local_edit"`
+}
+
+type ProductOverviewSourceCounts struct {
+	Active       int64 `json:"active"`
+	Waiting      int64 `json:"waiting"`
+	Unknown      int64 `json:"unknown"`
+	RecentFailed int64 `json:"recent_failed"`
+}
+
+type ProductOverviewRecordPage struct {
+	Items    []ProductOverviewRecord `json:"items"`
+	Total    int64                   `json:"total"`
+	Page     int                     `json:"page"`
+	PageSize int                     `json:"page_size"`
+}
+
+type ProductOverviewRecord struct {
+	ID            string     `json:"id"`
+	Kind          string     `json:"kind"`
+	ProductID     *string    `json:"product_id"`
+	ProductName   *string    `json:"product_name"`
+	SessionID     *string    `json:"session_id"`
+	Title         string     `json:"title"`
+	Status        string     `json:"status"`
+	CreatedAt     time.Time  `json:"created_at"`
+	StartedAt     *time.Time `json:"started_at"`
+	FinishedAt    *time.Time `json:"finished_at"`
+	FailureReason *string    `json:"failure_reason"`
+}
+
 // Conversation 是商品工作区绑定的 AgentConversation 投影。
 type Conversation struct {
 	ID           string    `json:"id"`

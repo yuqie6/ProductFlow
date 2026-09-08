@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { TopNav } from "../components/TopNav";
+import { MerchantOverview } from "./product-list/MerchantOverview";
+import { getAccountGeneration, ownMerchantId } from "../lib/accountBoundary";
 import { api, ApiError } from "../lib/api";
 import { useI18n } from "../lib/preferences";
-import type { ProductListSort, ProductSummary } from "../lib/types";
+import type { ProductListSort, ProductSummary, SessionState } from "../lib/types";
 import { ProductListSurface } from "./product-list/ProductListSurface";
 import { parseProductListSearchParams, patchProductListSearchParams } from "./product-list/model";
 
@@ -16,9 +18,18 @@ const RUNTIME_CONFIG_STALE_TIME_MS = 5 * 60_000;
 const SEARCH_COMMIT_DELAY_MS = 300;
 
 export function ProductListPage() {
+  const session = useQuery({ queryKey: ["session"], queryFn: api.getSessionState });
+  const merchantId = ownMerchantId(session.data);
+  if (session.data?.authenticated && !merchantId) return <Navigate to={session.data.user.is_operator ? "/ops" : "/account"} replace />;
+  return <ProductDirectory key={`${session.data?.user?.id}:${merchantId}`} merchantId={merchantId} />;
+}
+
+function ProductDirectory({ merchantId }: { merchantId: string }) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const userId = queryClient.getQueryData<SessionState>(["session"])?.user?.id;
+  const currentAccount = (generation: number) => generation === getAccountGeneration() && userId === queryClient.getQueryData<SessionState>(["session"])?.user?.id;
   const [searchParams, setSearchParams] = useSearchParams();
   const queryState = useMemo(() => parseProductListSearchParams(searchParams), [searchParams]);
   const [searchDraft, setSearchDraft] = useState(queryState.q);
@@ -26,7 +37,7 @@ export function ProductListPage() {
   const [pendingDeleteProduct, setPendingDeleteProduct] = useState<ProductSummary | null>(null);
 
   const productsQuery = useQuery({
-    queryKey: ["products", queryState.page, PAGE_SIZE, queryState.q, queryState.sort],
+    queryKey: ["products", merchantId, queryState.page, PAGE_SIZE, queryState.q, queryState.sort],
     queryFn: () =>
       api.listProducts({
         page: queryState.page,
@@ -34,6 +45,7 @@ export function ProductListPage() {
         q: queryState.q,
         sort: queryState.sort,
       }),
+    enabled: Boolean(merchantId),
     placeholderData: keepPreviousData,
     staleTime: PRODUCT_LIST_STALE_TIME_MS,
   });
@@ -85,17 +97,20 @@ export function ProductListPage() {
     }
   }, [productsQuery.data, productsQuery.isPlaceholderData, queryState.page, setSearchParams, totalPages]);
 
-  const logoutMutation = useMutation({
+  const logoutMutation = useMutation<Awaited<ReturnType<typeof api.destroySession>>, Error, number>({
     mutationFn: api.destroySession,
-    onSuccess: async () => {
+    onSuccess: async (_, generation) => {
+      if (!currentAccount(generation)) return;
       await queryClient.invalidateQueries({ queryKey: ["session"] });
+      if (!currentAccount(generation)) return;
       navigate("/login", { replace: true });
     },
   });
 
   const deleteProductMutation = useMutation({
-    mutationFn: (productId: string) => api.deleteProduct(productId),
-    onSuccess: async () => {
+    mutationFn: ({ productId }: { productId: string; generation: number }) => api.deleteProduct(productId),
+    onSuccess: async (_, { generation }) => {
+      if (!currentAccount(generation)) return;
       setDeleteError("");
       setPendingDeleteProduct(null);
       if (products.length === 1 && queryState.page > 1) {
@@ -104,9 +119,10 @@ export function ProductListPage() {
           { replace: true },
         );
       }
-      await queryClient.invalidateQueries({ queryKey: ["products"] });
+      await Promise.all([queryClient.invalidateQueries({ queryKey: ["products"] }), queryClient.invalidateQueries({ queryKey: ["merchant-overview", merchantId] })]);
     },
-    onError: (mutationError) => {
+    onError: (mutationError, { generation }) => {
+      if (!currentAccount(generation)) return;
       setPendingDeleteProduct(null);
       setDeleteError(mutationError instanceof ApiError ? mutationError.detail : t("products.deleteFailed"));
     },
@@ -134,11 +150,12 @@ export function ProductListPage() {
     <div className="flex min-h-screen flex-col bg-surface-base dark:bg-surface-base">
       <TopNav
         onHome={() => navigate("/home")}
-        onLogout={() => logoutMutation.mutate()}
+        onLogout={() => logoutMutation.mutate(getAccountGeneration())}
       />
 
       <main className="mx-auto w-full max-w-[1328px] flex-1 px-3 pt-4 pb-[calc(7rem+env(safe-area-inset-bottom))] sm:px-4 sm:pt-6 lg:px-6 lg:pt-[26px] lg:pb-16">
         <ProductListSurface
+          overview={<MerchantOverview merchantId={merchantId} />}
           products={products}
           total={total}
           page={queryState.page}
@@ -173,7 +190,7 @@ export function ProductListPage() {
         onClose={() => setPendingDeleteProduct(null)}
         onConfirm={() => {
           if (pendingDeleteProduct) {
-            deleteProductMutation.mutate(pendingDeleteProduct.id);
+            deleteProductMutation.mutate({ productId: pendingDeleteProduct.id, generation: getAccountGeneration() });
           }
         }}
       />

@@ -1,3 +1,4 @@
+import { emptyMerchantOverview } from "./fixtures/merchantOverview";
 import { expect, test, type Page } from "@playwright/test";
 import { LOCALES, translate } from "../src/lib/i18n";
 
@@ -7,6 +8,7 @@ const current = { id: "current", current: true, created_at: "2026-09-08T00:00:00
 const other = { ...current, id: "other/session", current: false };
 async function baseRoutes(page: Page) {
   await page.route("**/api/**", (route) => route.fulfill({ json: { items: [], conversations: [] } }));
+  await page.route("**/api/v2/products/overview?*", (route) => route.fulfill({ json: emptyMerchantOverview() }));
 }
 async function checkWidth(page: Page, width: number) {
   const geometry = await page.evaluate(() => ({ inner: innerWidth, client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));

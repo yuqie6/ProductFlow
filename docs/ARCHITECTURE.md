@@ -30,6 +30,8 @@ ProductFlow 当前开发基线从一个管理员和一个 bootstrap 开发商家
 
 管理员页面沿显式目标商家路由查询商品、资料、图库和删除。`go/internal/product` 将图库与封面投影为授权 Ops 下载地址，普通媒体路由继续核对自有商家。任务记录读取 Agent Task、图运行、连续生图和局部编辑的原状态，不暴露供应商原始载荷。商品修改在处理前写入 `operator_product_actions` 尝试记录，资料/删除原事务同时确认成功；公开4xx拒绝单独记录，无法确认的结果保留 unknown。删除保留操作人与商品名称快照，文件清理仍在商品事务提交后执行。额度页面读取 `merchant_quota_events`，调账重试核对数量、原因和操作人。新表与路由生效需要执行迁移并重启 API。
 
+GET `/api/v2/products/overview` 由 `go/internal/product/overview.go` 读取自有商家商品及当前采用指针，复用 `operator_records.go` 的四来源工作查询；Ops 保留原投影。近期窗口按 UTC 滚动时间过滤终态记录，当前工作不受日期限制；记录筛选不影响商家汇总。前端由懒加载商品列表接线，连续生图通过 `image_session_id` 直接读取已授权会话，显式目标错误不触发自动创建。
+
 `go/cmd/productflow-api/register.go` 在全部 API 注册前挂载 `httpx.BrowserStateProtection`。浏览器 POST/PUT/PATCH/DELETE（含 JSON 和 multipart）按 `BACKEND_CORS_ORIGINS` 精确校验 Origin，缺失时检查 Referer，缺来源或不匹配返回 403；请求 Host 不构成信任来源。内部调用须通过配置令牌校验，并继续接受具体路由的服务鉴权。`TRUSTED_PROXY_CIDRS` 默认空，未经信任的转发头不影响限流 IP。入口覆盖证据由 API 路由合同测试及 auth/httpx 测试维护。
 
 业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx，命令事务走 `tx.WithGorm` 与 schema 模型 `Create`/`Updates`/`Take`，行锁走 `platform/db` locking clause），异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威是 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 加 ExtraDDL（CHECK / enum / 部分唯一索引 / FK）。不使用 AutoMigrate。写库约定见 [`go/AGENTS.md`](../go/AGENTS.md)。

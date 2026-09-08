@@ -8,6 +8,7 @@ import (
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
+	"gorm.io/gorm"
 )
 
 type operatorPage[T any] struct {
@@ -43,6 +44,123 @@ type operatorTask struct {
 	FailureReason *string    `json:"failure_reason"`
 }
 
+const publicWorkFailureReason = "任务执行未完成，请查看对应业务记录"
+
+// merchantWorkRecord is the shared, redacted read row for merchant work.
+// OperatorTask is a deliberately smaller legacy projection of this row.
+type merchantWorkRecord struct {
+	ID                 string     `gorm:"column:id"`
+	Kind               string     `gorm:"column:kind"`
+	ProductID          *string    `gorm:"column:product_id"`
+	ProductName        *string    `gorm:"column:product_name"`
+	SessionID          *string    `gorm:"column:session_id"`
+	Title              string     `gorm:"column:title"`
+	Status             string     `gorm:"column:status"`
+	CreatedAt          time.Time  `gorm:"column:created_at"`
+	StartedAt          *time.Time `gorm:"column:started_at"`
+	FinishedAt         *time.Time `gorm:"column:finished_at"`
+	OperatorFinishedAt *time.Time `gorm:"column:operator_finished_at"`
+	FailureReason      *string    `gorm:"column:failure_reason"`
+	ActivityAt         time.Time  `gorm:"column:activity_at"`
+}
+
+// merchantWorkRecordSQL is the one source of truth for the four merchant-owned
+// work streams. It intentionally selects no prompts, goals, provider payloads,
+// or other execution details.
+const merchantWorkRecordSQL = `
+SELECT t.id,
+       'agent_task' AS kind,
+       CASE WHEN p.id IS NULL THEN NULL ELSE t.product_id END AS product_id,
+       p.name AS product_name,
+       t.session_id,
+       t.title,
+       t.status::text AS status,
+       t.created_at,
+       t.started_at,
+       t.finished_at,
+       COALESCE(t.finished_at, t.canceled_at) AS operator_finished_at,
+       CASE WHEN t.failure_reason IS NOT NULL THEN ? ELSE NULL END AS failure_reason,
+       COALESCE(t.finished_at, t.canceled_at, t.started_at, t.created_at) AS activity_at
+FROM agent_tasks t
+LEFT JOIN products p ON p.id = t.product_id AND p.merchant_id = t.merchant_id
+WHERE t.merchant_id = ?
+UNION ALL
+SELECT r.id,
+       'workflow_run',
+       p.id,
+       p.name,
+       NULL::varchar,
+       p.name,
+       r.status::text,
+       r.started_at,
+       r.started_at,
+       r.finished_at,
+       r.finished_at,
+       CASE WHEN r.failure_reason IS NOT NULL THEN ? ELSE NULL END,
+       COALESCE(r.finished_at, r.started_at)
+FROM workflow_graph_runs r
+JOIN workflow_graphs g ON g.id = r.graph_id
+JOIN products p ON p.id = g.product_id
+WHERE p.merchant_id = ?
+UNION ALL
+SELECT t.id,
+       'image_session',
+       NULL::varchar,
+       NULL::varchar,
+       t.session_id,
+       s.title,
+       t.status::text,
+       t.created_at,
+       t.started_at,
+       t.finished_at,
+       t.finished_at,
+       CASE WHEN t.failure_reason IS NOT NULL THEN ? ELSE NULL END,
+       COALESCE(t.finished_at, t.started_at, t.created_at)
+FROM image_session_generation_tasks t
+JOIN image_sessions s ON s.id = t.session_id
+WHERE s.merchant_id = ?
+UNION ALL
+SELECT t.id,
+       'local_edit',
+       p.id,
+       p.name,
+       NULL::varchar,
+       p.name,
+       t.status::text,
+       t.created_at,
+       t.started_at,
+       t.finished_at,
+       t.finished_at,
+       CASE WHEN t.failure_reason IS NOT NULL THEN ? ELSE NULL END,
+       COALESCE(t.finished_at, t.started_at, t.created_at)
+FROM local_image_edit_tasks t
+JOIN products p ON p.id = t.product_id
+WHERE p.merchant_id = ?`
+
+func merchantWorkRecordQuery(db *gorm.DB, merchantID string) *gorm.DB {
+	return db.Table("(?) AS work_records", db.Raw(
+		merchantWorkRecordSQL,
+		publicWorkFailureReason, merchantID,
+		publicWorkFailureReason, merchantID,
+		publicWorkFailureReason, merchantID,
+		publicWorkFailureReason, merchantID,
+	))
+}
+
+func (row merchantWorkRecord) operatorProjection() operatorTask {
+	return operatorTask{
+		ID:            row.ID,
+		Kind:          row.Kind,
+		ProductID:     row.ProductID,
+		Title:         row.Title,
+		Status:        row.Status,
+		CreatedAt:     row.CreatedAt,
+		StartedAt:     row.StartedAt,
+		FinishedAt:    row.OperatorFinishedAt,
+		FailureReason: row.FailureReason,
+	}
+}
+
 func operatorPagination(c *gin.Context) (int, int, error) {
 	page, err := parseQueryInt(c, "page", 1, 1, 100000)
 	if err != nil {
@@ -67,16 +185,8 @@ func (h HTTP) listOperatorTasks(c *gin.Context) {
 			return
 		}
 	}
-	union := `SELECT t.id, 'agent_task' AS kind, t.product_id, t.title, t.status::text AS status, t.created_at, t.started_at, COALESCE(t.finished_at,t.canceled_at) AS finished_at, t.failure_reason IS NOT NULL AS has_failure
- FROM agent_tasks t WHERE t.merchant_id = ?
- UNION ALL SELECT r.id, 'workflow_run', p.id, p.name, r.status, r.started_at, r.started_at, r.finished_at, r.failure_reason IS NOT NULL
- FROM workflow_graph_runs r JOIN workflow_graphs g ON g.id = r.graph_id JOIN products p ON p.id = g.product_id WHERE p.merchant_id = ?
- UNION ALL SELECT t.id, 'image_session', NULL, s.title, t.status::text, t.created_at, t.started_at, t.finished_at, t.failure_reason IS NOT NULL
- FROM image_session_generation_tasks t JOIN image_sessions s ON s.id = t.session_id WHERE s.merchant_id = ?
- UNION ALL SELECT t.id, 'local_edit', p.id, p.name, t.status::text, t.created_at, t.started_at, t.finished_at, t.failure_reason IS NOT NULL
- FROM local_image_edit_tasks t JOIN products p ON p.id = t.product_id WHERE p.merchant_id = ?`
 	db := h.Service.DB.WithContext(c.Request.Context())
-	query := db.Table("(?) AS tasks", db.Raw(union, merchantID, merchantID, merchantID, merchantID))
+	query := merchantWorkRecordQuery(db, merchantID)
 	if productID != "" {
 		query = query.Where("product_id = ?", productID)
 	}
@@ -85,9 +195,13 @@ func (h HTTP) listOperatorTasks(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	if err := query.Select("id, kind, product_id, title, status, created_at, started_at, finished_at, CASE WHEN has_failure THEN '任务执行未完成，请查看对应业务记录' ELSE NULL END AS failure_reason").Order("created_at DESC, kind ASC, id DESC").Offset((page - 1) * size).Limit(size).Scan(&out.Items).Error; err != nil {
+	var rows []merchantWorkRecord
+	if err := query.Select("id, kind, product_id, title, status, created_at, started_at, operator_finished_at, failure_reason").Order("created_at DESC, kind ASC, id DESC").Offset((page - 1) * size).Limit(size).Scan(&rows).Error; err != nil {
 		httpx.AbortErr(c, err)
 		return
+	}
+	for _, row := range rows {
+		out.Items = append(out.Items, row.operatorProjection())
 	}
 	c.JSON(http.StatusOK, out)
 }

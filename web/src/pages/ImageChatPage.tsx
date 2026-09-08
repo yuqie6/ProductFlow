@@ -18,8 +18,11 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
+import { Button } from "../components/ui/button";
+import { imageRouteMessage } from "./image-chat/routeMessages";
+import { clearImageChatRouteState, imageChatRouteScope, parseImageSessionRoute, readImageChatRouteState, writeImageChatRouteState } from "./image-chat/routeState";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../components/GalleryImagePreviewDialog";
 import { ImageGenerationSettingsPanel } from "../components/ImageGenerationSettingsPanel";
@@ -85,6 +88,7 @@ import type {
   ImageGenerationSubmitPayload,
 } from "./image-chat/branching";
 import type {
+  SessionState,
   ImageSessionDetail,
   ImageSessionHistoryPage,
   ImageSessionAsset,
@@ -100,45 +104,7 @@ const DESKTOP_RESIZABLE_LAYOUT_QUERY = "(min-width: 1024px)";
 const PRODUCT_PICKER_LIST_STALE_TIME_MS = 60_000;
 const RUNTIME_CONFIG_STALE_TIME_MS = 5 * 60_000;
 const IMAGE_CHAT_GENERATION_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-const IMAGE_CHAT_ROUTE_STATE_SCOPE = "standalone";
-
 type ImageChatResizeTarget = "left" | "right" | "history";
-
-interface ImageChatRouteState {
-  selectedSessionId: string | null;
-  selectedGeneratedAssetId: string | null;
-  selectedTaskPlaceholderId: string | null;
-  branchBaseAssetId: string | null;
-  selectedReferenceAssetIds: string[];
-  generationCount: number;
-  draft: string;
-  size: string;
-  toolOptions: ImageToolOptions;
-  settingsTab: ImageGenerationSettingsTab;
-  targetProductId: string;
-}
-
-const imageChatRouteStateCache = new Map<string, ImageChatRouteState>();
-
-function readImageChatRouteState(scope: string): ImageChatRouteState | undefined {
-  const cached = imageChatRouteStateCache.get(scope);
-  if (!cached) {
-    return undefined;
-  }
-  return {
-    ...cached,
-    selectedReferenceAssetIds: [...cached.selectedReferenceAssetIds],
-    toolOptions: { ...cached.toolOptions },
-  };
-}
-
-function writeImageChatRouteState(scope: string, state: ImageChatRouteState) {
-  imageChatRouteStateCache.set(scope, {
-    ...state,
-    selectedReferenceAssetIds: [...state.selectedReferenceAssetIds],
-    toolOptions: { ...state.toolOptions },
-  });
-}
 
 function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined): ImageSessionAsset[] {
   return imageSession?.assets.filter((asset) => asset.kind === "reference_upload") ?? [];
@@ -149,11 +115,30 @@ type PendingDeleteAction =
   | { kind: "sessionReference"; sessionId: string; assetId: string };
 
 export function ImageChatPage() {
-  const { t } = useI18n();
+  const session = useQuery({ queryKey: ["session"], queryFn: api.getSessionState });
+  const [params] = useSearchParams();
+  const route = parseImageSessionRoute(params);
+  const generation = getAccountGeneration();
+  const scope = imageChatRouteScope(session.data?.user?.id ?? "", ownMerchantId(session.data), generation);
+  return <ImageChatIdentity key={scope} scope={scope} route={route} />;
+}
+
+function ImageChatIdentity({ scope, route }: { scope: string; route: ReturnType<typeof parseImageSessionRoute> }) {
+  // Once an explicit address was opened, returning to the list must not create a session.
+  const explicitSeen = useRef(route.explicit);
+  if (route.explicit) explicitSeen.current = true;
+  return <ImageChatWorkspace key={JSON.stringify(route)} routeStateScope={scope} route={route} allowAutoCreate={!explicitSeen.current} />;
+}
+
+function ImageChatWorkspace({ routeStateScope, route, allowAutoCreate }: { routeStateScope: string; route: ReturnType<typeof parseImageSessionRoute>; allowAutoCreate: boolean }) {
+  const { t, locale } = useI18n();
+  const [, setParams] = useSearchParams();
+  const initialState = () => readImageChatRouteState(routeStateScope, route.explicit ? route.sessionId : undefined);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const routeStateScope = IMAGE_CHAT_ROUTE_STATE_SCOPE;
-  const autoCreateTriggered = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const autoCreateTriggered = useRef(!allowAutoCreate);
   const pendingGeneratedRoundCountRef = useRef<number | null>(null);
   const duplicateSubmitGuardRef = useRef<ImageGenerationSubmitGuard | null>(null);
   const mobileSessionButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -161,35 +146,35 @@ export function ImageChatPage() {
   const mobileSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    () => readImageChatRouteState(routeStateScope)?.selectedSessionId ?? null,
+    () => route.explicit ? route.sessionId : initialState()?.selectedSessionId ?? null,
   );
   const [selectedGeneratedAssetId, setSelectedGeneratedAssetId] = useState<string | null>(
-    () => readImageChatRouteState(routeStateScope)?.selectedGeneratedAssetId ?? null,
+    () => initialState()?.selectedGeneratedAssetId ?? null,
   );
   const [selectedTaskPlaceholderId, setSelectedTaskPlaceholderId] = useState<string | null>(
-    () => readImageChatRouteState(routeStateScope)?.selectedTaskPlaceholderId ?? null,
+    () => initialState()?.selectedTaskPlaceholderId ?? null,
   );
   const [branchBaseAssetId, setBranchBaseAssetId] = useState<string | null>(
-    () => readImageChatRouteState(routeStateScope)?.branchBaseAssetId ?? null,
+    () => initialState()?.branchBaseAssetId ?? null,
   );
   const [selectedReferenceAssetIds, setSelectedReferenceAssetIds] = useState<string[]>(
-    () => readImageChatRouteState(routeStateScope)?.selectedReferenceAssetIds ?? [],
+    () => initialState()?.selectedReferenceAssetIds ?? [],
   );
   const [generationCount, setGenerationCount] = useState(
-    () => readImageChatRouteState(routeStateScope)?.generationCount ?? 1,
+    () => initialState()?.generationCount ?? 1,
   );
-  const [draft, setDraft] = useState(() => readImageChatRouteState(routeStateScope)?.draft ?? "");
-  const [size, setSize] = useState(() => readImageChatRouteState(routeStateScope)?.size ?? "1024x1024");
+  const [draft, setDraft] = useState(() => initialState()?.draft ?? "");
+  const [size, setSize] = useState(() => initialState()?.size ?? "1024x1024");
   const [toolOptions, setToolOptions] = useState<ImageToolOptions>(
-    () => readImageChatRouteState(routeStateScope)?.toolOptions ?? {},
+    () => initialState()?.toolOptions ?? {},
   );
   const [settingsTab, setSettingsTab] = useState<ImageGenerationSettingsTab>(
-    () => readImageChatRouteState(routeStateScope)?.settingsTab ?? "basic",
+    () => initialState()?.settingsTab ?? "basic",
   );
   const [titleDraft, setTitleDraft] = useState("");
   const [renameEnabled, setRenameEnabled] = useState(false);
   const [targetProductId, setTargetProductId] = useState(
-    () => readImageChatRouteState(routeStateScope)?.targetProductId ?? "",
+    () => initialState()?.targetProductId ?? "",
   );
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [previewRound, setPreviewRound] = useState<ImageSessionRound | null>(null);
@@ -198,9 +183,9 @@ export function ImageChatPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [sessionEventsFallback, setSessionEventsFallback] = useState(false);
-  const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH);
-  const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_DEFAULT_WIDTH);
-  const [historyPanelHeight, setHistoryPanelHeight] = useState(HISTORY_PANEL_DEFAULT_HEIGHT);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(() => initialState()?.leftPanelWidth ?? LEFT_PANEL_DEFAULT_WIDTH);
+  const [rightPanelWidth, setRightPanelWidth] = useState(() => initialState()?.rightPanelWidth ?? RIGHT_PANEL_DEFAULT_WIDTH);
+  const [historyPanelHeight, setHistoryPanelHeight] = useState(() => initialState()?.historyPanelHeight ?? HISTORY_PANEL_DEFAULT_HEIGHT);
   const [mobileSessionDrawerOpen, setMobileSessionDrawerOpen] = useState(false);
   const [mobileHistoryDrawerOpen, setMobileHistoryDrawerOpen] = useState(false);
   const [mobileGenerationSheetOpen, setMobileGenerationSheetOpen] = useState(false);
@@ -210,6 +195,12 @@ export function ImageChatPage() {
     queryFn: api.getSessionState,
   });
   const merchantId = ownMerchantId(sessionQuery.data);
+  const userId = sessionQuery.data?.user?.id;
+  const currentAccount = (operationGeneration: number | undefined) => operationGeneration === getAccountGeneration() && userId === queryClient.getQueryData<SessionState>(["session"])?.user?.id;
+  useEffect(() => () => {
+    const current = queryClient.getQueryData<SessionState>(["session"]);
+    if (current?.user?.id !== userId || ownMerchantId(current) !== merchantId) clearImageChatRouteState(routeStateScope);
+  }, [merchantId, queryClient, routeStateScope, userId]);
   const quotaPriceQuery = useQuery({
     queryKey: ["merchant-quota-price", merchantId],
     queryFn: () => api.getMerchantQuotaPrice(merchantId),
@@ -240,6 +231,9 @@ export function ImageChatPage() {
 
   useEffect(() => {
     writeImageChatRouteState(routeStateScope, {
+      leftPanelWidth,
+      rightPanelWidth,
+      historyPanelHeight,
       selectedSessionId,
       selectedGeneratedAssetId,
       selectedTaskPlaceholderId,
@@ -256,6 +250,9 @@ export function ImageChatPage() {
     branchBaseAssetId,
     draft,
     generationCount,
+    leftPanelWidth,
+    rightPanelWidth,
+    historyPanelHeight,
     routeStateScope,
     selectedGeneratedAssetId,
     selectedReferenceAssetIds,
@@ -300,7 +297,7 @@ export function ImageChatPage() {
   }, [historyPanelHeight, leftPanelWidth, rightPanelWidth]);
 
   const sessionsQuery = useInfiniteQuery({
-    queryKey: ["image-sessions"],
+    queryKey: ["image-sessions", routeStateScope],
     queryFn: ({ pageParam }) => api.listImageSessions({
       after: pageParam || undefined,
       limit: 20,
@@ -315,7 +312,7 @@ export function ImageChatPage() {
   );
 
   const productsQuery = useQuery({
-    queryKey: ["products"],
+    queryKey: ["products", merchantId],
     queryFn: () => api.listProducts({ page_size: 100 }),
     placeholderData: keepPreviousData,
     staleTime: PRODUCT_PICKER_LIST_STALE_TIME_MS,
@@ -343,7 +340,17 @@ export function ImageChatPage() {
     setSelectedReferenceAssetIds([]);
   }
 
+  function updateSessionAddress(sessionId: string | null) {
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      if (sessionId) next.set("image_session_id", sessionId);
+      else next.delete("image_session_id");
+      return next;
+    });
+  }
+
   function handleSelectSession(sessionId: string) {
+    updateSessionAddress(sessionId);
     setSelectedSessionId(sessionId);
     resetImageSessionSelection();
     setSuccessMessage("");
@@ -358,21 +365,26 @@ export function ImageChatPage() {
   }, [products, targetProductId]);
 
   const createSessionMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: () => api.createImageSession({}),
-    onSuccess: async (imageSession) => {
+    onSuccess: async (imageSession, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
+      if (!mounted.current) return;
       setSelectedSessionId(imageSession.id);
+      updateSessionAddress(imageSession.id);
       resetImageSessionSelection();
-      queryClient.setQueryData(["image-session", imageSession.id], imageSession);
-      await queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
+      queryClient.setQueryData(["image-session", imageSession.id, routeStateScope], imageSession);
+      await queryClient.invalidateQueries({ queryKey: ["image-sessions", routeStateScope] });
       setErrorMessage("");
     },
-    onError: (error) => {
+    onError: (error, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.createFailed"));
     },
   });
 
   useEffect(() => {
-    if (sessionsQuery.isLoading || createSessionMutation.isPending) {
+    if (route.explicit || !sessionsQuery.isSuccess || createSessionMutation.isPending) {
       return;
     }
     if (sessionItems.length === 0 && !autoCreateTriggered.current) {
@@ -387,22 +399,23 @@ export function ImageChatPage() {
       setSelectedSessionId(sessionItems[0].id);
       resetImageSessionSelection();
     }
-  }, [createSessionMutation, selectedSessionId, sessionItems, sessionsQuery.isLoading]);
+  }, [createSessionMutation, selectedSessionId, sessionItems, sessionsQuery.isSuccess, route.explicit]);
 
   const sessionDetailQuery = useQuery({
-    queryKey: ["image-session", selectedSessionId],
+    queryKey: ["image-session", selectedSessionId, routeStateScope],
     queryFn: () => api.getImageSession(selectedSessionId!),
     enabled: Boolean(selectedSessionId),
+    retry: false,
   });
   const extraHistoryQuery = useQuery({
-    queryKey: ["image-session-history", selectedSessionId],
+    queryKey: ["image-session-history", selectedSessionId, routeStateScope],
     queryFn: async (): Promise<ImageSessionHistoryPage[]> => [],
     enabled: false,
     initialData: [],
     staleTime: Infinity,
   });
   const accumulatedRoundsQuery = useQuery({
-    queryKey: ["image-session-accumulated-rounds", selectedSessionId],
+    queryKey: ["image-session-accumulated-rounds", selectedSessionId, routeStateScope],
     queryFn: async (): Promise<ImageSessionRound[]> => [],
     enabled: false,
     initialData: [],
@@ -446,13 +459,13 @@ export function ImageChatPage() {
       return;
     }
     queryClient.setQueryData<ImageSessionRound[]>(
-      ["image-session-accumulated-rounds", selectedSessionId],
+      ["image-session-accumulated-rounds", selectedSessionId, routeStateScope],
       (current) => mergeImageSessionHistoryRounds(current, detailRounds),
     );
-  }, [detailRounds, queryClient, selectedSessionId]);
+  }, [detailRounds, queryClient, selectedSessionId, routeStateScope]);
 
   const sessionStatusQuery = useQuery({
-    queryKey: ["image-session-status", selectedSessionId],
+    queryKey: ["image-session-status", selectedSessionId, routeStateScope],
     queryFn: () => api.getImageSessionStatus(selectedSessionId!),
     enabled: Boolean(selectedSessionId && hasActiveGenerationTask),
     refetchInterval: sessionEventsFallback && hasActiveGenerationTask ? 1500 : false,
@@ -465,7 +478,7 @@ export function ImageChatPage() {
     }
     const generation = getAccountGeneration();
     return subscribeImageSessionEvents(api.imageSessionEventsUrl(selectedSessionId), bindAccountGeneration(generation, (status) => {
-      queryClient.setQueryData(["image-session-status", status.id], status);
+      queryClient.setQueryData(["image-session-status", status.id, routeStateScope], status);
     }), {
       onOpen: () => setSessionEventsFallback(false),
       onError: () => {
@@ -473,23 +486,23 @@ export function ImageChatPage() {
         setErrorMessage(t("chat.liveConnectionFailed"));
       },
     });
-  }, [hasActiveGenerationTask, queryClient, selectedSessionId, t]);
+  }, [hasActiveGenerationTask, queryClient, selectedSessionId, routeStateScope, t]);
 
   useEffect(() => {
     const status = sessionStatusQuery.data;
     if (!status || !selectedSessionId || status.id !== selectedSessionId) {
       return;
     }
-    const detail = queryClient.getQueryData<ImageSessionDetail>(["image-session", status.id]);
+    const detail = queryClient.getQueryData<ImageSessionDetail>(["image-session", status.id, routeStateScope]);
     const shouldRefetchDetail = shouldRefreshImageSessionDetailFromStatus(detail, status);
     if (detail) {
-      queryClient.setQueryData(["image-session", status.id], mergeImageSessionStatusIntoDetail(detail, status));
+      queryClient.setQueryData(["image-session", status.id, routeStateScope], mergeImageSessionStatusIntoDetail(detail, status));
     }
     if (shouldRefetchDetail) {
-      void queryClient.invalidateQueries({ queryKey: ["image-session", status.id] });
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
+      void queryClient.invalidateQueries({ queryKey: ["image-session", status.id, routeStateScope] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", routeStateScope] });
     }
-  }, [queryClient, selectedSessionId, sessionStatusQuery.data]);
+  }, [queryClient, selectedSessionId, sessionStatusQuery.data, routeStateScope]);
 
   useEffect(() => {
     if (!imageSession) {
@@ -569,39 +582,47 @@ export function ImageChatPage() {
     requiresGenerationBase && !branchBaseRound ? t("chat.baseRequired") : "";
 
   const logoutMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: api.destroySession,
-    onSuccess: async () => {
+    onSuccess: async (_data, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       await queryClient.invalidateQueries({ queryKey: ["session"] });
+      if (!currentAccount(operationGeneration)) return;
       navigate("/login", { replace: true });
     },
   });
 
   const renameSessionMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: (title: string) => api.updateImageSession(selectedSessionId!, { title }),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
+    onSuccess: (updated, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
+      queryClient.setQueryData(["image-session", updated.id, routeStateScope], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", routeStateScope] });
       setRenameEnabled(false);
       setSuccessMessage(t("chat.renameSuccess"));
       setErrorMessage("");
     },
-    onError: (error) => {
+    onError: (error, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.renameFailed"));
     },
   });
 
   const uploadReferenceMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: (input: { sessionId: string; files: File[] }) =>
       api.addImageSessionReferenceImages(input.sessionId, input.files),
-    onSuccess: (updated, input) => {
+    onSuccess: (updated, input, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       const previousReferenceIds = new Set(
         input.sessionId === selectedSessionId ? sessionReferenceAssets.map((asset) => asset.id) : [],
       );
       const uploadedReferenceIds = updated.assets
         .filter((asset) => asset.kind === "reference_upload" && !previousReferenceIds.has(asset.id))
         .map((asset) => asset.id);
-      queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
+      queryClient.setQueryData(["image-session", updated.id, routeStateScope], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", routeStateScope] });
       const isCurrentSession = updated.id === selectedSessionId;
       if (isCurrentSession && uploadedReferenceIds.length) {
         setSelectedReferenceAssetIds((current) =>
@@ -617,17 +638,20 @@ export function ImageChatPage() {
         setErrorMessage("");
       }
     },
-    onError: (error) => {
+    onError: (error, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.referenceUploadFailed"));
     },
   });
 
   const deleteSessionReferenceMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: (input: { sessionId: string; assetId: string }) =>
       api.deleteImageSessionReferenceImage(input.sessionId, input.assetId),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
+    onSuccess: (updated, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
+      queryClient.setQueryData(["image-session", updated.id, routeStateScope], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", routeStateScope] });
       setPendingDeleteAction(null);
       const isCurrentSession = updated.id === selectedSessionId;
       if (isCurrentSession) {
@@ -642,19 +666,23 @@ export function ImageChatPage() {
         setErrorMessage("");
       }
     },
-    onError: (error) => {
+    onError: (error, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setPendingDeleteAction(null);
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.referenceDeleteFailed"));
     },
   });
 
   const deleteSessionMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: (sessionId: string) => api.deleteImageSession(sessionId),
-    onSuccess: async (_response, deletedSessionId) => {
+    onSuccess: async (_response, deletedSessionId, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
+      if (!mounted.current) return;
       const remainingSessions = sessionItems.filter((item) => item.id !== deletedSessionId);
       setPendingDeleteAction(null);
       queryClient.setQueryData<InfiniteData<ImageSessionListResponse>>(
-        ["image-sessions"],
+        ["image-sessions", routeStateScope],
         (current) => current ? {
           ...current,
           pages: current.pages.map((page) => ({
@@ -663,32 +691,36 @@ export function ImageChatPage() {
           })),
         } : current,
       );
-      queryClient.removeQueries({ queryKey: ["image-session", deletedSessionId] });
-      queryClient.removeQueries({ queryKey: ["image-session-history", deletedSessionId] });
-      queryClient.removeQueries({ queryKey: ["image-session-accumulated-rounds", deletedSessionId] });
+      queryClient.removeQueries({ queryKey: ["image-session", deletedSessionId, routeStateScope] });
+      queryClient.removeQueries({ queryKey: ["image-session-history", deletedSessionId, routeStateScope] });
+      queryClient.removeQueries({ queryKey: ["image-session-accumulated-rounds", deletedSessionId, routeStateScope] });
       if (selectedSessionId === deletedSessionId) {
         setSelectedSessionId(remainingSessions[0]?.id ?? null);
+        updateSessionAddress(remainingSessions[0]?.id ?? null);
         resetImageSessionSelection();
         if (!remainingSessions.length) {
           autoCreateTriggered.current = false;
         }
       }
-      await queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
+      await queryClient.invalidateQueries({ queryKey: ["image-sessions", routeStateScope] });
       setSuccessMessage(t("chat.sessionDeleted"));
       setErrorMessage("");
     },
-    onError: (error) => {
+    onError: (error, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setPendingDeleteAction(null);
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.sessionDeleteFailed"));
     },
   });
 
   const generateMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: (payload: ImageGenerationSubmitPayload) => api.generateImageSessionRound(selectedSessionId!, payload),
-    onSuccess: (updated, variables) => {
-      queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-session-status", updated.id] });
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
+    onSuccess: (updated, variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
+      queryClient.setQueryData(["image-session", updated.id, routeStateScope], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-session-status", updated.id, routeStateScope] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", routeStateScope] });
       const placeholderId = selectSubmittedImageGenerationTaskPlaceholderId(updated.generation_tasks, variables);
       const submittedTask = placeholderId
         ? updated.generation_tasks.find((task) => placeholderId.startsWith(`task:${task.id}:`))
@@ -708,7 +740,8 @@ export function ImageChatPage() {
       );
       setErrorMessage("");
     },
-    onError: (error, variables) => {
+    onError: (error, variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       const signature = buildImageGenerationSubmitSignature(variables);
       if (duplicateSubmitGuardRef.current?.signature === signature) {
         duplicateSubmitGuardRef.current = null;
@@ -718,12 +751,14 @@ export function ImageChatPage() {
   });
 
   const retryGenerationTaskMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: (input: { sessionId: string; taskId: string }) =>
       api.retryImageSessionGenerationTask(input.sessionId, input.taskId),
-    onSuccess: (updated, input) => {
-      queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-session-status", updated.id] });
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
+    onSuccess: (updated, input, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
+      queryClient.setQueryData(["image-session", updated.id, routeStateScope], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-session-status", updated.id, routeStateScope] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", routeStateScope] });
       const retriedTask = updated.generation_tasks.find((task) => task.id === input.taskId);
       if (retriedTask) {
         setSelectedTaskPlaceholderId(selectImageGenerationTaskNextPlaceholderId(retriedTask));
@@ -732,40 +767,47 @@ export function ImageChatPage() {
       setSuccessMessage(t("chat.retrySubmitted"));
       setErrorMessage("");
     },
-    onError: (error) => {
+    onError: (error, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.retryFailed"));
     },
   });
 
   const cancelGenerationTaskMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: (input: { sessionId: string; taskId: string }) =>
       api.cancelImageSessionGenerationTask(input.sessionId, input.taskId),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-session-status", updated.id] });
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
+    onSuccess: (updated, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
+      queryClient.setQueryData(["image-session", updated.id, routeStateScope], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-session-status", updated.id, routeStateScope] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", routeStateScope] });
       setSuccessMessage(t("chat.cancelledTask"));
       setErrorMessage("");
     },
-    onError: (error) => {
+    onError: (error, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.cancelFailed"));
     },
   });
 
   const loadHistoryMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: (input: { sessionId: string; after: string }) =>
       api.getImageSessionHistory(input.sessionId, { after: input.after, limit: 20 }),
-    onSuccess: (page, input) => {
+    onSuccess: (page, input, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       queryClient.setQueryData<ImageSessionHistoryPage[]>(
-        ["image-session-history", input.sessionId],
+        ["image-session-history", input.sessionId, routeStateScope],
         (current) => [...(current ?? []), page],
       );
       queryClient.setQueryData<ImageSessionRound[]>(
-        ["image-session-accumulated-rounds", input.sessionId],
+        ["image-session-accumulated-rounds", input.sessionId, routeStateScope],
         (current) => mergeImageSessionHistoryRounds(current, page.items),
       );
     },
-    onError: (error) => {
+    onError: (error, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.loadMoreHistoryFailed"));
     },
   });
@@ -779,9 +821,11 @@ export function ImageChatPage() {
     quotaPriceBlocksGenerate;
 
   const attachMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: (payload: { assetId: string; productId: string }) =>
       api.attachImageSessionAssetToProductCanonical(selectedSessionId!, payload.assetId, payload.productId),
-    onSuccess: async (_asset, payload) => {
+    onSuccess: async (_asset, payload, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setSuccessMessage(t("chat.savedToProduct"));
       setErrorMessage("");
       await Promise.all([
@@ -791,14 +835,17 @@ export function ImageChatPage() {
         queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", payload.productId] }),
       ]);
     },
-    onError: (error) => {
+    onError: (error, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.saveProductFailed"));
     },
   });
 
   const saveMediaLibraryMutation = useMutation({
+    onMutate: getAccountGeneration,
     mutationFn: (assetId: string) => api.saveMediaLibraryAssetFromSession(assetId),
-    onSuccess: async () => {
+    onSuccess: async (_data, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setSuccessMessage(t("chat.savedMediaLibrary"));
       setErrorMessage("");
       await Promise.all([
@@ -806,7 +853,8 @@ export function ImageChatPage() {
         queryClient.invalidateQueries({ queryKey: ["media-library-assets"] }),
       ]);
     },
-    onError: (error) => {
+    onError: (error, _variables, operationGeneration) => {
+      if (!currentAccount(operationGeneration)) return;
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.saveMediaLibraryFailed"));
     },
   });
@@ -1114,6 +1162,20 @@ export function ImageChatPage() {
             : deleteSessionReferenceMutation.isPending,
       }
     : null;
+
+  if (route.explicit && (!route.sessionId || sessionDetailQuery.isPending || sessionDetailQuery.isError)) {
+    return <div className="min-h-screen bg-surface-base text-text-primary">
+      <TopNav breadcrumbs={t("chat.breadcrumb")} onHome={() => navigate("/home")} onLogout={() => logoutMutation.mutate()} />
+      <main className="mx-auto max-w-xl px-5 py-12">
+        <h1 className="text-xl font-semibold">{t("chat.breadcrumb")}</h1>
+        <p role={sessionDetailQuery.isPending && route.sessionId ? "status" : "alert"} className="my-6 text-sm leading-6 text-text-secondary">{!route.sessionId ? imageRouteMessage(locale, "invalid") : sessionDetailQuery.isPending ? t("app.loading") : imageRouteMessage(locale, "unavailable")}</p>
+        <div className="flex flex-wrap gap-3">
+          {route.sessionId && sessionDetailQuery.isError ? <Button disabled={sessionDetailQuery.isFetching} onClick={() => void sessionDetailQuery.refetch()}>{imageRouteMessage(locale, "retry")}</Button> : null}
+          <Button onClick={() => { clearImageChatRouteState(routeStateScope); updateSessionAddress(null); }}>{imageRouteMessage(locale, "back")}</Button>
+        </div>
+      </main>
+    </div>;
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-surface-subtle text-text-primary dark:bg-surface-base dark:text-text-primary lg:h-screen lg:overflow-hidden">

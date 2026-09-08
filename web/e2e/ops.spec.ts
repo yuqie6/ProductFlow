@@ -1,3 +1,4 @@
+import { emptyMerchantOverview } from "./fixtures/merchantOverview";
 import { expect, test, type Page } from "@playwright/test";
 import { LOCALES, translate } from "../src/lib/i18n";
 import type { GalleryAsset, AccountPreferences, OpsAction, OpsQuotaEvent, OpsTask, ProductFactsResponse } from "../src/lib/types";
@@ -13,6 +14,7 @@ const taskRows: OpsTask[] = taskKinds.map((kind, index) => ({ id: `task-${index}
 async function mockOps(page: Page, ordinary = false, preferences: AccountPreferences = { locale: "zh-CN", theme: "system" }) {
   const state = { facts: factResponse(1, "Lamp A"), saves: 0, deletes: 0, deleted: false, adjustments: [] as Array<{ idempotency_key: string; delta_units: number; reason: string }>, actions: [] as OpsAction[], events: [] as OpsQuotaEvent[], requested: [] as string[] };
   await page.route("**/api/**", (route) => route.fulfill({ json: { items: [], conversations: [] } }));
+  await page.route("**/api/v2/products/overview?*", (route) => route.fulfill({ json: emptyMerchantOverview() }));
   await page.route("**/api/auth/session", (route) => route.fulfill({ json: { authenticated: true, preferences, access_required: true, user: { id: "operator", email: "ops@example.com", display_name: "Operator", is_operator: !ordinary }, merchant: ordinary ? merchants[0] : null } }));
   await page.route("**/api/account", (route) => route.fulfill({ json: { preferences, user: { id: "operator", email: "ops@example.com", display_name: "Operator", is_operator: !ordinary }, merchant: ordinary ? merchants[0] : null } }));
   await page.route("**/api/account/sessions?*", (route) => route.fulfill({ json: { items: [], next_cursor: null } }));

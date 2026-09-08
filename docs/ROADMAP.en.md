@@ -22,6 +22,8 @@ Simple controls and optional advanced Graph editing share the same product, asse
 
 Completion requires mature personal accounts (profile, password change, SMTP recovery, session management and isolated saved preferences), a professional merchant dashboard backed by real products/jobs/adopted deliveries, and an administrator console with explicit merchant scope and traceable actions. The dashboard must link back to existing work and handle empty, failed and mobile states; it must not invent sales or revenue. Enterprise quality does not introduce team roles or organization switching.
 
+The product directory now includes the merchant overview with real work records and continuation links. Current personal account features include profile, password recovery, sessions, saved preferences and the owned merchant name. These delivered slices do not establish full product acceptance.
+
 Repeated image annotations must expose uncertain identities and unstable comparisons, guide verified material corrections and production improvements, and be followed by fixed-input regression evidence. Agent improvements must use real merchant tasks and preserve the independent behavior/evaluation contracts. Shared domain state, restart/upgrade/backup recovery, and accurate documentation remain part of maturity. The Chinese roadmap section 1.4 owns these acceptance boundaries; a completed annotation tool or isolated UI slice does not establish the full goal.
 
 ## Competitive Direction

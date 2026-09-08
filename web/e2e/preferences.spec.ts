@@ -1,3 +1,4 @@
+import { emptyMerchantOverview } from "./fixtures/merchantOverview";
 import { expect, test, type Page } from "@playwright/test";
 import { accountPreferencesMessage } from "../src/lib/accountPreferencesMessages";
 import { LOCALES, LOCALE_LABEL_KEYS, translate } from "../src/lib/i18n";
@@ -10,6 +11,7 @@ const profile = (id: string, preferences: AccountPreferences, status = "active")
 async function mockPreferences(page: Page, initial = profile("alice", { locale: "en-US", theme: "dark" })) {
   const state = { current: initial.user.id as string | null, accounts: { [initial.user.id]: initial, bob: profile("bob", { locale: "ja-JP", theme: "light" }) }, writes: [] as Array<{ user: string; input: Partial<AccountPreferences> }>, merchantWrites: [] as string[], failPreferences: 0, failMerchant: 0 };
   await page.route("**/api/**", (route) => route.fulfill({ json: { items: [], conversations: [], total: 0, page: 1, page_size: 20 } }));
+  await page.route("**/api/v2/products/overview?*", (route) => route.fulfill({ json: emptyMerchantOverview() }));
   await page.route("**/api/auth/session", (route) => {
     if (route.request().method() === "DELETE") { state.current = null; return route.fulfill({ json: { ok: true } }); }
     if (route.request().method() === "POST") { state.current = route.request().postDataJSON().email.split("@")[0]; return route.fulfill({ json: { ok: true } }); }

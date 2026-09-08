@@ -108,7 +108,7 @@ ProductFlow 当前实现包含商品视觉生产工作台以及 User/Merchant �
 - `/home`：登录后的功能导航与真实商品素材展示。
 - `/account`：本人资料、密码与会话管理。
 - `/password-recovery`：公开邮箱验证码恢复。
-- `/products`：商品列表和自动封面。
+- `/products`：自有商品概览、按来源区分的当前工作与近期记录、商品列表和自动封面。采用统计沿当前交付版本；工作记录可进入已有商品、Agent 或连续生图会话。
 - `/products/new`：全屏 Agent 创建流程。
 - `/products/:productId`：Agent、工作流画布、节点详情、运行记录、配方和图片库。
 - `/image-chat`：连续文/图生图。

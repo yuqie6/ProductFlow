@@ -1,3 +1,4 @@
+import { emptyMerchantOverview } from "./fixtures/merchantOverview";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
 import { translate } from "../src/lib/i18n";
@@ -120,6 +121,7 @@ async function installIdentityMock(page: Page): Promise<IdentityMockState> {
       await fulfillJson(route, 200, { items: [], total: 0, page: 1, page_size: 20 });
       return;
     }
+    if (pathname === "/api/v2/products/overview") { await fulfillJson(route, 200, emptyMerchantOverview()); return; }
     if (request.method() === "GET" && pathname === "/api/v2/products") {
       state.productReads.push(state.account);
       await fulfillJson(route, 200, productsFor(state.account));
