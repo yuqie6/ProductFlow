@@ -10,6 +10,7 @@ import (
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/canonjson"
+	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
@@ -113,14 +114,14 @@ func (s Service) GetWorkflowRunRequest(ctx context.Context, productID *string, c
 	return out, err
 }
 
-// ConfirmWorkflowRunRequest 经 graph 包提交或重试 GraphRun；已确认则回放。已取消或不在待确认状态返回 NotPending。请求不存在返回 NotFound；revision 已变返回 Conflict。
+// ConfirmWorkflowRunRequest 持确认单行锁后经 graph 包提交或重试 GraphRun；已确认则回放。已取消或不在待确认状态返回 NotPending。请求不存在返回 NotFound；revision 已变返回 Conflict。
 func (s Service) ConfirmWorkflowRunRequest(ctx context.Context, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	if err := requireBrowserMerchant(ctx); err != nil {
 		return WorkflowRunRequestResponse{}, err
 	}
 	var out WorkflowRunRequestResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		item, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
+		item, err := loadRunRequest(ctx, pgxTx.Clauses(pfdb.ForUpdateOf("agent_workflow_run_requests")), productID, conversationID, requestID)
 		if err != nil {
 			return err
 		}
@@ -185,7 +186,7 @@ func (s Service) CancelWorkflowRunRequestHTTP(ctx context.Context, productID *st
 
 // cancelWorkflowRunRequest 取消执行确认单：已提交 GraphRun 则经 graph.CancelRunTx 再 SyncGraphRunToTasks（遵守 goal_loop）；未提交则标 cancelled、写 approval/denied，并 parkTaskAfterCancelledRunRequest。
 //
-// 已 cancelled 幂等返回。Agent 不得直接改 graph 跑表。
+// 已 cancelled 幂等返回。待确认取消的条件更新未命中时回读；确认抢先提交则返回 NotPending，避免反向锁 Graph。Agent 不得直接改 graph 跑表。
 func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, s Service, productID *string, conversationID, requestID string) (WorkflowRunRequestResponse, error) {
 	item, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
 	if err != nil {
@@ -203,13 +204,25 @@ func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, s Service, pr
 		}
 	} else {
 		now := time.Now().UTC()
-		if err := pgxTx.Model(&schema.AgentWorkflowRunRequests{}).Where("id = ?", requestID).Updates(map[string]any{
+		result := pgxTx.Model(&schema.AgentWorkflowRunRequests{}).
+			Where("id = ? AND status = ? AND graph_run_id IS NULL", requestID, "awaiting_confirmation").Updates(map[string]any{
 			"status":         "cancelled",
 			"failure_reason": gorm.Expr("COALESCE(failure_reason, ?)", graph.GraphCancelledReason),
 			"finished_at":    now,
 			"updated_at":     now,
-		}).Error; err != nil {
-			return WorkflowRunRequestResponse{}, err
+		})
+		if result.Error != nil {
+			return WorkflowRunRequestResponse{}, result.Error
+		}
+		if result.RowsAffected == 0 {
+			current, err := loadRunRequest(ctx, pgxTx, productID, conversationID, requestID)
+			if err != nil {
+				return WorkflowRunRequestResponse{}, err
+			}
+			if current.Status == "cancelled" {
+				return current, nil
+			}
+			return WorkflowRunRequestResponse{}, apperr.NotPending("执行请求状态已变化，请刷新后重试取消")
 		}
 		if err := resolveWorkflowRequestApproval(ctx, pgxTx, requestID, "denied"); err != nil {
 			return WorkflowRunRequestResponse{}, err
