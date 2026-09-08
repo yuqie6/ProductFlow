@@ -108,3 +108,42 @@ func TestQuotaPersistenceRetainsDatabaseCause(t *testing.T) {
 		}
 	}
 }
+
+func TestQuotaEventUniqueFailureRetainsCauseAndRollsBack(t *testing.T) {
+	ctx := context.Background()
+	svc, merchantID := newQuotaFixture(t, 100)
+	// The seed event occupies this merchant-scoped unique index. A later event
+	// must fail in PostgreSQL without inventing a duplicate application request.
+	const index = "test_quota_event_unique_failure"
+	if err := svc.DB.Exec(fmt.Sprintf("CREATE UNIQUE INDEX %s ON merchant_quota_events (merchant_id) WHERE merchant_id = '%s'", index, merchantID)).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := svc.DB.Exec("DROP INDEX " + index).Error; err != nil {
+			t.Error(err)
+		}
+	})
+	key := clockid.New()
+	_, _, err := svc.Reserve(ctx, merchantID, key, 5, quota.DefaultPriceVersionID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != index {
+		t.Errorf("unique event cause lost: %v", err)
+	}
+	account, err := svc.GetAccount(ctx, merchantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if account.AvailableUnits != 100 || account.ReservedUnits != 0 {
+		t.Fatalf("failed reserve changed balance: %+v", account)
+	}
+	var holds, events int64
+	if err := svc.DB.Model(&schema.MerchantQuotaHolds{}).Where("merchant_id = ?", merchantID).Count(&holds).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.DB.Model(&schema.MerchantQuotaEvents{}).Where("merchant_id = ?", merchantID).Count(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if holds != 0 || events != 1 {
+		t.Fatalf("partial ledger persisted: holds=%d events=%d", holds, events)
+	}
+}

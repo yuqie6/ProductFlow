@@ -22,7 +22,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
@@ -780,9 +779,6 @@ func loadEvent(gdb *gorm.DB, merchantID, eventType, key string) (schema.Merchant
 
 func appendEvent(gdb *gorm.DB, ev schema.MerchantQuotaEvents) error {
 	if err := gdb.Create(&ev).Error; err != nil {
-		if isUniqueViolation(err) {
-			return nil
-		}
 		return errors.Join(apperr.Internal("写入额度事件失败"), err)
 	}
 	return nil
@@ -816,9 +812,4 @@ func optionalString(v string) *string {
 		return nil
 	}
 	return &v
-}
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
