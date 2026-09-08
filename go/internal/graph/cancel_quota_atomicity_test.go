@@ -2,10 +2,13 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
@@ -67,8 +70,14 @@ func TestCancelGraphQuotaIsAtomicForBothEntryPoints(t *testing.T) {
 					_, err := svc.CancelRun(ctx, productID, graphID, runID)
 					return err
 				}
-				if err := cancel(); err == nil || err.Error() != "更新预留失败" {
-					t.Fatalf("expected quota constraint error, got %v", err)
+				err = cancel()
+				var appErr apperr.Error
+				var pgErr *pgconn.PgError
+				if !errors.As(err, &appErr) || appErr.Status != 500 || appErr.Detail != "更新预留失败" {
+					t.Fatalf("quota application error lost: %v", err)
+				}
+				if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != constraint {
+					t.Fatalf("quota database cause lost: %v", err)
 				}
 				var runStatus, nodeStatus, active string
 				if err := pool.QueryRow(ctx, "SELECT r.status,n.status,n.active_attempt_id FROM workflow_graph_runs r JOIN workflow_graph_node_runs n ON n.graph_run_id=r.id WHERE r.id=$1", runID).Scan(&runStatus, &nodeStatus, &active); err != nil {

@@ -55,7 +55,7 @@
 | 额度事件插入唯一键错误被吞没，事务提交只返回笼统回滚错误 | appendEvent 统一返回数据库原因；重放仍由原账户锁及业务状态负责 | PG 唯一约束故障保留 23505 与约束名，余额/hold/事件整体回滚；额度整包通过 | 4ba18e26 |
 | Reserve 同键同金额、异价格版本仍返回旧 hold 成功 | 原账户锁内同时校验已存金额与版本，版本冲突返回 409 | PG 四种 hold 生命周期复现并修复；同版本重放及账本不变通过 | 87131c34 |
 | 配方已有商品依赖，却另行查询/锁定 products 并复制归属范围 | 四个用例通过既有 Products.Lock/LoadSource 取得商品身份与事实版本 | recipe 整包商家隔离、应用和回放通过；第二连接锁竞争与回滚释放、商品配方创建消费者通过 | 88dd8664 |
-| 配方继承视觉版本时将数据库错误当作可选缺失，后续写入只返回事务失效 | 仅 NotFound 可省略，原始读取失败直接返回 | 独立 PG 创建/追加原始 42P01、零部分版本、恢复后可选缺失合同通过 | 随本次提交 |
+| 配方继承视觉版本时将数据库错误当作可选缺失，后续写入只返回事务失效 | 仅 NotFound 可省略，原始读取失败直接返回 | 独立 PG 创建/追加原始 42P01、零部分版本、恢复后可选缺失合同通过 | 4b20a59b |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -411,3 +411,26 @@ Create、Append、Preview、Apply 改为通过实例方法消费现有 Products�
 修复复用 apperr.NotFound 分类，只有确实缺失可省略，其余错误原样返回；同一 helper 覆盖 Create 和 Append，不增加重试或兜底。测试验证 Create 的原始 42P01 与零配方，恢复表后不存在的引用仍成功省略且投影 preferred_visual_system_version_id=nil；随后 Append 再遇读取故障仍保留 42P01，当前版本 ID 不变且只有原版本。临时数据库及其中故障表由 IsolatedMigrated 清理。
 
 最终 recipe 整包通过（4.271 秒），标准 go vet 通过。新增测试完整自审确认使用真实图修改入口、两个配方用例及实际 PG 读写；本切片不改 HTTP schema、视觉版本继承策略或商品模块，也没有宣称完成 Graph context 迁移及整体后端验收。
+
+
+## 额度与配方切片后的固定提交集成验证
+
+主代理在本地 shared clone 固定到 4b20a59b8d8c39b404948b43de4a3f5841686110，保留 Git 元数据。核对 agent-service/package.json 与 pnpm-lock.yaml 一致后链接现有 node_modules；环境脚本来自当前工作区，实际被测代码全部来自固定 checkout。未复制其他任务 auth/schema/Web 未提交修改，也未纳入连续生图 billing_lifecycle_test.go 红色复现。该遗漏明确限定本表适用范围，不能据此声称工作区或计费取消缺陷通过。
+
+首轮顺序运行 quota、recipe、graph、localedit、imagesession、delivery、agent（-p 1 -count=1 -timeout 180s -json）。Graph FAIL 92.054 秒，其余包通过。失败定位为 TestCancelGraphQuotaIsAtomicForBothEntryPoints 四个子例仍比较 err.Error()==通用文案，额度 errors.Join 变更后实际错误含原 23514 及约束名；未发现取消原子性实现的新失败。主代理仅改该测试，同时断言 apperr 500/Detail 和 pgconn 23514/ConstraintName，保留运行/节点/attempt/余额/事件/回调回滚及解除故障后重复取消断言。单文件补丁叠加到固定 checkout，Graph 重跑整包通过。
+
+| 包 | 最终结果 | 耗时秒 | pass 测试事件 | skip 测试事件 |
+|---|---|---:|---:|---:|
+| quota | PASS，原固定提交 | 4.234 | 44 | 0 |
+| recipe | PASS，原固定提交 | 4.277 | 19 | 0 |
+| graph | PASS，固定提交加消费者断言补丁 | 98.447 | 296 | 1 |
+| localedit | PASS，原固定提交 | 8.037 | 41 | 0 |
+| imagesession | PASS，原固定提交，不含未提交计费复现 | 46.072 | 115 | 5 |
+| delivery | PASS，原固定提交 | 7.469 | 44 | 0 |
+| agent | PASS，原固定提交 | 88.063 | 362 | 8 |
+
+合计 921 个 pass 事件、14 个 skip 事件，父测试与子测试均计入，不是 921 个独立业务场景。跳过项为 Graph 目标规模查询门，imagesession 四个规模/HTTP/SSE 门与子进程 helper，Agent 的浏览器/容量/真实 L2 eval/查询计划/HTTP 读门及两个子进程 helper。没有因缺 PG 或缺 Node 跳过关键持久化测试。Agent TestDurableAnswerCreatesNewAttemptAndInjectsPiToolResult 两场景通过（6.71 秒），使用真实 Node 进程重启与本地模拟 Provider；TestSIGKILLLeaseHolderAgainstGoPG 的 model_start/mutation/approval/turn_end 四场景通过（1.42 秒）。不代表真实模型质量或所有故障点已覆盖。
+
+保留原始首轮日志 `/tmp/pf-backend-integration-4b20a59b.jsonl` 及 Graph 复验 `/tmp/pf-backend-integration-4b20a59b-graph-final.jsonl`，不覆盖首轮 FAIL。Graph go vet -stdversion=false 通过；已知 testing.Context/Chdir 与 go.mod 版本声明问题未在本轮修复，不能将该命令表述为标准 vet 全过。最终自审固定 checkout 的唯一 tracked 补丁为本次消费者测试，node_modules 为本轮链接；测试终止后清理临时 checkout 与链接，保留日志。该集成修复按仓库规则选择性提交，不包含其他任务文件或计费红色复现。
+
+收尾共享 just docs-check FAIL：merchant-platform.md 已链接 tasks/archive/saas-preferences-settings.md，而归档文件尚未出现；这是其他任务正在调整的文档路径，未代为修复。将本次历史记录复制进固定 checkout 后，独立文档合同检查 PASS。两个结果分别保留，不将独立快照通过称为共享工作区通过。
