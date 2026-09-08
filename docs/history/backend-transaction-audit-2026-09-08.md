@@ -58,7 +58,8 @@
 | 配方继承视觉版本时将数据库错误当作可选缺失，后续写入只返回事务失效 | 仅 NotFound 可省略，原始读取失败直接返回 | 独立 PG 创建/追加原始 42P01、零部分版本、恢复后可选缺失合同通过 | 4b20a59b |
 | 局部编辑已调用 Provider，但 unknown/调用后取消/恢复仍忽略缺失预留 | 三个入口共用必须找到原 hold 的 markEditQuotaUnknown；缺失只允许调用前 Release | PG 隐藏原键复现终态错误成功；修复后拒绝收口，恢复原键后待核账且零重调 | 0ea5fff4 |
 | 连续生图新重试预留被旧 effect 误判为已调用，取消错误保留额度 | task/effect 持久化 billing_seq，按准确当前键与当前轮次 effect 收口 | 正常两次手动重试三种终态、迁移、回滚、整包验证通过；未运行开发库迁移 | 6444b51a |
-| 连续生图 unknown/取消在准确计费键缺失时仍提交终态 | 删除缺失预留兜底，MarkUnknown/Release 错误原样回滚 | 初始/手动重试四个红色场景修复；八种终态组合、恢复原键与整包通过 | 随本次提交 |
+| 连续生图 unknown/取消在准确计费键缺失时仍提交终态 | 删除缺失预留兜底，MarkUnknown/Release 错误原样回滚 | 初始/手动重试四个红色场景修复；八种终态组合、恢复原键与整包通过 | `5636f688` |
+| Graph 付费调用缺预留仍提交 unknown，通用 effect 又不能直接区分非付费调用 | effect 保存可空 quota_key，准备与预留同事务；未知、取消、恢复复用准确额度身份 | 真实调用故障复现与回滚、非付费文稿/合成、迁移及 Graph 整包通过 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -78,7 +79,7 @@
 
 优先级按可能损害排序；修改频率与扩散范围目前只有静态调用者证据，没有生产统计。
 
-1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化已与结算同事务；明确失败终态额度已归入命令，付费成功结算已要求 hold；取消/未知/释放的缺失 hold 合同仍待核实；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 已在后续切片绑定 task/effect 并删除前缀最新预留查询；unknown/release 的缺失 hold 容忍已在后续切片删除；准确预留缺失时终态回滚。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
+1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化已与结算同事务；明确失败终态额度已归入命令，付费成功结算已要求 hold；付费未知与调用后取消已依据 effect 的明确额度身份要求 hold，非付费 effect 跳过图像账本；释放入口的缺失 hold 合同仍待进一步核实；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 已在后续切片绑定 task/effect 并删除前缀最新预留查询；unknown/release 的缺失 hold 容忍已在后续切片删除；准确预留缺失时终态回滚。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
 2. **中：局部编辑未知/释放的缺失 hold 合同与额度底层错误。** 当前唯一运行时 Reserve 入口与 provider_pending 同事务，不产生 claimed + hold；新增真实数据库准备失败后恢复执行回归确认旧 attempt 零 hold、新 attempt 正常结算，不为历史组合新增恢复分支。unknown 的缺失 hold 容忍已在后续切片删除并覆盖终态/取消/恢复；调用准备前 Release 可无 hold，本轮已核对 Execute 的全部 failed 分支均位于 prepareProviderCall 成功之前，Provider 返回错误及结果持久化失败均走 unknown，未发现生产调用后明确失败 Release 路径。成功结算已拒绝缺 hold。quota 的账户/hold/事件写入原因丢失已在后续切片修复并验证 HTTP 文案保持；账户初始化、锁定及读取错误转换仍待核实。
 3. **中：Graph context 服务依赖。** `WithProductGuard` 仍跨 product/recipe 装配，形成编译期不可见的前置。候选方向是显式 Graph 用例依赖与已有事务入口；必须维持跨商家统一 404、事务组合及 worker 无 HTTP 商家上下文的执行合同。Agent 的运行资格查询已归入 Graph Service，非测试 Agent 调用不再装配该 context 依赖；Graph 内部及 product/recipe 低层调用仍未整体迁移，不把依赖改善升级成已复现安全缺陷。
 4. **可选：节点执行职责与跨生成入口共享机制。** 保留三种不同的业务计费身份和 Provider 合同；只在同一规则的重复已导致漂移时抽取 owner。当前不建立统一生成框架，也不因 `execute_node.go` 较长拆文件。Graph 的 cook、效果记录、资产晋升、交付组合是后续逐边界验证对象。
@@ -478,3 +479,16 @@ activeQuotaKey 删除 LIKE 前缀与 created_at DESC，查询准确 generationQu
 最终八个组合验证缺失时 task 仍 running、原 active attempt 不变、无 finished/result 字段、余额不变；恢复同一 hold 键后，四类终态分别落到 settled/settled/pending_reconciliation/released。当前 checkout 的 imagesession 整包 PASS 56.508 秒，包含既有恢复、取消/重投、旧 worker 和计费生命周期回归；标准 go vet 与 just docs-check PASS。没有为旧直插夹具放宽合同，也未新增表、状态或第二套恢复入口。完整自审确认 finalizeQuotaIgnoreMissing 在 imagesession 无残留，原始日志保留 `/tmp/pf-image-missinghold-suite.log`。
 
 本次没有复现正常事务自行丢失 hold，证据是持久化关联故障时终态必须拒绝提交。schema 迁移应用边界继续沿上一切片说明；Graph context 依赖及更广的执行职责审计仍未完成，整包通过不等于整体后端交付签收。
+
+
+## Graph effect 明确记录是否预留图像额度
+
+主代理独占 Graph 调用准备、effect、额度收口和对应回归，以及 schema/models.go 的 WorkflowGraphProviderEffects 单一字段与本记录。dashboard 与 eval 的文件及运行资源保持原归属。真实调用链显示文稿、付费生图和本地 subject_compose 共用 effect 机制；原 markImageQuotaUnknown 对所有入口计算图像键并吞掉 NotFound。直接要求所有 effect 有图像预留会破坏合法的非付费调用。
+
+新增回归经实际 callImageProvider 准备与 Reserve，在测试 Provider 返回超时前临时改名准确 hold 键。旧实现接受 unknown（针对性首轮 FAIL 0.964 秒）。effect 新增可空 quota_key：付费入口在原准备/Reserve 事务写入准确键，文稿与本地合成明确写 nil；failed effect 再准备时同步更新归属。未知收口按 node/attempt 查询 intent，付费预留缺失和读取失败原样返回，非付费跳过图像账本。调用后取消复用同一收口，恢复继续消费原 markNodeUnknown。不按 Provider 名称或请求 JSON 猜测收费，不增加第二份账本。
+
+故障回归确认缺 hold 时 run/node 保持 running、effect 保持 pending；恢复准确键后原未知事务成功，Provider 仅调用一次。取消/恢复/三种 unknown 原子性回归补齐真实已跨调用边界的 effect 夹具，保留原数据库约束故障和回滚断言。首次 Graph 整包 FAIL 94.020 秒源于旧夹具只写阶段或缺额度身份；没有通过生产兜底继续兼容这些夹具。四条本轮失败留下的无意图运行按准确 ID 删除，未重置共享测试库。
+
+独立 PostgreSQL 包数据库的最终 Graph 整包 PASS 95.368 秒；新增回滚断言及迁移、非付费合成、恢复组合随后 PASS 4.896 秒。迁移回归在一次性真实数据库删除新列、schema.Apply 创建空列，再写准确键并重复 Apply 验证不覆盖；它只证明 schema 创建与幂等，不证明旧付费数据身份重建。go vet -stdversion=false PASS；标准 vet 的既有 Go 版本声明问题仍未解决。首轮及最终日志保留 /tmp/pf-graph-quota-identity.log 与 /tmp/pf-graph-quota-identity-final.log。完整 diff 与新增迁移文件已自审，旧通用 finalizer 名称无残留，保留的 releaseQuotaIgnoreMissing 只服务 Release 的调用准备前缺预留情形；未宣称全部 Release 入口审计完成。
+
+两个本轮独立验证数据库已删除。共享开发库只读确认 quota_key 尚不存在，查询当时带 reserved/pending_reconciliation 图像预留的 queued/running Graph 节点为 0；没有执行开发或生产迁移。历史 effect 新列为 NULL 不能证明其原调用不收费，应用迁移前必须核实并收口旧活动付费执行。本切片没有历史回填或兼容读取路径，没有真实模型费用。Graph context 依赖与更广的节点职责收敛仍是后续工作。

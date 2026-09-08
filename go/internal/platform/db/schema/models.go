@@ -1003,6 +1003,7 @@ func (WorkflowGraphProposals) TableName() string { return "workflow_graph_propos
 // WorkflowGraphProviderEffects 对应表 workflow_graph_provider_effects。
 // 图节点 provider 调用对账；无法证明则 unknown。
 type WorkflowGraphProviderEffects struct {
+	QuotaKey            *string   `gorm:"column:quota_key;type:varchar(200)"` // nil means this effect did not reserve image quota.
 	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	NodeRunID           string    `gorm:"column:node_run_id;type:varchar(36);not null"`
 	OperationKey        string    `gorm:"column:operation_key;type:varchar(255);not null"`

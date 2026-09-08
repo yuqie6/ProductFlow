@@ -47,21 +47,28 @@ func (e Executor) settleImageQuota(ctx context.Context, merchantID, nodeRunID, a
 }
 
 func (e Executor) markImageQuotaUnknown(ctx context.Context, merchantID, nodeRunID, attemptID string) error {
-	key := imageNodeQuotaKey(nodeRunID, attemptID)
-	return finalizeQuotaIgnoreMissing(e.quota().MarkUnknown(ctx, merchantID, key))
+	var effect schema.WorkflowGraphProviderEffects
+	if err := e.DB.WithContext(ctx).Select("quota_key").Where("node_run_id = ? AND attempt_id = ?", nodeRunID, attemptID).Take(&effect).Error; err != nil {
+		return err
+	}
+	if effect.QuotaKey == nil {
+		return nil
+	}
+	_, _, err := e.quota().MarkUnknown(ctx, merchantID, *effect.QuotaKey)
+	return err
 }
 
 func (e Executor) releaseImageQuota(ctx context.Context, merchantID, nodeRunID, attemptID string) error {
 	key := imageNodeQuotaKey(nodeRunID, attemptID)
-	return finalizeQuotaIgnoreMissing(e.quota().Release(ctx, merchantID, key))
+	return releaseQuotaIgnoreMissing(e.quota().Release(ctx, merchantID, key))
 }
 
-func finalizeQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) error {
+func releaseQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) error {
 	if err == nil {
 		return nil
 	}
 	if apperr.IsNotFound(err) {
-		// 夹具或跳过路径未 Reserve；不要把缺 hold 升级成 worker 失败。
+		// 调用准备提交前或非图像调用可能没有预留，释放为空操作。
 		return nil
 	}
 	return err
@@ -114,7 +121,7 @@ func (s Service) finalizeImageQuotaOnCancel(ctx context.Context, merchantID, nod
 	}
 	key := imageNodeQuotaKey(nodeRunID, attemptID)
 	if started {
-		return finalizeQuotaIgnoreMissing(s.quota().MarkUnknown(ctx, merchantID, key))
+		return (Executor{DB: s.DB}).markImageQuotaUnknown(ctx, merchantID, nodeRunID, attemptID)
 	}
-	return finalizeQuotaIgnoreMissing(s.quota().Release(ctx, merchantID, key))
+	return releaseQuotaIgnoreMissing(s.quota().Release(ctx, merchantID, key))
 }

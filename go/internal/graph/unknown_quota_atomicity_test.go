@@ -32,6 +32,7 @@ func TestGraphUnknownTransitionsOwnQuota(t *testing.T) {
 			if _, _, err := q.Reserve(ctx, merchantID, key, 1, quota.DefaultPriceVersionID); err != nil {
 				t.Fatal(err)
 			}
+			recordGraphEffectFixture(t, db, nodeID, attempt, &key)
 			const constraint = "test_graph_unknown_quota"
 			if _, err := pool.Exec(ctx, "ALTER TABLE merchant_quota_holds ADD CONSTRAINT "+constraint+" CHECK (idempotency_key <> '"+key+"' OR status='reserved')"); err != nil {
 				t.Fatal(err)

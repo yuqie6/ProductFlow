@@ -383,7 +383,7 @@ func (e Executor) callProvider(
 		"reference_content_sha256": contentHashes,
 		"attempt_id":               attemptID,
 	}
-	if err := e.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, providerName, request); err != nil {
+	if err := e.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, providerName, request, nil); err != nil {
 		return PromptResult{}, false, err
 	}
 	result, err := invoke(ctx, req)
@@ -433,7 +433,8 @@ func (e Executor) callImageProvider(
 	if err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		prepared := e
 		prepared.DB = pgxTx
-		if err := prepared.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, providerName, request); err != nil {
+		key := imageNodeQuotaKey(nodeRun.ID, attemptID)
+		if err := prepared.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, providerName, request, &key); err != nil {
 			return err
 		}
 		return prepared.reserveImageQuota(ctx, merchantID, nodeRun.ID, attemptID)
@@ -479,7 +480,7 @@ func (e Executor) callLocalSubjectCompose(
 		"attempt_id":   attemptID,
 		"delivery":     "subject_compose",
 	}
-	if err := e.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, "subject_compose", request); err != nil {
+	if err := e.prepareProviderCall(ctx, runID, nodeRun.ID, attemptID, "subject_compose", request, nil); err != nil {
 		return ImageResult{}, false, err
 	}
 	result := imageResultFromSubjectCompose(composed)
@@ -494,7 +495,7 @@ func (e Executor) callLocalSubjectCompose(
 
 // prepareProviderCall 在事务里推进 prepared → 写入 effect intent → provider_call。
 // 任一步围栏失败返回 errProviderFenced，调用方不得再打 provider。这是 unknown 边界的起点。
-func (e Executor) prepareProviderCall(ctx context.Context, runID, nodeRunID, attemptID, providerName string, request map[string]any) error {
+func (e Executor) prepareProviderCall(ctx context.Context, runID, nodeRunID, attemptID, providerName string, request map[string]any, quotaKey *string) error {
 	hash, err := providerEffectHash(request)
 	if err != nil {
 		return err
@@ -508,7 +509,7 @@ func (e Executor) prepareProviderCall(ctx context.Context, runID, nodeRunID, att
 		if !ok {
 			return errProviderFenced
 		}
-		ok, err = ensureProviderEffectIntent(ctx, pgxTx, nodeRunID, attemptID, hash, providerName, raw)
+		ok, err = ensureProviderEffectIntent(ctx, pgxTx, nodeRunID, attemptID, hash, providerName, raw, quotaKey)
 		if err != nil {
 			return err
 		}

@@ -155,7 +155,7 @@ func advanceNodePhase(ctx context.Context, tx *gorm.DB, runID, nodeRunID, attemp
 // ensureProviderEffectIntent 在打 provider 前写入或复用 workflow_graph_provider_effects。
 // 每节点一行：hash/provider 不一致报错；已有非 failed 结果返回 false（禁止再打）；failed 可重开 pending。
 // 返回 true 才允许本次调用 provider。operation_key 固定为 graph-node-run:{nodeRunID}，不要改格式。
-func ensureProviderEffectIntent(ctx context.Context, tx *gorm.DB, nodeRunID, attemptID, requestHash, providerName string, requestJSON []byte) (bool, error) {
+func ensureProviderEffectIntent(ctx context.Context, tx *gorm.DB, nodeRunID, attemptID, requestHash, providerName string, requestJSON []byte, quotaKey *string) (bool, error) {
 	var node schema.WorkflowGraphNodeRuns
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", nodeRunID).Take(&node).Error
 	if err != nil {
@@ -176,6 +176,7 @@ func ensureProviderEffectIntent(ctx context.Context, tx *gorm.DB, nodeRunID, att
 			NodeRunID:           nodeRunID,
 			OperationKey:        opKey,
 			EffectKind:          graphProviderEffectKind,
+			QuotaKey:            quotaKey,
 			RequestHash:         requestHash,
 			ProviderName:        providerName,
 			AttemptID:           attemptID,
@@ -199,6 +200,7 @@ func ensureProviderEffectIntent(ctx context.Context, tx *gorm.DB, nodeRunID, att
 	now := time.Now().UTC()
 	req := string(requestJSON)
 	err = tx.WithContext(ctx).Model(&schema.WorkflowGraphProviderEffects{}).Where("id = ?", existing.ID).Updates(map[string]any{
+		"quota_key":            quotaKey,
 		"attempt_id":           attemptID,
 		"effect_result":        "pending",
 		"reconciliation_state": "not_requested",

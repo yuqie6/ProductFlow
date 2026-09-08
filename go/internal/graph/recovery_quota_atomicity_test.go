@@ -32,6 +32,9 @@ func TestGraphRecoveryQuotaFailurePreservesRecoverableAttempt(t *testing.T) {
 			if _, _, err := q.Reserve(ctx, merchantID, key, 1, quota.DefaultPriceVersionID); err != nil {
 				t.Fatal(err)
 			}
+			if phase == "provider_call" {
+				recordGraphEffectFixture(t, db, nodeID, attempt, &key)
+			}
 			before, err := q.GetAccount(ctx, merchantID)
 			if err != nil {
 				t.Fatal(err)

@@ -44,7 +44,7 @@ func TestCancelGraphQuotaIsAtomicForBothEntryPoints(t *testing.T) {
 				}
 				if started {
 					now := time.Now().UTC()
-					if err := db.Create(&schema.WorkflowGraphProviderEffects{ID: clockid.New(), NodeRunID: nodeID, OperationKey: clockid.New(), EffectKind: "image", RequestHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ProviderName: "fixture", AttemptID: attempt, EffectResult: "pending", ReconciliationState: "not_requested", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+					if err := db.Create(&schema.WorkflowGraphProviderEffects{ID: clockid.New(), NodeRunID: nodeID, OperationKey: clockid.New(), EffectKind: "image", QuotaKey: &key, RequestHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ProviderName: "fixture", AttemptID: attempt, EffectResult: "pending", ReconciliationState: "not_requested", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
 						t.Fatal(err)
 					}
 				}

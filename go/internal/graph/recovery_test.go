@@ -45,12 +45,17 @@ func TestRecoverUnfinishedGraphRunsLimitHasMoreAndIsolation(t *testing.T) {
 }
 
 func TestRecoverUnfinishedGraphRunsRequeuesClaimedAndMarksUnknown(t *testing.T) {
-	pool, _ := testdb.Open(t)
+	pool, db := testdb.Open(t)
 	drainGraphRecovery(t, pool)
 
 	requeueID := insertStaleRunningGraphRun(t, pool, "claimed", nil, time.Unix(1, 0).UTC())
 	attempt := clockid.New()
 	unknownID := insertStaleRunningGraphRun(t, pool, "provider_call", &attempt, time.Unix(2, 0).UTC())
+	var nodeID string
+	if err := pool.QueryRow(context.Background(), "SELECT id FROM workflow_graph_node_runs WHERE graph_run_id=$1", unknownID).Scan(&nodeID); err != nil {
+		t.Fatal(err)
+	}
+	recordGraphEffectFixture(t, db, nodeID, attempt, nil)
 
 	summary, err := recoverUnfinishedGraphRuns(context.Background(), pool, time.Minute, cmdTestProducts{}, 2)
 	if err != nil {
