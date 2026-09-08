@@ -90,8 +90,10 @@ func TestEvalUserSimHost(t *testing.T) {
 		switch request.Method {
 		case "observe":
 			state, readbackErrors := evalFinalPersistedState(t, as, seeded)
+			writeObservation := observeEvalFinalWrites(t, as, seeded, task.Expect.Writes, baseline)
+			readbackErrors = append(readbackErrors, writeObservation.ReadbackErrors...)
 			out = map[string]any{
-				"errors":          gradeEvalFinalWrites(t, as, seeded, task.Expect.Writes, baseline),
+				"errors":          append([]string{}, writeObservation.Errors...),
 				"state":           state,
 				"readback_errors": readbackErrors,
 			}

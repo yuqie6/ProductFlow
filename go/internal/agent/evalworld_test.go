@@ -189,6 +189,25 @@ func needsExpandedGraph(world EvalWorld) bool {
 	return len(world.LiveGraph.Nodes) > 1
 }
 
+func globalEvalTaskNeedsWorkflow(task EvalTask, world EvalWorld) bool {
+	if strings.HasPrefix(world.Name, "global-library") || task.Skill == "workflow-run-request" || len(world.ListedWorkflowRuns) > 0 {
+		return true
+	}
+	if filters, ok := task.PageContext["filters"].(map[string]any); ok {
+		productID, _ := filters["product_id"].(string)
+		workflowID, _ := filters["workflow_id"].(string)
+		if strings.TrimSpace(productID) != "" && strings.TrimSpace(workflowID) != "" {
+			return true
+		}
+	}
+	for _, call := range task.Reference.ScriptedCalls {
+		if call.Name == "request_global_workflow_run_v1" {
+			return true
+		}
+	}
+	return false
+}
+
 func expandEvalGraph(t *testing.T, as *agentServer, world EvalWorld, seeded *seededEvalWorld) {
 	t.Helper()
 	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
@@ -428,7 +447,7 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 		t.Fatal("global session missing conversation")
 	}
 	seeded.ConvID = sess.Conversations[0].ConversationID
-	if strings.HasPrefix(world.Name, "global-library") || task.Skill == "workflow-run-request" || len(world.ListedWorkflowRuns) > 0 {
+	if globalEvalTaskNeedsWorkflow(task, world) {
 		workspace, err := as.svc.Product.CreateAgentDraft(ctx, "评测商品", clockid.New(), nil)
 		if err != nil {
 			t.Fatal(err)

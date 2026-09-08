@@ -144,6 +144,170 @@ func checkEvalFixture(t *testing.T, path string, value any) {
 	}
 }
 
+func TestEvalPersistedOperationCoverageMatrix(t *testing.T) {
+	tasks, _, err := LoadEvalTasks(DefaultEvalRoot(), "l1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 75 {
+		t.Fatalf("frozen L1 task count = %d, want 75", len(tasks))
+	}
+	supportedTools := map[string]bool{
+		"apply_graph_change_set_v1":      true,
+		"cancel_workflow_run_v1":         true,
+		"create_product_workspace_v1":    true,
+		"discard_workflow_proposal_v1":   true,
+		"finalize_product_intake_v1":     true,
+		"propose_global_draft":           true,
+		"propose_graph_change_set_v1":    true,
+		"request_global_workflow_run_v1": true,
+		"request_workflow_run_v1":        true,
+	}
+	supportedGraphOps := evalObservedGraphOperations
+	supportedLibraryOps := map[string]bool{
+		"archive": true, "link_workflow": true, "move": true,
+		"rename": true, "restore": true, "set_tags": true,
+	}
+	type row struct {
+		TaskID       string `json:"task_id"`
+		WriteIndex   int    `json:"write_index"`
+		Tool         string `json:"tool"`
+		Path         string `json:"path"`
+		Operation    string `json:"operation,omitempty"`
+		Expected     any    `json:"expected,omitempty"`
+		Observer     string `json:"observer"`
+		ActualGoTest string `json:"actual_go_test"`
+		ActualCase   string `json:"actual_case,omitempty"`
+		Evidence     string `json:"evidence_status"`
+	}
+	graphEvidence := map[string]struct {
+		caseName string
+		status   string
+	}{
+		"graph-editing-delete-one-node":                        {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-delete-one-node", "positive-write-readback"},
+		"graph-editing-disconnect-edge":                        {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-disconnect-edge", "positive-write-readback"},
+		"graph-editing-move-node-positions":                    {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-move-node-positions", "positive-write-readback"},
+		"graph-editing-move-node-to-group":                     {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-move-node-to-group", "positive-write-readback"},
+		"graph-editing-rename-group":                           {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-rename-group", "positive-write-readback"},
+		"graph-editing-rename-node":                            {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-rename-node", "positive-write-readback"},
+		"graph-editing-update-node-config":                     {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-update-node-config", "positive-write-readback"},
+		"graph-editing-discard-pending-proposal":               {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-discard-pending-proposal", "discard-final-state-readback"},
+		"graph-editing-dissolve-and-reorder":                   {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-dissolve-and-reorder", "pending-and-confirmed-write-readback"},
+		"graph-editing-negative-batch-direct-apply":            {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-negative-batch-direct-apply", "pending-write-readback"},
+		"graph-editing-negative-delete-all-nodes":              {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-negative-delete-all-nodes", "pending-write-readback"},
+		"graph-editing-propose-scene-shot":                     {"TestEvalPersistedOperationL1GraphCoverage/graph-editing-propose-scene-shot", "pending-and-confirmed-write-readback"},
+		"workflow-run-request-negative-off-topic-delete-graph": {"TestEvalPersistedOperationL1GraphCoverage/workflow-run-request-negative-off-topic-delete-graph", "pending-write-readback"},
+	}
+	libraryEvidence := map[string]struct {
+		caseName string
+		status   string
+	}{
+		"media-library-organization-archive-asset":            {"TestEvalPersistedLibraryOperationCoverage/media-library-organization-archive-asset", "pending-and-confirmed-write-readback"},
+		"media-library-organization-batch-rename":             {"TestEvalPersistedLibraryOperationCoverage/media-library-organization-batch-rename", "pending-and-confirmed-write-readback"},
+		"media-library-organization-inspect-and-rename-asset": {"TestEvalPersistedLibraryOperationCoverage/media-library-organization-inspect-and-rename-asset", "pending-and-confirmed-write-readback"},
+		"media-library-organization-inspect-before-archive":   {"TestEvalPersistedLibraryOperationCoverage/media-library-organization-inspect-before-archive", "pending-and-confirmed-write-readback"},
+		"media-library-organization-link-workflow":            {"TestEvalPersistedLibraryOperationCoverage/media-library-organization-link-workflow", "pending-and-confirmed-write-readback"},
+		"media-library-organization-move-selected-asset":      {"TestEvalPersistedLibraryOperationCoverage/media-library-organization-move-selected-asset", "pending-and-confirmed-write-readback"},
+		"media-library-organization-move-to-root":             {"TestEvalPersistedLibraryOperationCoverage/media-library-organization-move-to-root", "pending-and-confirmed-write-readback"},
+		"media-library-organization-rename-listed-asset":      {"TestEvalPersistedLibraryOperationCoverage/media-library-organization-rename-listed-asset", "pending-and-confirmed-write-readback"},
+		"media-library-organization-restore-asset":            {"TestEvalPersistedLibraryOperationCoverage/media-library-organization-restore-asset", "pending-and-confirmed-write-readback"},
+		"media-library-organization-set-tags":                 {"TestEvalPersistedLibraryOperationCoverage/media-library-organization-set-tags", "pending-and-confirmed-write-readback"},
+	}
+	nonGraphEvidence := map[string]struct {
+		caseName string
+		status   string
+	}{
+		"workflow-run-request-run-current-workflow":    {"TestEvalPersistedNonGraphOperationCoverage/request_workflow_run", "positive-write-readback"},
+		"workflow-run-request-global-node-run":         {"TestEvalPersistedNonGraphOperationCoverage/request_global_workflow_run", "positive-write-readback"},
+		"product-intake-finalize-explicit-minimal-set": {"TestEvalPersistedNonGraphOperationCoverage/finalize_product_intake", "positive-write-readback"},
+		"product-intake-create-named-workspace":        {"TestEvalPersistedNonGraphOperationCoverage/create_product_workspace", "positive-write-readback"},
+		"workflow-run-request-cancel-running-run":      {"TestEvalPersistedNonGraphOperationCoverage/cancel_workflow_run", "positive-write-readback"},
+	}
+	for _, referenceCase := range evalPersistedReferenceCases {
+		nonGraphEvidence[referenceCase.taskID] = struct {
+			caseName string
+			status   string
+		}{"TestEvalPersistedNonGraphOperationCoverage/" + referenceCase.taskID, referenceCase.status}
+	}
+	rows := []row{}
+	for _, task := range tasks {
+		for writeIndex, write := range task.Expect.Writes {
+			if !supportedTools[write.Tool] {
+				t.Fatalf("%s write %d uses unsupported observer tool %s", task.ID, writeIndex, write.Tool)
+			}
+			keys := make([]string, 0, len(write.Match))
+			for path := range write.Match {
+				keys = append(keys, path)
+			}
+			sort.Strings(keys)
+			if len(keys) == 0 {
+				keys = []string{""}
+			}
+			for _, path := range keys {
+				operation := ""
+				operationPath := false
+				if parts := evalOperationPath.FindStringSubmatch(path); parts != nil {
+					if (parts[1] == "operations" && parts[3] == "op") ||
+						(parts[1] == "library_payload.operations" && parts[3] == "operation") {
+						if value, ok := write.Match[path].(string); ok {
+							operation, operationPath = value, true
+						}
+					}
+				} else if strings.HasSuffix(path, ".operation") {
+					if value, ok := write.Match[path].(string); ok {
+						operation, operationPath = value, true
+					}
+				}
+				if write.Tool == "apply_graph_change_set_v1" || write.Tool == "propose_graph_change_set_v1" {
+					if operationPath && !supportedGraphOps[operation] {
+						t.Fatalf("%s write %d path %s operation %q is not observed", task.ID, writeIndex, path, operation)
+					}
+				}
+				if write.Tool == "propose_global_draft" && operationPath && !supportedLibraryOps[operation] {
+					t.Fatalf("%s write %d library operation %q is not observed", task.ID, writeIndex, operation)
+				}
+				actualTest := ""
+				actualCase := ""
+				evidenceStatus := "observer-support-only"
+				if write.Tool == "apply_graph_change_set_v1" || write.Tool == "propose_graph_change_set_v1" || write.Tool == "discard_workflow_proposal_v1" {
+					actualTest = "TestEvalPersistedOperationL1GraphCoverage"
+					if evidence, ok := graphEvidence[task.ID]; ok {
+						actualCase, evidenceStatus = evidence.caseName, evidence.status
+					}
+				} else if write.Tool == "propose_global_draft" {
+					actualTest = "TestEvalPersistedLibraryOperationCoverage"
+					if evidence, ok := libraryEvidence[task.ID]; ok {
+						actualCase, evidenceStatus = evidence.caseName, evidence.status
+					}
+				} else if evidence, ok := nonGraphEvidence[task.ID]; ok {
+					actualTest, actualCase, evidenceStatus = "TestEvalPersistedNonGraphOperationCoverage", evidence.caseName, evidence.status
+				}
+				if (write.Tool == "apply_graph_change_set_v1" || write.Tool == "propose_graph_change_set_v1" || write.Tool == "discard_workflow_proposal_v1" || write.Tool == "propose_global_draft" || write.Tool == "request_workflow_run_v1" || write.Tool == "request_global_workflow_run_v1" || write.Tool == "finalize_product_intake_v1") && actualCase == "" {
+					t.Fatalf("%s write %d is missing a real operation evidence case", task.ID, writeIndex)
+				}
+				rows = append(rows, row{TaskID: task.ID, WriteIndex: writeIndex, Tool: write.Tool, Path: path, Operation: operation, Expected: write.Match[path], Observer: "database-final-state", ActualGoTest: actualTest, ActualCase: actualCase, Evidence: evidenceStatus})
+			}
+		}
+	}
+	if len(rows) != 188 {
+		t.Fatalf("frozen persisted operation/path rows = %d, want 188", len(rows))
+	}
+	result := map[string]any{"schema_version": 1, "layer": "l1", "task_count": len(tasks), "row_count": len(rows), "rows": rows}
+	raw, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidenceRoot := os.Getenv("PRODUCTFLOW_EVAL_PERSISTED_EVIDENCE_DIR"); evidenceRoot != "" {
+		if err := os.MkdirAll(evidenceRoot, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(evidenceRoot, "coverage-matrix.json"), append(raw, '\n'), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Logf("persisted operation coverage tasks=%d rows=%d", len(tasks), len(rows))
+}
+
 func TestEvalStructuralWriteFixtures(t *testing.T) {
 	as := newAgentServer(t, mockGateway{}, "tok")
 	tasks, worlds, err := LoadEvalTasks(DefaultEvalRoot(), "l1")

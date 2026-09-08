@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadEvalTaskSet } from "./loader.js";
 import { checkJSONSchema, loadGlobalDraftSchema } from "./json-schema.js";
 import { openGoEvalHost } from "./go-world.js";
-import { createStubWorld, EVAL_ASSET_ID, EVAL_PRODUCT_ID } from "./stub-world.js";
+import { createStubWorld, EVAL_ASSET_ID, EVAL_PRODUCT_ID, EVAL_RUN_ID, EVAL_WORKFLOW_ID } from "./stub-world.js";
 import type { JsonObject } from "../src/contracts.js";
 
 describe.skipIf(process.env.PRODUCTFLOW_RUN_AGENT_EVALS_GOPG !== "1")("L3 Go decision observations", () => {
@@ -359,6 +359,46 @@ describe.skipIf(process.env.PRODUCTFLOW_RUN_AGENT_EVALS_GOPG !== "1")("L1 Go int
       await expect(stub.client.executeGlobalWorkflowRunRequest("conv", { ...request, force: true }, "global-run-step", "global-run-key"))
         .rejects.toMatchObject({ status: 409 });
       expect(await host.observe()).toEqual([]);
+    } finally { await host.close(); }
+  }, 180_000);
+
+  it.each([
+    ["media-library-organization-negative-off-topic-run", false],
+    ["run-diagnosis-retry-after-global-diagnosis", true],
+  ])("uses the shared seeded graph for %s through the real Go host", async (id, diagnose) => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === id)!;
+    const stub = createStubWorld(task, worlds.get(task.world)!, `conv-${id}`, `run-${id}`, {});
+    const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "intake" });
+    try {
+      const context = await stub.client.globalWorkflowContext(`conv-${id}`, EVAL_PRODUCT_ID, undefined, "concise") as {
+        live_graph: { revision: number };
+      };
+      if (diagnose) {
+        const runs = await stub.client.inspectGlobalWorkflowRuns(`conv-${id}`, [EVAL_WORKFLOW_ID], 5) as {
+          items: Array<{ items: Array<{ id: string }> }>;
+        };
+        expect(runs.items.flatMap((workflow) => workflow.items).some((run) => run.id === EVAL_RUN_ID)).toBe(true);
+        await stub.client.workflowRunDetail(`conv-${id}`, EVAL_RUN_ID);
+      }
+      const prepared = await stub.client.prepareGlobalWorkflowRunRequest(`conv-${id}`, {
+        product_id: EVAL_PRODUCT_ID,
+        workflow_id: EVAL_WORKFLOW_ID,
+        expected_workflow_revision: context.live_graph.revision,
+        task_id: null,
+        source_run_id: diagnose ? EVAL_RUN_ID : null,
+      });
+      const result = await stub.client.executeGlobalWorkflowRunRequest(
+        `conv-${id}`,
+        { ...prepared, scope: "graph" },
+        `go-host-${id}`,
+        `go-host-${id}`,
+      ) as { status: string };
+      expect(result.status).toBe("awaiting_confirmation");
+      const final = await host.observeFinal();
+      expect(final.readback_errors).toEqual([]);
+      expect(final.errors).toEqual([]);
+      expect(stub.calls.filter((call) => call.name === "request_global_workflow_run_v1").at(-1)?.outcome).toBe("succeeded");
     } finally { await host.close(); }
   }, 180_000);
 

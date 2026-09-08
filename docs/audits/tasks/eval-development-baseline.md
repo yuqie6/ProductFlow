@@ -135,3 +135,20 @@ root已读取 `storage-dev/eval-development-0908-r6/agent-evals/evidence/after-s
 [按作用域统一工具观察](archive/eval-scope-tool-observation.md)承担同类缺口，须在下一整批前覆盖所有实际暴露工具及冻结注入合同，不再逐Skill付费试跑发现接线缺失。跟进者root；该前置未验收前保持阻塞，不启动r7。
 
 统一观察已完成确定性前置验收：75输入物化/最终读取无基础设施缺口，root真实PG与runner25项回归以及未finalize新增回归通过。下一批仍须冻结最终提交、独立资源、模型与完整225分母后再恢复认领；旧六批不续接或合并。当前阻塞只剩新采证窗口冻结与资源复核。
+
+## 第七次固定开发窗口
+
+统一作用域观察已验收并提交`9f3d25e72519682e84da292708a0655f4ab0d235`，恢复eval_baseline认领。固定该提交于`/tmp/productflow-eval-development-0908-r7`，独立产物根`storage-dev/eval-development-0908-r7`，独立PG前缀`pf_eval_r7`。沿用83个development任务/11个world的集合分组与L1完整75×3=225，regression/acceptance为空；模型openai/gpt-5.6-luna，推理参数不额外覆盖、并发3、180秒、12轮。固定代码/题目/world/Skill/harness/lock/配置/manifest身份；不复用旧批次试验或修改评分。正常行为失败完整保留，未知观察/合同错误按既有协议停止，不为分数重采样。
+
+当前容量执行者使用同一物理机做有界混合负载，r7先准备独立checkout/集合manifest与静态冻结身份；CPU/PG前置和模型整批启动需等root确认容量采样窗口结束，避免影响时序证据。该确认属于主代理资源协调，不新增用户审批。窗口释放后，在固定候选执行既有真实Go观察前置，成功即可按原完整批次合同运行及导出；缺输入或真实不可测则保留现场交回。执行者只写自有checkout/证据，不动共享服务/配置/源码或文档，不commit/push。
+
+r7低负载准备已完成，root复核checkout干净且HEAD为9f3d25e7。集合语义hash仍为5e1e31c6c3dcbab5651cba62cfea17f827a7fa82b844652a1245e269295dd126；manifest文件字节SHA256为b43f61accf111359bfb631ee8ee9d55e812d6cec0b3a224be6ce856dc1e4e38b，两者含义不同。before.json保留本候选独立身份，107输入JSON/83任务/11world与旧组划分相同，L1完整分母225。尚无模型/Go host/PG执行，容量采样资源窗口未释放。
+
+
+容量栈已清理，root释放物理机计时窗口。原eval_baseline句柄恢复因代理线程上限失败，现由已交回容量执行的capacity_baseline承接同一r7任务，冻结代码、集合、模型、分母和产物路径不变。完成实际Go观察前置后执行完整225及导出；只占用pf_eval_r7前缀数据库与本任务产物，不改共享服务或评分。root保留文档/Git及最终审核。
+
+## 第七批停止与持久化操作评分前置
+
+r7固定9f3d25e7，run 20260908T125629Z-d80c35af，18/225 trial、6/75题后按合同停止。Go fixture前置和go-world 24项通过，但持久化评分缺discard分支，apply分支仅支持首节点rename/update，合法删除/断边/移动被错误计为意外变更。18份原始轨迹及stop-summary保留，无summary/development导出；专用Go host和pf_eval_r7库已清理。不能把所有persisted mismatch都提升为unknown，需分清业务不满足与观察器不支持。[持久化操作观察](archive/eval-persisted-operation-observation.md)修复完整操作语义并完成无模型正反覆盖前，禁止启动r8。旧七批不续接、不合并分母。
+
+持久化观察与共用 global seed 修复已验收，见上述归档任务；原题/world/Expect 未改，当前观察 fixture 增加原题指定图的元数据。r8 尚未启动，须固定新交付版本与观察身份，并等待 e190 容量正式计时结束，不能复用 r7 批次。

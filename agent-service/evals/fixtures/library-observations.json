@@ -531,7 +531,13 @@
     "folders": [],
     "folders_next_after_id": null,
     "items": [],
-    "next_cursor": null
+    "next_cursor": null,
+    "workflow": {
+      "linked": {},
+      "workflow_id": "33333333-3333-4333-8333-333333333333",
+      "workflow_revision": 3,
+      "workflow_title": "评测图"
+    }
   },
   "media-library-organization-rename-injected-name": {
     "folders": [
