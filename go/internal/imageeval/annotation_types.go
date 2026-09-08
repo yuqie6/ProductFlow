@@ -101,6 +101,7 @@ func (f AnnotationClientFunc) Annotate(ctx context.Context, in AnnotationInput) 
 // AnnotationResult is the strict model result before runner metadata and
 // comparison deltas are added.
 type AnnotationResult struct {
+	rawOutput              string
 	Status                 string                     `json:"status"`
 	Scores                 *Scores                    `json:"scores"`
 	QualityReferenceScores *Scores                    `json:"quality_reference_scores,omitempty"`
@@ -156,7 +157,16 @@ type AnnotationRecord struct {
 	CriticalErrors     []AnnotationObservation    `json:"critical_errors"`
 	CriticalErrorCount int                        `json:"critical_error_count"`
 	FailureCode        string                     `json:"failure_code,omitempty"`
+	Diagnostic         *AnnotationDiagnostic      `json:"diagnostic,omitempty"`
 	Comparison         *AnnotationComparison      `json:"comparison,omitempty"`
+}
+
+// AnnotationDiagnostic explains rejected model output without changing scores
+// or turning failed records into comparable evidence.
+type AnnotationDiagnostic struct {
+	Stage      string `json:"stage"`
+	Reason     string `json:"reason"`
+	OutputText string `json:"output_text,omitempty"`
 }
 
 type AnnotationComparison struct {

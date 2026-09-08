@@ -46,6 +46,16 @@ type annotationResponseError struct {
 	endpoint string
 }
 
+// Only successful model output is retained here. HTTP bodies, request headers
+// and transport errors must not be copied into annotation evidence.
+type annotationOutputError struct {
+	output string
+	cause  error
+}
+
+func (e annotationOutputError) Error() string { return "invalid annotation output" }
+func (e annotationOutputError) Unwrap() error { return e.cause }
+
 func (e annotationResponseError) Error() string {
 	return fmt.Sprintf("annotation %s endpoint returned an invalid response", e.endpoint)
 }
@@ -154,8 +164,9 @@ func (v VisionJudge) Annotate(ctx context.Context, in AnnotationInput) (Annotati
 	}
 	result, err := ParseAnnotationJSON(text)
 	if err != nil {
-		return AnnotationResult{}, err
+		return AnnotationResult{}, annotationOutputError{output: text, cause: err}
 	}
+	result.rawOutput = text
 	return result, nil
 }
 

@@ -507,6 +507,10 @@ func runAnnotationRecord(ctx context.Context, judge AnnotationClient, input Anno
 	result, err := judge.Annotate(ctx, input)
 	if err != nil {
 		record := failedAnnotationRecord(input.Target, input.Category, annotationFailureCode(err))
+		var outputErr annotationOutputError
+		if errors.As(err, &outputErr) {
+			record.Diagnostic = &AnnotationDiagnostic{Stage: "parse", Reason: outputErr.cause.Error(), OutputText: outputErr.output}
+		}
 		if quality != nil {
 			record.Comparison = unavailableAnnotationComparison(quality.AssetID)
 		}
@@ -514,6 +518,7 @@ func runAnnotationRecord(ctx context.Context, judge AnnotationClient, input Anno
 	}
 	if err := validateAnnotationResultForInput(result, input); err != nil {
 		record := failedAnnotationRecord(input.Target, input.Category, "invalid_output")
+		record.Diagnostic = &AnnotationDiagnostic{Stage: "input_validation", Reason: err.Error(), OutputText: result.rawOutput}
 		if quality != nil {
 			record.Comparison = unavailableAnnotationComparison(quality.AssetID)
 		}
@@ -842,7 +847,8 @@ func annotationFailureCode(err error) string {
 		return "context_cancelled"
 	}
 	var responseErr annotationResponseError
-	if errors.As(err, &responseErr) {
+	var outputErr annotationOutputError
+	if errors.As(err, &responseErr) || errors.As(err, &outputErr) {
 		return "invalid_output"
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "json") || strings.Contains(strings.ToLower(err.Error()), "annotation status") {

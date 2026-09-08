@@ -45,4 +45,6 @@ just image-evals-annotate /tmp/productflow-reference-selection.json /tmp/product
 
 每次指定一个全新报告目录。输出 `report.json` 与 `report.md`，按类别、图种与候选分组保留分母、状态和分维度差值。未知、失败、不可比较和严重事实问题不会被解释为达标。报告保留模型、提示词、选择文件和图片指纹、代码版本与时间；不更新旧评测的 latest 指针，不覆盖原池或历史结果。
 
+模型文本的 JSON/结构校验或输入证据校验失败时，`report.json` 的记录保留 `diagnostic.stage`、`reason` 与 `output_text`。结构错误归为 `invalid_output`，不会误记成供应商故障；无效结果仍无评分且不可比较。诊断只保存成功响应中提取的模型文本，不保存 HTTP 错误体、请求头或凭据；不能恢复旧报告已丢失的原文。
+
 CLI 成功退出表示报告已写入。自动化读取报告的记录状态、覆盖率、关键问题和比较结论判断后续动作；不能把退出码 0 或 `complete` 标注状态当作图片质量通过。
