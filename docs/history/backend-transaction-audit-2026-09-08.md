@@ -48,7 +48,7 @@
 | Agent 统计可运行节点时需注入 Graph 依赖并编排三步内部查询 | Graph Service.CountRunnableNodesTx 拥有依赖和查询步骤，Agent 保留审批 Conflict 解释 | PostgreSQL 正常计数/跨商家/缺依赖/零运行写入；隔离基线 Agent 空图、确认与创建消费者通过 | `d26d71dd` |
 | 局部编辑调用前数据库读取故障被归为不可重试业务失败，队列收到 nil | Execute 区分输入错误、失效 attempt 和基础设施读取错误；ReadIO 保留 cause | 独立 PG 42P01 经 queue.Consume 返回、信封 pending、task claimed，恢复后执行成功；三类媒体 I/O 映射保留 cause | `5b6105a3` |
 | 局部编辑结果写入失败后使用非法 attempt phase，且原持久化原因被终态错误覆盖 | 复用合法 unknown phase；errors.Join 保留结果与终态错误，失效 attempt 停手 | 真实 PG 资产失败/终态同时失败两场景；恢复后额度待对账、重复信封 consumed、Provider 仅一次 | `6eb57645` |
-| 交付结果事务失败被 failed 终态的 nil 或第二个错误覆盖 | Execute 保留原结果错误并组合 failed 持久化错误，业务保持可重试 failed | PostgreSQL 双故障分支返回原因、零派生资产、信封 pending；Retry/过期恢复后重复执行只有一个结果资产 | 随本次提交 |
+| 交付结果事务失败被 failed 终态的 nil 或第二个错误覆盖 | Execute 保留原结果错误并组合 failed 持久化错误，业务保持可重试 failed | PostgreSQL 双故障分支返回原因、零派生资产、信封 pending；Retry/过期恢复后重复执行只有一个结果资产 | `6aa9dac5` |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -62,7 +62,7 @@
 | 连续生图 | `Execute → runGeneration → ensureEffect → Generate → saveCandidate → markEffect → finish*`；每次信封处理一个批次，已有 applied 批次跳过 Provider。 | billing sequence 绑定、部分候选已保存后的失败、effect 写失败及额度最终收口需继续审计；不能直接套用 node/attempt 的额度键规则。 |
 | 局部编辑 | 本轮覆盖 HTTP 创建/提交夹具、worker、task/attempt/asset/hold/账户、恢复与 queue.Consume。 | 未进行 SIGKILL 或真实 Provider 调用；进程崩溃按可持久化边界和实际恢复函数注入验证。 |
 | 交付 | 已有本地 Render、资产派生、attempt 条件写入和恢复；此次收口 worker 失败终态错误传播。 | 原图/媒体存储的各类真实 IO 故障、交付性能和全部采用流程未作本轮专项验收。 |
-| Agent 控制 | Node manager 持进程内调度，TurnRuntime 持 lease/checkpoint，工具经 Go effect reconciliation；checkpoint 写失败会中止执行。保留该分工。 | 已分别运行 Go 辅助进程 + PostgreSQL 的 SIGKILL 和 Node 实进程 + 本地服务替身的重启测试；Node → Go → PostgreSQL 联动 crash 矩阵仍未验收，替身不替代持久化证据。 |
+| Agent 控制 | Node manager 持进程内调度，TurnRuntime 持 lease/checkpoint，工具经 Go effect reconciliation；checkpoint 写失败会中止执行。保留该分工。 | 已分别验证 Go 辅助进程崩溃和 Node 替身服务重启；后续整包实际通过真实 Node → Go → PostgreSQL 的问题回答恢复（一/两个问题）。完整联动 crash 矩阵仍未验收，测试 Provider 不代表真实模型质量。 |
 
 ## 后续优先级
 
@@ -299,3 +299,24 @@ Execute 现在只将输入 Validation/NotFound 转为既有业务失败，其他
 最终真实数据库回归验证：只拒绝成功写入时 job failed/is_retryable，双终态写入失败时 job running；两者 queue.Consume 均返回原成功写入 ConstraintName，双失败还保留第二项原因，信封 pending，结果 ID 为空，零派生资产。去除本测试 job 的约束后，分别调用现有 Service.Retry 或 recoverDeliveryJobState，连续 Execute 两次均只得到一个派生资产与 succeeded。测试约束按 job ID 限定，成功或异常路径均清理；未修改开发数据库。
 
 最终 delivery 整包通过（7.339 秒），标准 go vet 通过；主代理完整 diff 自审、约束清理及持久化消费者检查通过，当前 docs-check 与空白检查通过。原图读取失败的底层原因转换、persist 中直接更新商品 updated_at 的归属仍是后续调查项，本次未扩大到其他任务占用的 product 文件。没有真实模型费用或共享运行进程变更。
+
+
+## 固定提交的五包组合验收
+
+本轮由主代理固定 `6aa9dac5`，验证近期查询边界、错误传播、状态与额度修改的组合行为，不混入管理后台和评价任务尚未提交的代码。开始时无相关包测试进程运行；使用既有 testdb 按包隔离数据库，串行执行 graph、agent、imagesession、localedit、delivery，`-count=1 -p 1 -timeout 180s -json`，不重启开发服务或开启真实模型门。
+
+| 包 | 最终包结果 | 时长 | pass 事件（含子例） | skip 事件 |
+|---|---|---|---|---|
+| graph | PASS | 92.035 秒 | 296 | 1 |
+| agent | PASS | 83.776 秒 | 355 | 8 |
+| imagesession | PASS | 46.175 秒 | 115 | 5 |
+| localedit | PASS | 9.395 秒 | 41 | 0 |
+| delivery | PASS | 7.534 秒 | 43 | 0 |
+
+首轮用 git archive 构造快照，Graph/连续生图/局部编辑/交付通过；Agent FAIL（107.090 秒）。原因是 harness attribution 需要 Git 元数据，而问题回答恢复会启动真实 Node，归档目录缺少 tsx 依赖。保留该环境失败，不修改测试或业务实现。后续本地 shared clone 检出同一提交，核对 package.json/pnpm-lock.yaml 与已安装依赖一致，以只读使用的 node_modules 符号链接复用依赖，Agent 整包重跑通过。最终 clone 无 tracked 修改，仅有本轮依赖链接；两处临时 checkout 和链接均清理。原始 JSON 输出留于 `/tmp/pf-backend-integrated-tests.jsonl` 与 `/tmp/pf-backend-integrated-agent-final.jsonl`，前者的 Agent FAIL 不被后者覆盖。
+
+默认门共记录 850 个 pass、14 个 skip 事件（包含父测试和子例，不能称为 850 个独立顶层测试）。Graph 跳过目标规模查询；Agent 跳过浏览器容量、journal 容量、SSE 容量、L2 live、外部 user-sim host、查询规模、HTTP 读取规模和独立 SIGKILL helper；imagesession 跳过活动集合规模、独立 checkpoint helper、HTTP/查询/SSE 规模。helper 在父场景中另行执行，独立 helper 的 skip 不等于父场景跳过；其余 opt-in 门没有通过声明。
+
+本轮实际运行 [问题回答联动恢复](../../go/internal/agent/question_resume_gopg_test.go) 两个场景（共 6.590 秒）：真实 Node Agent 经真实 Go HTTP 服务与 PostgreSQL，在一个或两个问题的 waiting_input 后终止 Node；回答写入 PG 后 HTTP 返回服务暂不可用，重启同 data root 后恢复新 attempt、提交成功终态，并核对本地测试 Provider 请求里的每个 function_call_output 对应正确 call_id 与回答。该证据支持这一具体 Node/Go/PG 链路，不再将全部联动恢复统称为未运行；尚未证明完整故障时点矩阵或真实 Provider 对账。
+
+五包 go vet -stdversion=false 通过；标准版本分析的既有缺口仍保留。本轮不改变业务代码。主代理检查测试结果、跳过项、独立 checkout 状态与清理，当前 docs-check 和文档 diff 自审通过。该组合门不是整个 Go 仓库、Node 默认整包、容量或真实模型质量门，仍未完成总目标。
