@@ -173,4 +173,4 @@ root 已确认 runtime wire 的 document_action 空值语义，准许 capacity_b
 
 空 action 观察修复已完成 root 自审：仅两个 run 工具实际 null 归一化为空串，其它比较不变；13 项 grader 回归、TypeScript 检查及生成契约检查通过。离线 v2 直接导入固定 f9 旧 grader 和当前 grader，对同一 225 条持久化调用执行，write 失败 54→20，34 条差异均为该空值边界；原 161/225 不覆盖，不外推新能力通过率。v2 报告 `storage-dev/eval-development-0909-r8/agent-evals/evidence/r8-offline-grader-diagnostic-v2.json` 绑定 raw tree hash 50a8fd58d7534ecc432ff23d9d5309dc24468c7d5186e0cc2879c277c4c1177f 与两版 grader hash。哨兵模拟 v1 只保留作历史，不作为审核依据。
 
-本次提交冻结必要的观察器修复；本单仍未取得正式完整开发包，不立即开启下一批模型采样。归档选择故障已定位为评测把页面管理选择误装成附件，由独立任务 `agent-archived-asset-selection`处理，生产权限不放宽。后续固定运行须在启动前核对真实 Git provenance 和完整初始化合同。
+本次提交冻结必要的观察器修复；本单仍未取得正式完整开发包，不立即开启下一批模型采样。归档选择故障已定位为评测把页面管理选择误装成附件，已由[输入装配修复](archive/agent-archived-asset-selection.md)处理，生产权限不放宽。后续固定运行须在启动前核对真实 Git provenance 和完整初始化合同。

@@ -306,7 +306,7 @@ async function runSimTrial(
           lookup: { conversationID },
           input: {
             input_text: utterance,
-            asset_ids: task.page_context.selected_asset_ids,
+            asset_ids: task.scope === "global" ? [] : task.page_context.selected_asset_ids,
             idempotency_key: `eval-sim-${task.id}-${trial}-${turns}`,
             page_context: overlayEvalPageContext(task, world),
           },

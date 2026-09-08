@@ -96,6 +96,36 @@ describe("independent model user", () => {
     }
   });
 
+  it("keeps global page selection in context while preserving product attachments", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-model-user-assets-test-"));
+    try {
+      vi.stubEnv("STORAGE_ROOT", root);
+      vi.stubEnv("PRODUCTFLOW_RUN_AGENT_EVALS", "1");
+      vi.stubEnv("AGENT_PROVIDER_API_KEY", "fake-key");
+      vi.stubEnv("AGENT_PROVIDER_KIND", "openai");
+
+      const globalStart = vi.spyOn(PiRuntimeManager.prototype, "start").mockResolvedValue(state("queued"));
+      const globalGetState = vi.spyOn(TurnStore.prototype, "getState").mockResolvedValue(state("awaiting_confirmation"));
+      const globalResult = await runUserSimEvals({ filter: "media-library-organization-sim-draft-confirm" });
+      const globalInput = globalStart.mock.calls[0]![0].input;
+      expect(globalInput.asset_ids).toEqual([]);
+      expect(globalInput.page_context?.selected_asset_ids).toEqual(["11111111-1111-4111-8111-111111111111"]);
+      const globalRow = JSON.parse((await readFile(join(globalResult.runDir, "trials.jsonl"), "utf8")).trim());
+      expect(globalRow.terminal).toBe("awaiting_confirmation");
+
+      globalStart.mockRestore();
+      globalGetState.mockRestore();
+      const productStart = vi.spyOn(PiRuntimeManager.prototype, "start").mockResolvedValue(state("queued"));
+      vi.spyOn(TurnStore.prototype, "getState").mockResolvedValue(state("succeeded"));
+      await runUserSimEvals({ filter: "product-intake-sim-two-round-clarify" });
+      const productInput = productStart.mock.calls[0]![0].input;
+      expect(productInput.asset_ids).toEqual(["11111111-1111-4111-8111-111111111111"]);
+      expect(productInput.page_context?.selected_asset_ids).toEqual(["11111111-1111-4111-8111-111111111111"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps earlier-turn local tools in the live runner's grade and transcript", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-model-user-tools-test-"));
     try {
