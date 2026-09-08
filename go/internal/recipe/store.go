@@ -96,17 +96,23 @@ func versionFromSchema(rec schema.WorkflowRecipeVersions) versionRecord {
 	return ver
 }
 
-func getProductTarget(ctx context.Context, tx *gorm.DB, productID string, forUpdate bool) (productTarget, error) {
-	q := auth.ScopeMerchant(ctx, tx.WithContext(ctx).Select("id, current_fact_set_version_id").Where("id = ?", productID), "merchant_id")
-	if forUpdate {
-		q = q.Clauses(pfdb.ForUpdate())
+func (s Service) getProductTarget(ctx context.Context, db *gorm.DB, productID string, forUpdate bool) (productTarget, error) {
+	if s.Products == nil {
+		return productTarget{}, apperr.Internal("配方缺少商品守卫")
 	}
-	var rec schema.Products
-	err := q.Take(&rec).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if forUpdate {
+		if err := s.Products.Lock(ctx, db, productID); err != nil {
+			return productTarget{}, err
+		}
+	}
+	source, err := s.Products.LoadSource(ctx, db, productID)
+	if err != nil {
+		return productTarget{}, err
+	}
+	if source == nil {
 		return productTarget{}, auth.NotFoundCrossMerchant()
 	}
-	return productTarget{ID: rec.ID, FactSetVersionID: rec.CurrentFactSetVersionID}, err
+	return productTarget{ID: source.ID, FactSetVersionID: source.CurrentFactSetID}, nil
 }
 
 func visualSystemVersionExists(ctx context.Context, tx *gorm.DB, id string) error {

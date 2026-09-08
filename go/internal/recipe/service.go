@@ -124,7 +124,7 @@ func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error)
 	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if _, err := getProductTarget(ctx, pgxTx, in.ProductID, false); err != nil {
+		if _, err := s.getProductTarget(ctx, pgxTx, in.ProductID, false); err != nil {
 			return err
 		}
 		payload, err := extractLive(ctx, pgxTx, in)
@@ -195,7 +195,7 @@ func (s Service) Append(ctx context.Context, in AppendInput) (RecipeView, error)
 	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if _, err := getProductTarget(ctx, pgxTx, in.ProductID, false); err != nil {
+		if _, err := s.getProductTarget(ctx, pgxTx, in.ProductID, false); err != nil {
 			return err
 		}
 		rec, err := loadRecipe(ctx, pgxTx, in.RecipeID, true)
@@ -302,7 +302,7 @@ func (s Service) Preview(ctx context.Context, productID, recipeID string, expect
 	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out Preview
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		target, err := getProductTarget(ctx, pgxTx, productID, false)
+		target, err := s.getProductTarget(ctx, pgxTx, productID, false)
 		if err != nil {
 			return err
 		}
@@ -358,7 +358,7 @@ func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, e
 	}
 	var out ApplicationResult
 	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		target, err := getProductTarget(ctx, pgxTx, in.ProductID, true)
+		target, err := s.getProductTarget(ctx, pgxTx, in.ProductID, true)
 		if err != nil {
 			return err
 		}

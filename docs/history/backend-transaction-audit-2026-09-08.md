@@ -53,7 +53,8 @@
 | 额度账户/预留/事件写入错误被替换为通用 Internal，调用者无法获取数据库原因 | quota 服务用 errors.Join 保留原应用错误与数据库错误，不改余额和 HTTP 合同 | 13 个 PG 写入故障回滚与 HTTP 隔离场景；局部编辑原始 SQLSTATE 透传恢复回归通过 | 7a14ac06 |
 | 同商家首次并发建账，唯一键冲突后在失败事务内重读，导致一个调用失败 | quota 以指定 merchant_id 的冲突忽略保持事务有效，仅插入者发试用额度 | PG 双事务固定缺行时序，两个调用成功且仅一笔试用额度事件；额度整包通过 | 5aad0c66 |
 | 额度事件插入唯一键错误被吞没，事务提交只返回笼统回滚错误 | appendEvent 统一返回数据库原因；重放仍由原账户锁及业务状态负责 | PG 唯一约束故障保留 23505 与约束名，余额/hold/事件整体回滚；额度整包通过 | 4ba18e26 |
-| Reserve 同键同金额、异价格版本仍返回旧 hold 成功 | 原账户锁内同时校验已存金额与版本，版本冲突返回 409 | PG 四种 hold 生命周期复现并修复；同版本重放及账本不变通过 | 随本次提交 |
+| Reserve 同键同金额、异价格版本仍返回旧 hold 成功 | 原账户锁内同时校验已存金额与版本，版本冲突返回 409 | PG 四种 hold 生命周期复现并修复；同版本重放及账本不变通过 | 87131c34 |
+| 配方已有商品依赖，却另行查询/锁定 products 并复制归属范围 | 四个用例通过既有 Products.Lock/LoadSource 取得商品身份与事实版本 | recipe 整包商家隔离、应用和回放通过；第二连接锁竞争与回滚释放、商品配方创建消费者通过 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -387,3 +388,14 @@ persist 现在直接调用并返回 product.Touch，不再在执行文件中写 
 修复在原账户锁下返回已有 hold 之前比较持久化版本与规范化后的请求版本，不一致返回已有 apperr.Conflict。金额冲突原合同保持；空字符串仍归一到默认版本。调用者不负责读取 hold 内部字段或自行校验原请求，不新增存储/API。没有改成按版本生成不同幂等键，以免将同一请求变成新的扣费操作。
 
 最终 quota 整包通过（4.527 秒），标准 go vet 通过。四场景均验证异版本 409、原版本带首尾空格的重放成功、原 hold ID/版本保持、账户余额和事件数量不变、总 hold 严格一条。测试只使用包测试数据库的正常建账与状态 API；没有改写 hold 状态或使用真实 Provider。主代理复核五个生产 Reserve 调用者及完整切片 diff；本次局部合同证据不代表动态定价或全部入口展示/计价已交付。
+
+
+## 配方商品访问归入既有 ProductGuard
+
+主代理沿 Graph context 外部装配继续核对，确认 recipe.Service 已持有 Products，却在 getProductTarget 独立查询 products 的 id/current_fact_set_version_id、ScopeMerchant 和 FOR UPDATE。没有复现新的越权写入；这是已证实的规则重复与内部表耦合。本切片由主代理独占 recipe/service.go、store.go、新增 product_dependency_test.go 与本记录，未修改 dashboard 正在调查的 product 文件或偏好任务的 schema。
+
+Create、Append、Preview、Apply 改为通过实例方法消费现有 Products。读路径用 LoadSource，nil 按既有跨商家 NotFound 返回；Apply 先使用 Lock，再从同一 GORM 事务读取来源。无依赖显式返回 Internal，调用者配置中的 Products 不再只服务于 Graph context。商品身份、merchant scope、行锁及当前事实字段的 SQL 留在 product.GraphGuard；recipe 只映射已有 SourceProduct 字段。没有新增接口或表。锁定路径增加一次摘要读取，这是复用当前分开的 Lock/LoadSource 合同的代价，未据此扩展新接口。
+
+真实 PG 依赖回归通过包装并实际调用 product.GraphGuard 观察服务边界，Preview 不锁、Apply 锁定并读取。LoadSource 阶段另一连接使用 FOR UPDATE NOWAIT 得到 55P03，证明原组合事务仍持有商品锁；后续缺配方使 Apply 回滚，另一连接随即可锁。测试并不模拟锁结果。recipe 整包通过（3.025 秒），包含实际 HTTP 正常提取/预览/应用/回放及跨商家 404/零写入；标准 go vet 通过。product 的 TestRecipeCreation 组合通过（1.564 秒），覆盖配方创建、并发确认、HTTP 和提交失败文件回滚。未运行或声称 product 整包。
+
+完整自审及非测试扫描确认 recipe 不再引用 schema.Products、FROM products 或 current_fact_set_version_id。Graph 的 WithProductGuard 仍由 product/recipe 与自身 Service/Executor/recovery 装配；本次没有删除该隐式依赖，也没有把配方边界收敛当作 Graph context 迁移完成。后续对其整体迁移需要同时协调 product 的外部调用者。另发现 preferredVisualFromLive 将视觉版本查询的全部错误按缺失处理，仍待独立数据库故障验证，本次不顺带改变配方视觉继承语义。
