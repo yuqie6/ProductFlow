@@ -50,7 +50,8 @@
 | 局部编辑结果写入失败后使用非法 attempt phase，且原持久化原因被终态错误覆盖 | 复用合法 unknown phase；errors.Join 保留结果与终态错误，失效 attempt 停手 | 真实 PG 资产失败/终态同时失败两场景；恢复后额度待对账、重复信封 consumed、Provider 仅一次 | `6eb57645` |
 | 交付结果事务失败被 failed 终态的 nil 或第二个错误覆盖 | Execute 保留原结果错误并组合 failed 持久化错误，业务保持可重试 failed | PostgreSQL 双故障分支返回原因、零派生资产、信封 pending；Retry/过期恢复后重复执行只有一个结果资产 | `6aa9dac5` |
 | 交付自行更新商品排序时间且忽略语句错误，最终只见事务提交回滚提示 | 复用 product.Touch，商品模块维护写表细节，交付直接返回错误 | 真实 PG 原实现丢失 ConstraintName；修复后原因保留、结果事务回滚，Retry 后时间推进 | `9510a457` |
-| 额度账户/预留/事件写入错误被替换为通用 Internal，调用者无法获取数据库原因 | quota 服务用 errors.Join 保留原应用错误与数据库错误，不改余额和 HTTP 合同 | 13 个 PG 写入故障回滚与 HTTP 隔离场景；局部编辑原始 SQLSTATE 透传恢复回归通过 | 随本次提交 |
+| 额度账户/预留/事件写入错误被替换为通用 Internal，调用者无法获取数据库原因 | quota 服务用 errors.Join 保留原应用错误与数据库错误，不改余额和 HTTP 合同 | 13 个 PG 写入故障回滚与 HTTP 隔离场景；局部编辑原始 SQLSTATE 透传恢复回归通过 | 7a14ac06 |
+| 同商家首次并发建账，唯一键冲突后在失败事务内重读，导致一个调用失败 | quota 以指定 merchant_id 的冲突忽略保持事务有效，仅插入者发试用额度 | PG 双事务固定缺行时序，两个调用成功且仅一笔试用额度事件；额度整包通过 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -353,3 +354,12 @@ persist 现在直接调用并返回 product.Touch，不再在执行文件中写 
 最终回归增加 Adjust 的两个写入边界，共 13 个场景。每例按自身商家安装 NOT VALID 约束，验证 errors.As 取得 23514 与原 ConstraintName，同时仍能取得应用 500；经真实 httpx.AbortErr 输出原 Detail，不包含约束名或 SQLSTATE。余额、事件数量不变，已有 hold 保持 reserved、新预留失败不留行。约束在每例 cleanup 清除，测试使用 quota 包数据库，不改开发库。
 
 最终 quota 整包通过（4.366 秒）；局部编辑、Graph、连续生图相关消费者组合分别通过（0.911 / 5.182 / 6.447 秒）。局部编辑准备失败现在明确要求原 SQLSTATE 与约束名，并继续验证零调用、过期恢复和新 attempt 结算。没有把该组合计为三个消费者整包；imagesession 的另一个计费取消红色复现尚未修复。quota/localedit 标准 go vet 通过，主代理自审完整任务 diff 和错误消费者，当前 docs-check 与本切片空白检查通过。共享 Web 修改中的空白问题不纳入本切片修复或提交。
+
+
+## 首次并发建账的事务恢复
+
+本切片由主代理独占 quota/service.go、新增 account_concurrency_test.go 与本历史记录。偏好任务仍持有 auth/preferences/schema，未进入其范围；共享 Agent eval 正在运行，未占用或重启其资源。现有 EnsureAccount、Adjust、Reserve 均通过 ensureAndLockAccount 维护账户初始化，没有要求各生成调用者自行防重。
+
+回归使用真实 quota 测试数据库，在两个事务的首次缺行查询后设置测试回调屏障，确保两者都读到不存在后再插入。旧实现实测一个调用返回“锁定额度账户失败”（0.733 秒整组）：创建的唯一键错误被捕获后继续在原事务查询。PostgreSQL 唯一键错误会使该事务失效，重读不能恢复事务。修复在 INSERT 上仅对 merchant_id 使用 ON CONFLICT DO NOTHING；未插入者继续 FOR UPDATE 读取胜出账户，实际插入者才写试用事件。其他创建错误保留应用错误与原数据库原因，没有全事务自动重试或调用者兜底。
+
+验收验证两个调用均成功，账户 available=75、reserved=0，试用种子事件严格一笔且金额为 75。测试回调只固定时序，数据库查询、冲突与提交均实际执行；结束移除回调。额度整包通过（4.430 秒），包括已有并发预留、同键幂等及余额限制回归；标准 go vet 通过。完整自审覆盖新增文件与服务 diff。未改 schema、公共接口或 Provider；连续生图计费身份的未提交红色回归仍待 schema 所有权释放，不能据额度整包通过宣称它已修复。

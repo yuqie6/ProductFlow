@@ -29,6 +29,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -698,10 +699,13 @@ func ensureAndLockAccount(gdb *gorm.DB, merchantID string, trialUnits int64) (sc
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
-	if err := gdb.Create(&acct).Error; err != nil {
-		if !isUniqueViolation(err) {
-			return schema.MerchantQuotaAccounts{}, apperr.Internal("创建额度账户失败")
-		}
+	created := gdb.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "merchant_id"}}, DoNothing: true,
+	}).Create(&acct)
+	if created.Error != nil {
+		return schema.MerchantQuotaAccounts{}, errors.Join(apperr.Internal("创建额度账户失败"), created.Error)
+	}
+	if created.RowsAffected == 0 {
 		return lockAccount(gdb, merchantID)
 	}
 	if trialUnits > 0 {
