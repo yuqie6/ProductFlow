@@ -39,7 +39,7 @@ func merchantIDForProduct(ctx context.Context, db *gorm.DB, productID string) (s
 	err := db.WithContext(ctx).Model(&schema.Products{}).
 		Select("merchant_id").Where("id = ?", productID).Scan(&merchantID).Error
 	if err != nil {
-		return "", apperr.Internal("读取商品商家失败")
+		return "", errors.Join(apperr.Internal("读取商品商家失败"), err)
 	}
 	merchantID = strings.TrimSpace(merchantID)
 	if merchantID == "" {

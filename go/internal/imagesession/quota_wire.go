@@ -100,7 +100,7 @@ func sessionMerchantID(ctx context.Context, db *gorm.DB, sessionID string) (stri
 	err := db.WithContext(ctx).Model(&schema.ImageSessions{}).
 		Select("merchant_id").Where("id = ?", sessionID).Scan(&merchantID).Error
 	if err != nil {
-		return "", apperr.Internal("读取会话商家失败")
+		return "", errors.Join(apperr.Internal("读取会话商家失败"), err)
 	}
 	merchantID = strings.TrimSpace(merchantID)
 	if merchantID == "" {

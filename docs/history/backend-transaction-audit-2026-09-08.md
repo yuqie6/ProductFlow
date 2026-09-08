@@ -59,7 +59,8 @@
 | 局部编辑已调用 Provider，但 unknown/调用后取消/恢复仍忽略缺失预留 | 三个入口共用必须找到原 hold 的 markEditQuotaUnknown；缺失只允许调用前 Release | PG 隐藏原键复现终态错误成功；修复后拒绝收口，恢复原键后待核账且零重调 | 0ea5fff4 |
 | 连续生图新重试预留被旧 effect 误判为已调用，取消错误保留额度 | task/effect 持久化 billing_seq，按准确当前键与当前轮次 effect 收口 | 正常两次手动重试三种终态、迁移、回滚、整包验证通过；未运行开发库迁移 | 6444b51a |
 | 连续生图 unknown/取消在准确计费键缺失时仍提交终态 | 删除缺失预留兜底，MarkUnknown/Release 错误原样回滚 | 初始/手动重试四个红色场景修复；八种终态组合、恢复原键与整包通过 | `5636f688` |
-| Graph 付费调用缺预留仍提交 unknown，通用 effect 又不能直接区分非付费调用 | effect 保存可空 quota_key，准备与预留同事务；未知、取消、恢复复用准确额度身份 | 真实调用故障复现与回滚、非付费文稿/合成、迁移及 Graph 整包通过 | 随本次提交 |
+| Graph 付费调用缺预留仍提交 unknown，通用 effect 又不能直接区分非付费调用 | effect 保存可空 quota_key，准备与预留同事务；未知、取消、恢复复用准确额度身份 | 真实调用故障复现与回滚、非付费文稿/合成、迁移及 Graph 整包通过 | `1dedc721` |
+| Graph/连续生图/局部编辑的商家归属读取丢失数据库及取消原因 | 各既有查询保留 apperr 文案并 Join 原错误，不增加共享查询或第二份规则 | 三个真实数据库读取故障和取消回归；Graph 终态事务回滚及恢复 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -492,3 +493,16 @@ activeQuotaKey 删除 LIKE 前缀与 created_at DESC，查询准确 generationQu
 独立 PostgreSQL 包数据库的最终 Graph 整包 PASS 95.368 秒；新增回滚断言及迁移、非付费合成、恢复组合随后 PASS 4.896 秒。迁移回归在一次性真实数据库删除新列、schema.Apply 创建空列，再写准确键并重复 Apply 验证不覆盖；它只证明 schema 创建与幂等，不证明旧付费数据身份重建。go vet -stdversion=false PASS；标准 vet 的既有 Go 版本声明问题仍未解决。首轮及最终日志保留 /tmp/pf-graph-quota-identity.log 与 /tmp/pf-graph-quota-identity-final.log。完整 diff 与新增迁移文件已自审，旧通用 finalizer 名称无残留，保留的 releaseQuotaIgnoreMissing 只服务 Release 的调用准备前缺预留情形；未宣称全部 Release 入口审计完成。
 
 两个本轮独立验证数据库已删除。共享开发库只读确认 quota_key 尚不存在，查询当时带 reserved/pending_reconciliation 图像预留的 queued/running Graph 节点为 0；没有执行开发或生产迁移。历史 effect 新列为 NULL 不能证明其原调用不收费，应用迁移前必须核实并收口旧活动付费执行。本切片没有历史回填或兼容读取路径，没有真实模型费用。Graph context 依赖与更广的节点职责收敛仍是后续工作。
+
+
+## 商家归属读取保留数据库与取消原因
+
+本轮主代理独占 graph/localedit/imagesession 的 quota_wire.go、各自新增 merchant_lookup_error_test.go 与本记录。其他任务仍占 product 聚合读模型、Web 与 Agent eval，共享 API/worker/dispatcher/Agent 服务保持运行；本轮没有使用其运行数据。
+
+重新追踪 Graph Release 的全部生产调用：failClaimedNode 在 provider boundary 前释放；failGraphRun 在边界后转入 markNodeUnknown；恢复在 nodeSafeToRequeue 分支释放；取消有 effect 时走未知收口。没有证据要求删除调用前缺预留的容忍，保留原机制。继续沿额度归属读取发现 Graph merchantIDForGraphRun、局部编辑 merchantIDForProduct、连续生图 sessionMerchantID 将任意查询错误替换为固定 Internal，原始原因不可追踪。
+
+三个一次性真实 PostgreSQL 数据库分别重命名被读表，原代码三个回归都丢失 42P01；恢复表后使用已取消 context，也都丢失 context.Canceled。首轮 Graph/localedit/imagesession 分别 FAIL 6.025/2.015/1.950 秒。修复只在三处保留原 apperr 并 errors.Join 原因；没有改变商家身份、HTTP 状态及文案、数据归属策略或事务入口。现有 httpx.AbortErr 使用 errors.As 读取公开错误字段，不把 Joined 原因写入响应。
+
+补充 Graph 实际 failClaimedNode：节点更新后读取商家失败，原 42P01 可提取，运行和节点仍 running、active attempt 保持；恢复表后再次失败收口进入 failed。故障表只存在于一次性测试库，清理由 IsolatedMigrated 负责。针对性三个包 PASS 3.036/1.783/1.983 秒；所有新增测试都实际访问数据库，没有跳过。
+
+当前 checkout 三包顺序整包最终全部通过：Graph 103.697 秒、localedit 9.681 秒、imagesession 61.649 秒，日志 /tmp/pf-merchant-read-cause-suite.log。Graph go vet -stdversion=false、另两包标准 go vet 与 just docs-check 通过；没有宣称修复 Graph 的既有标准 vet 版本声明问题。自审三处生产修改与三个新增测试文件，未修改平台错误/HTTP 公共实现或其他任务文件；本次没有迁移、真实 Provider 调用或新增重试。Graph context 的显式依赖迁移、额度内部读取/锁错误与其余节点职责审计仍未完成。

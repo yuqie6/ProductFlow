@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -83,7 +84,7 @@ func merchantIDForGraphRun(ctx context.Context, db *gorm.DB, runID string) (stri
 		JOIN products p ON p.id = g.product_id
 		WHERE r.id = ?`, runID).Scan(&merchantID).Error
 	if err != nil {
-		return "", apperr.Internal("读取运行商家失败")
+		return "", errors.Join(apperr.Internal("读取运行商家失败"), err)
 	}
 	merchantID = strings.TrimSpace(merchantID)
 	if merchantID == "" {
