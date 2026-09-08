@@ -158,7 +158,7 @@ Agent pending Turn 补投递与 worker 的 `turnNeedsSync` 对齐：仅未绑定
 
 迟到的 Agent sync 信封在 worker 入口按同一 `turnNeedsSync` 判断，已终态、停等或 resume_required 的未绑定 Turn 不调用 StartTurn；`bindGatewayTurn` 重读后也复核资格，覆盖首次 worker 读取后状态改变及提交路径的直接绑定。已可证明无需同步的信封正常消费，不通过 ErrLater 重排队。最后一次读取与远端请求之间不持数据库锁，终态执行权仍由 `ClaimExecution` 的 projection 锁和状态校验约束。回归：`go/internal/agent/sync_start_guard_test.go`。
 
-Graph 运行状态由 Graph 维护，Agent 的 `SyncGraphRunToTasks` 在同一投影事务内更新确认单与关联 Task。运行结果未知时确认单保存 `unknown`、原因与结束时间；商品 Goal 保持 `waiting_user / goal_loop`，全局 Task 使用既有 `unknown` 终态，用户已完成、取消或暂停的状态不覆盖。Task 投影只接受其最新确认单（created_at DESC, id DESC）关联的运行，在 Task 行锁后核对身份；旧运行仍更新自己的确认单。Task 读取同步也选择最新确认单，待确认请求不会被更早的运行覆盖。Graph worker 的投影事务失败返回队列，已终态信封重投只补同步；无法证明的外部调用不因此重试。Web 确认卡直接使用确认单的未知状态，停止终态轮询。新增确认单枚举值须经 `just go-migrate` 提交后启用新版 API/worker。实现与回归：`go/internal/agent/task_graph.go`、`graph_unknown_projection_test.go`、`go/internal/graph/status_projection_recovery_test.go`。
+Graph 运行状态由 Graph 维护，Agent 的 `SyncGraphRunToTasks` 在同一投影事务内更新确认单与关联 Task；按请求 ID 顺序锁定 Agent 确认单后读取 Graph 状态，防止旧 running 快照覆盖已同步终态，不对 Graph 源行反向取锁。运行结果未知时确认单保存 `unknown`、原因与结束时间；商品 Goal 保持 `waiting_user / goal_loop`，全局 Task 使用既有 `unknown` 终态，用户已完成、取消或暂停的状态不覆盖。Task 投影只接受其最新确认单（created_at DESC, id DESC）关联的运行，在 Task 行锁后核对身份；旧运行仍更新自己的确认单。Task 读取同步也选择最新确认单，待确认请求不会被更早的运行覆盖。Graph worker 的投影事务失败返回队列，已终态信封重投只补同步；无法证明的外部调用不因此重试。Web 确认卡直接使用确认单的未知状态，停止终态轮询。新增确认单枚举值须经 `just go-migrate` 提交后启用新版 API/worker。实现与回归：`go/internal/agent/task_graph.go`、`graph_unknown_projection_test.go`、`go/internal/graph/status_projection_recovery_test.go`。
 
 ## 5. 商品 intake 与已移除的 WorkflowDraft 拓扑
 

@@ -24,20 +24,30 @@ func SyncGraphRunToTasks(ctx context.Context, pgxTx *gorm.DB, runID string) erro
 	if runID == "" {
 		return nil
 	}
-	var run schema.WorkflowGraphRuns
-	err := pgxTx.Select("status, failure_reason, finished_at").Where("id = ?", runID).Take(&run).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
 	var refs []schema.AgentWorkflowRunRequests
-	if err := pgxTx.Select("id, task_id, conversation_id").Where("graph_run_id = ?", runID).Find(&refs).Error; err != nil {
+	if err := pgxTx.WithContext(ctx).Select("id").Where("graph_run_id = ?", runID).Order("id").Find(&refs).Error; err != nil {
 		return err
 	}
-	now := time.Now().UTC()
 	for _, ref := range refs {
+		// 同一确认单的同步先串行化，再读取 Graph 状态。Graph 取消已持 run 锁，
+		// 此处只锁 Agent 自己的请求行，避免 request -> run 的反向取锁。
+		err := pgxTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id, task_id").
+			Where("id = ? AND graph_run_id = ?", ref.ID, runID).Take(&ref).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var run schema.WorkflowGraphRuns
+		err = pgxTx.WithContext(ctx).Select("status, failure_reason, finished_at").Where("id = ?", runID).Take(&run).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		now := time.Now().UTC()
 		if err := syncRequestRowFromRun(ctx, pgxTx, ref.ID, run.Status, run.FailureReason, run.FinishedAt, now); err != nil {
 			return err
 		}
