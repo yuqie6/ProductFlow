@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/png"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -51,7 +52,7 @@ type evalListedWorkflowRun struct {
 }
 
 func TestEvalWorldsSeedFourKinds(t *testing.T) {
-	as := newAgentServer(t, mockGateway{}, "tok")
+	as := newEvalHostServer(t)
 	root := DefaultEvalRoot()
 	worlds, err := LoadEvalWorlds(root)
 	if err != nil {
@@ -85,6 +86,9 @@ func TestEvalWorldsSeedFourKinds(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if live.Title != world.LiveGraph.Title || live.Revision != world.LiveGraph.Revision {
+			t.Fatalf("%s graph = (%q, %d), want (%q, %d)", name, live.Title, live.Revision, world.LiveGraph.Title, world.LiveGraph.Revision)
+		}
 		if name == "name-only-empty-intake" && len(live.Nodes) < 1 {
 			t.Fatalf("name-only nodes %d", len(live.Nodes))
 		}
@@ -93,6 +97,15 @@ func TestEvalWorldsSeedFourKinds(t *testing.T) {
 		}
 		if name == "expanded-failed-run" && seeded.FailedRunID == "" {
 			t.Fatal("failed run missing")
+		}
+		if world.Intake != nil && string(world.Intake) != "null" && len(world.Intake) > 0 {
+			observed, err := as.svc.ProductContext(context.Background(), seeded.ConvID, "detailed")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(evalJSONMap(t, observed["intake"]), evalJSONMap(t, world.Intake)) {
+				t.Fatalf("%s intake readback = %#v, want %#v", name, observed["intake"], evalJSONMap(t, world.Intake))
+			}
 		}
 	}
 }
@@ -153,6 +166,9 @@ func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld
 	}
 	if needsExpandedGraph(world) {
 		expandEvalGraph(t, as, world, &out)
+	}
+	if _, err := as.pool.Exec(context.Background(), `UPDATE workflow_graphs SET title=$2, revision=$3 WHERE id=$1`, out.GraphID, world.LiveGraph.Title, world.LiveGraph.Revision); err != nil {
+		t.Fatal(err)
 	}
 	if strings.TrimSpace(world.PendingProposalID) != "" {
 		seedEvalPendingProposal(t, as, ctx, world, &out)
@@ -522,8 +538,16 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 				seeded.NodeIDs["source-1"] = node.ID
 			}
 		}
+		if world.Intake != nil && string(world.Intake) != "null" && len(world.Intake) > 0 {
+			if _, err := as.pool.Exec(context.Background(), `UPDATE products SET intake_json = $2, intake_schema_version = 1, updated_at = NOW() WHERE id = $1`, seeded.ProductID, world.Intake); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if needsExpandedGraph(world) {
 			expandEvalGraph(t, as, world, seeded)
+		}
+		if _, err := as.pool.Exec(context.Background(), `UPDATE workflow_graphs SET title=$2, revision=$3 WHERE id=$1`, seeded.GraphID, world.LiveGraph.Title, world.LiveGraph.Revision); err != nil {
+			t.Fatal(err)
 		}
 		observed, err := as.svc.GlobalWorkflowContext(ctx, seeded.ConvID, seeded.ProductID, "concise")
 		if err != nil {
@@ -531,9 +555,6 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 		}
 		if observedGraphID, ok := observed["live_graph"].(map[string]any)["id"].(string); ok && observedGraphID != seeded.GraphID {
 			t.Fatalf("global graph id %s != seeded %s", observedGraphID, seeded.GraphID)
-		}
-		if _, err := as.pool.Exec(context.Background(), `UPDATE workflow_graphs SET title=$2, revision=$3 WHERE id=$1`, seeded.GraphID, world.LiveGraph.Title, world.LiveGraph.Revision); err != nil {
-			t.Fatal(err)
 		}
 		groups := parseEvalListedWorkflowGroups(t, world)
 		materializeEvalWorkflowGroups(t, as, ctx, groups, seeded)
@@ -973,7 +994,7 @@ func TestEvalStateGraderSeesRename(t *testing.T) {
 }
 
 func TestEvalRunFixturesKeepLiveRevision(t *testing.T) {
-	as := newAgentServer(t, mockGateway{}, "tok")
+	as := newEvalHostServer(t)
 	worlds, err := LoadEvalWorlds(DefaultEvalRoot())
 	if err != nil {
 		t.Fatal(err)
@@ -1002,8 +1023,24 @@ func TestEvalRunFixturesKeepLiveRevision(t *testing.T) {
 			if err := as.pool.QueryRow(ctx, "SELECT graph_revision FROM workflow_graph_runs WHERE id=$1", runID).Scan(&revision); err != nil {
 				t.Fatal(err)
 			}
-			if revision != live.Revision {
-				t.Fatalf("run revision %d != live revision %d", revision, live.Revision)
+			if live.Title != worlds[name].LiveGraph.Title || live.Revision != worlds[name].LiveGraph.Revision {
+				t.Fatalf("graph = (%q, %d), want (%q, %d)", live.Title, live.Revision, worlds[name].LiveGraph.Title, worlds[name].LiveGraph.Revision)
+			}
+			if revision != live.Revision || revision != worlds[name].LiveGraph.Revision {
+				t.Fatalf("run revision %d != live/frozen revision %d/%d", revision, live.Revision, worlds[name].LiveGraph.Revision)
+			}
+			if scope == "global" {
+				observed, err := as.svc.GlobalWorkflowContext(ctx, seeded.ConvID, seeded.ProductID, "concise")
+				if err != nil {
+					t.Fatal(err)
+				}
+				liveSummary, ok := observed["live_graph"].(map[string]any)
+				if !ok || liveSummary["title"] != worlds[name].LiveGraph.Title || liveSummary["revision"] != worlds[name].LiveGraph.Revision {
+					t.Fatalf("global context graph = %#v, want title/revision (%q, %d)", observed["live_graph"], worlds[name].LiveGraph.Title, worlds[name].LiveGraph.Revision)
+				}
+				if !reflect.DeepEqual(evalJSONMap(t, observed["intake"]), evalJSONMap(t, worlds[name].Intake)) {
+					t.Fatalf("global context intake = %#v, want %#v", observed["intake"], evalJSONMap(t, worlds[name].Intake))
+				}
 			}
 		})
 	}

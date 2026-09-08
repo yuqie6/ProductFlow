@@ -184,3 +184,15 @@ capacity_baseline 获准修改当前开发树 `go/internal/agent/evalworld_test.
 共享 pending proposal seed 修复已通过主代理逐文件审核：读取既有 PendingProposalID，经现有 ProposeGraphTool 物化真实提案，维护 fixture/实际 ID 双向映射；删除 discard 覆盖测试里的额外造提案。新增真实 GoHost 跨语言回归位于 agent-service/evals/go-world.test.ts，属于本次初始化合同的必要验证。真实 PG 覆盖 pending/无 pending、错误 conversation 拒绝、正确 discard 后状态与 revision；Go fixture/持久化焦点回归、Node GoHost 1 项、TypeScript 与 diff 检查通过。证据为执行者终端结果，未创建持久化日志。
 
 本次为评测前置修复候选提交，完整开发基线仍未验收。capacity_baseline 继续只读检查其余 world 初始化字段及现有 provenance 启动检查，无模型采样；不能事后改写 r8 或重算完整能力结论。
+
+## 初始化一致性复查
+
+只读复查发现另外两个真实偏差：product seed 未采用 world 的 graph title/revision，五个 expanded world 实际 revision 为 2、冻结值为 3；global seed 未写入非空 world.Intake。前者影响 42 个 product task 的版本上下文，后者直接影响 3 个 global context task。题目内容保持不变，不能把宿主初始事实差异解释为模型能力。
+
+capacity_baseline 继续持有本单，获准在 evalworld_test.go 与必要的现有 Go/Node fixture 回归中修正这两处初始化；复用已存在 global metadata 写入和 product intake 写入方式，在提案/历史 run 创建前完成身份与版本物化，避免 base revision 漂移。测试验证 product/global 的实际 context、graph 与 pending/run revision，当前无 model 调用。root 跑完整 Go 期间仅编辑，不执行 Go/Node/数据库测试；收到窗口释放后按 pf_eval_seed_0909 前缀验证。固定 f9、原始批次、题目/world/Expect 与生产工具不改，不扩成通用 fixture 重构。
+
+现有 runner/export 不拒绝 unknown/dirty provenance；下一次正式采样须在任何模型调用前独立检查精确候选 commit、clean 状态、有效 worktree/source/task-set hash。当前未授权新付费批次，不能沿用已知不足的 preflight 直接启动。
+
+上述 metadata/intake 修复已在当前开发树完成主代理审核：product graph 在 pending/failed/recent seed 前对齐 title/revision，global 商品写入既有 world.Intake，context 在 metadata 对齐后读取。真实 PG 的 observation fixtures、pending scoped identity、四类 world、failed/running/global run 与 listed runs 回归通过（6.432s）；证据 storage-dev/eval-development-0909-current/evidence/seed-metadata-regression.md。既有 ProposalIDs 和 pending seed 保留，专用测试数据库已清理。本轮未执行 Node 跨语言整包或模型采样。
+
+执行者曾误在固定 f9 checkout 修改并测试同一文件，主代理已要求导出其独占 patch 留痕后仅恢复该文件；固定 f9 当前重新干净，原 225 未改。错误位置的测试不作为当前树证据，上述 6.432s 是在 /home/cot/ProductFlow 的适配代码重新执行所得。此修复提交不代表正式 development 基线验收。
