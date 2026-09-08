@@ -1,6 +1,6 @@
 import { emptyMerchantOverview } from "./fixtures/merchantOverview";
 import { expect, test } from "@playwright/test";
-import { LOCALES, translate } from "../src/lib/i18n";
+import { LOCALES, translate } from "./fixtures/i18n";
 
 test("registration stays visible when SMTP is not configured", async ({ page }) => {
   await page.route("**/api/auth/session", (route) => route.fulfill({ json: {

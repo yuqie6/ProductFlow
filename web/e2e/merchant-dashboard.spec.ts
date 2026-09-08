@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { emptyMerchantOverview } from "./fixtures/merchantOverview";
-import { LOCALES, translate, type Locale } from "../src/lib/i18n";
+import { LOCALES, translate, type Locale } from "./fixtures/i18n";
 import { overviewMessage } from "../src/pages/product-list/overviewMessages";
 import type { ImageSessionDetail, MerchantWorkRecord } from "../src/lib/types";
 

@@ -1,6 +1,6 @@
 import { emptyMerchantOverview } from "./fixtures/merchantOverview";
 import { expect, test, type Page } from "@playwright/test";
-import { LOCALES, translate } from "../src/lib/i18n";
+import { LOCALES, translate } from "./fixtures/i18n";
 import type { GalleryAsset, AccountPreferences, OpsAction, OpsQuotaEvent, OpsTask, ProductFactsResponse } from "../src/lib/types";
 
 const created = "2026-09-08T00:00:00Z";

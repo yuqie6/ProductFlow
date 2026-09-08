@@ -21,6 +21,7 @@ const shot = {
 
 function renderFilmstrip(overrides: Partial<ComponentProps<typeof GraphShotFilmstrip>> = {}): string {
   const queryClient = new QueryClient();
+  queryClient.setQueryData(["session"], { authenticated: false, access_required: true });
   return renderToStaticMarkup(
     createElement(QueryClientProvider, { client: queryClient },
       createElement(PreferencesProvider, null,

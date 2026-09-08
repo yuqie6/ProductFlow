@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="UTF-8"></head><body><div id="root"></div><script type="module">
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { PreferencesProvider, usePreferences } from '../../src/lib/preferences';
+const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function Probe() {
+  const preferences = usePreferences();
+  const button = (text, action) => React.createElement('button', { onClick: action }, text);
+  return React.createElement('div', null,
+    React.createElement('output', null, `${preferences.locale}/${preferences.themePreference}`),
+    button('Language then theme', () => { preferences.setLocale('ja-JP'); preferences.setThemePreference('dark'); }),
+    button('Two languages', () => { preferences.setLocale('ja-JP'); preferences.setLocale('vi-VN'); }),
+    button('Vietnamese', () => preferences.setLocale('vi-VN')),
+    button('Retry', preferences.retrySave),
+    preferences.saveFailed ? React.createElement('p', { role: 'alert' }, 'Save failed') : null);
+}
+createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider, { client }, React.createElement(PreferencesProvider, null, React.createElement(Probe))));
+</script></body></html>

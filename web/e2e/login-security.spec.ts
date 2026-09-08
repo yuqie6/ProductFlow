@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { LOCALES, translate } from "../src/lib/i18n";
+import { LOCALES, translate } from "./fixtures/i18n";
 
 for (const width of [390, 1440]) {
   for (const locale of LOCALES) {

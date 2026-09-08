@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
@@ -6,6 +6,7 @@ import { getAccountGeneration, isCurrentAccountGeneration } from "./accountBound
 import type { AccountPreferences, AccountProfile, SessionState } from "./types";
 
 import {
+  getLoadedLocale,
   DEFAULT_LOCALE,
   LOCALE_STORAGE_KEY,
   type Locale,
@@ -14,6 +15,8 @@ import {
   resolveLocale,
   translate,
 } from "./i18n";
+import { loadLocale } from "./localeResources";
+import { LocaleLoading } from "./LocaleLoading";
 import {
   DEFAULT_THEME_PREFERENCE,
   THEME_STORAGE_KEY,
@@ -64,31 +67,49 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const session = useQuery({ queryKey: ["session"], queryFn: api.getSessionState, retry: false });
   const userId = session.data?.authenticated ? session.data.user.id : null;
-  const locale = session.data?.authenticated ? session.data.preferences.locale : anonymousLocale;
+  const targetLocale = session.data?.authenticated ? session.data.preferences.locale : anonymousLocale;
+  const language = useQuery({ queryKey: ["locale", targetLocale], queryFn: () => loadLocale(targetLocale), enabled: !session.isPending, retry: false, staleTime: Infinity, initialData: () => getLoadedLocale(targetLocale) });
+  const ready = !session.isPending && Boolean(language.data);
+  // Keep mounted routes alive so their existing account-boundary effects still run.
+  const lastLocale = useRef<Locale | null>(null);
+  if (ready) lastLocale.current = targetLocale;
+  const locale = ready ? targetLocale : lastLocale.current ?? targetLocale;
+  const sequence = useRef(0);
   const themePreference = session.data?.authenticated ? session.data.preferences.theme : anonymousTheme;
-  const isCurrent = (operation: { userId: string; generation: number }) => {
+  type Operation = { userId: string | null; generation: number; sequence: number; input: Partial<AccountPreferences> };
+  const isCurrent = (operation: Operation) => {
     const current = queryClient.getQueryData<SessionState>(["session"]);
-    return isCurrentAccountGeneration(operation.generation) && current?.authenticated && current.user.id === operation.userId;
+    const currentId = current?.authenticated ? current.user.id : null;
+    return operation.sequence === sequence.current && isCurrentAccountGeneration(operation.generation) && currentId === operation.userId;
   };
   const save = useMutation({
-    mutationFn: (operation: { userId: string; generation: number; input: Partial<AccountPreferences> }) => api.updateAccountPreferences(operation.input),
+    mutationFn: async (operation: Operation) => {
+      if (operation.input.locale) await loadLocale(operation.input.locale);
+      // A language download may finish after logout or another account has signed in.
+      if (!isCurrent(operation)) return null;
+      return operation.userId ? api.updateAccountPreferences(operation.input) : null;
+    },
     onSuccess: (preferences, operation) => {
       if (!isCurrent(operation)) return;
-      queryClient.setQueryData<SessionState>(["session"], (current) => current?.authenticated ? { ...current, preferences } : current);
-      queryClient.setQueryData<AccountProfile>(["account", operation.userId], (current) => current ? { ...current, preferences } : current);
+      if (!operation.userId) {
+        if (operation.input.locale) setLocaleState(operation.input.locale);
+        if (operation.input.theme) setThemePreferenceState(operation.input.theme);
+      } else if (preferences) {
+        queryClient.setQueryData<SessionState>(["session"], (current) => current?.authenticated ? { ...current, preferences } : current);
+        queryClient.setQueryData<AccountProfile>(["account", operation.userId], (current) => current ? { ...current, preferences } : current);
+      }
     },
   });
   const currentSave = save.variables && isCurrent(save.variables);
   const change = (input: Partial<AccountPreferences>) => {
     if (session.isPending || session.isError) return;
-    if (!userId) {
-      if (input.locale) setLocaleState(input.locale);
-      if (input.theme) setThemePreferenceState(input.theme);
+    if (!userId && input.theme) {
+      // Theme is synchronous locally; it must not supersede an in-flight language choice.
+      setThemePreferenceState(input.theme);
       return;
     }
-    if (currentSave && save.isPending) return;
-    const operation = { userId, generation: getAccountGeneration(), input };
-    save.mutate(operation);
+    if (userId && currentSave && save.isPending) return;
+    save.mutate({ userId, generation: getAccountGeneration(), sequence: ++sequence.current, input });
   };
 
   useEffect(() => {
@@ -105,8 +126,8 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const resolvedTheme = resolveTheme(themePreference, systemPrefersDark);
 
   useEffect(() => {
-    document.documentElement.lang = locale;
-  }, [locale]);
+    document.documentElement.lang = targetLocale;
+  }, [targetLocale]);
 
   useEffect(() => {
     applyThemeToRoot(document.documentElement, resolvedTheme, themePreference);
@@ -130,7 +151,10 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     retrySave: () => { if (currentSave && save.variables) change(save.variables.input); },
   };
 
-  return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
+  return <PreferencesContext.Provider value={value}>
+    {!ready && <LocaleLoading locale={targetLocale} failed={language.isError} retry={() => { void language.refetch(); }} sessionPending={session.isPending} />}
+    {lastLocale.current && <div style={{ display: ready ? "contents" : "none" }} aria-hidden={!ready || undefined}>{children}</div>}
+  </PreferencesContext.Provider>;
 }
 
 export function usePreferences(): PreferencesContextValue {

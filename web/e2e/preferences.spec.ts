@@ -1,7 +1,7 @@
 import { emptyMerchantOverview } from "./fixtures/merchantOverview";
 import { expect, test, type Page } from "@playwright/test";
 import { accountPreferencesMessage } from "../src/lib/accountPreferencesMessages";
-import { LOCALES, LOCALE_LABEL_KEYS, translate } from "../src/lib/i18n";
+import { LOCALES, LOCALE_LABEL_KEYS, translate } from "./fixtures/i18n";
 import type { AccountPreferences, AccountProfile } from "../src/lib/types";
 
 const profile = (id: string, preferences: AccountPreferences, status = "active"): AccountProfile => ({
@@ -278,8 +278,9 @@ for (const operation of ["logout", "password", "revoke"] as const) {
     await request;
     // A different authenticated session becomes authoritative before A's request finishes.
     state.current = "bob";
-    // The existing reconnect refetch refreshes identity without unmounting the route.
-    await page.evaluate(() => { window.dispatchEvent(new Event("offline")); window.dispatchEvent(new Event("online")); });
+    // Reconnect events arrive in separate browser tasks; retain the mounted route.
+    await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect(page.locator("html")).toHaveAttribute("lang", "ja-JP");
     await expect(page.getByLabel(translate("ja-JP", "account.displayName"), { exact: true })).toHaveValue("bob");
     const response = page.waitForResponse((response) => new URL(response.url()).pathname === endpoint && response.request().method() === method);

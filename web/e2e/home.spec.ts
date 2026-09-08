@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { LOCALES, translate } from "../src/lib/i18n";
+import { LOCALES, translate } from "./fixtures/i18n";
 
 const viewports = [
   { width: 1440, height: 900 },

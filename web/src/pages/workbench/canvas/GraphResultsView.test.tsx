@@ -101,6 +101,7 @@ const sections: GraphResultSection[] = [
 
 function renderResults(overrides: Partial<ComponentProps<typeof GraphResultsView>> = {}): string {
   const queryClient = new QueryClient();
+  queryClient.setQueryData(["session"], { authenticated: false, access_required: true });
   return renderToStaticMarkup(
     createElement(QueryClientProvider, { client: queryClient },
       createElement(PreferencesProvider, null,

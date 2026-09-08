@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { LOCALES, translate } from "../src/lib/i18n";
+import { LOCALES, translate } from "./fixtures/i18n";
 import type { ConfigItem } from "../src/lib/types";
 
 for (const width of [390, 1440]) {

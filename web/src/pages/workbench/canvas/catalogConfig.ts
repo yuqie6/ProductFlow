@@ -6,7 +6,7 @@
  */
 
 import type { TranslationKey } from "../../../lib/i18n";
-import { zhCN } from "../../../lib/i18n";
+import { isTranslationKey } from "../../../lib/i18n";
 import type { GraphCatalogConfigField, GraphCatalogVisibleWhen, GraphNode } from "../../../lib/types";
 import { parseWorkflowDeliverySpec } from "./deliveryRenditions";
 import { parseWorkflowGenerationSpec } from "./generationSpec";
@@ -18,8 +18,7 @@ export interface CatalogNodeDraft {
 }
 
 export function catalogLabelKey(key: string | null | undefined): TranslationKey | null {
-  if (!key || !(key in zhCN)) return null;
-  return key as TranslationKey;
+  return isTranslationKey(key) ? key : null;
 }
 
 export function visibleCatalogFields(fields: GraphCatalogConfigField[]): GraphCatalogConfigField[] {

@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { zhCN } from "../../../lib/i18n";
+import zhCN from "../../../lib/locales/zh-CN.json";
 import type { GraphNodeCatalog, GraphProjection } from "../../../lib/types";
 import { GraphCanvasNotice, graphHistoryShortcutAction } from "./GraphCanvasPanel";
 import graphCanvasPanelSource from "./GraphCanvasPanel.tsx?raw";

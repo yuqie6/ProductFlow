@@ -7,7 +7,7 @@ import {
   interpolate,
   resolveLocale,
   translate,
-  translations,
+  getLoadedLocale,
 } from "./i18n";
 import { resolveTheme, resolveThemePreference } from "./theme";
 
@@ -21,11 +21,11 @@ describe("i18n helpers", () => {
   });
 
   it("keeps locale selector metadata aligned with supported locales", () => {
-    const defaultKeys = Object.keys(translations[DEFAULT_LOCALE]).sort();
+    const defaultKeys = Object.keys(getLoadedLocale(DEFAULT_LOCALE)!).sort();
 
     expect(Object.keys(LOCALE_LABEL_KEYS).sort()).toEqual([...LOCALES].sort());
     for (const locale of LOCALES) {
-      expect(Object.keys(translations[locale]).sort()).toEqual(defaultKeys);
+      expect(Object.keys(getLoadedLocale(locale)!).sort()).toEqual(defaultKeys);
     }
     expect(translate("vi-VN", "locale.viVN")).toBe("Tiếng Việt");
     expect(translate("vi-VN", "nav.language")).toBe("Ngôn ngữ");

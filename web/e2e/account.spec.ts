@@ -1,6 +1,6 @@
 import { emptyMerchantOverview } from "./fixtures/merchantOverview";
 import { expect, test, type Page } from "@playwright/test";
-import { LOCALES, translate } from "../src/lib/i18n";
+import { LOCALES, translate } from "./fixtures/i18n";
 
 const user = { id: "account-user", email: "member@example.com", display_name: "Member", is_operator: false };
 const merchant = { id: "account-merchant", name: "Merchant with a deliberately long name 商家名称", status: "active" };
@@ -163,7 +163,7 @@ test("recoverable loading and read errors, empty sessions, keyboard focus and ex
   let sessionReads = 0;
   await page.route("**/api/account/sessions?*", (route) => { sessionReads++; return route.fulfill(sessionReads === 1 ? { status: 503, json: { detail: "Sessions unavailable" } } : { json: { items: [], next_cursor: null } }); });
   await page.goto("/account");
-  await expect(page.getByRole("status")).toHaveText("加载中");
+  await expect(page.getByRole("region", { name: "个人资料", exact: true }).getByRole("status")).toHaveText("加载中");
   release();
   await expect(page.getByRole("alert").filter({ hasText: "Profile unavailable" })).toBeVisible();
   await page.getByRole("region", { name: "个人资料", exact: true }).getByRole("button", { name: "重试", exact: true }).click();

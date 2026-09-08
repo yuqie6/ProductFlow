@@ -1,7 +1,7 @@
 import { emptyMerchantOverview } from "./fixtures/merchantOverview";
 import { expect, test, type Page, type Route } from "@playwright/test";
 
-import { translate } from "../src/lib/i18n";
+import { translate } from "./fixtures/i18n";
 import type { ProductListResponse, SessionState } from "../src/lib/types";
 
 type AccountName = "anonymous" | "alice" | "bob" | "operator" | "operatorNoMerchant";
