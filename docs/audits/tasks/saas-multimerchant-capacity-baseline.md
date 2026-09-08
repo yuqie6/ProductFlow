@@ -1,9 +1,9 @@
 # 任务：固定候选测量多商家混合负载与共享中间件容量基线
 
-状态：开放
+状态：认领
 类型：证据
-认领者：—
-认领于：—
+认领者：image_live_review
+认领于：2026-09-08T21:23:04+08:00
 业务组：平台可靠性
 父账本：performance-governance.md
 完成后可拆：按实测瓶颈发布公平调度或读取优化；公开注册试用版固定候选复验
@@ -71,3 +71,52 @@
 - 交付定位：随本任务提交。
 - 审核者 / 结论：待审核。
 - Issue 结果 / 业务门槛结果 / 剩余缺口：未执行；目标数字均为待验证预算。
+
+## 本次独立资源窗口
+
+root核对本机16 CPU、约15GiB RAM（可用约10GiB）、磁盘余量794GiB，Docker cgroup v1可用。capacity_baseline认领并准备固定e183b66b的独立checkout `/tmp/productflow-saas-capacity-0908`，产物 `storage-dev/saas-capacity-0908`。运行栈限额总和不超过4vCPU/8GiB（目标峰值RSS仍6GiB）；使用专用Docker网络、PG/Redis与容器名称前缀pf-capacity-0908，应用端口30182起，先检查空闲。不得使用主dev数据库/Redis或停止共享服务。观察机器余量，环境不足按原合同报告，不降规模或预算冒充通过。
+
+独占新auth/saas_capacity_fixture_test.go、scripts/saas-capacity-0908*或scripts/saas_capacity/*；justfile如需改由root整合。root持有本单/父章程/文档/Git；其它任务只写Node/Go eval观察和独立评委证据。被测版本只消费固定提交，不吸收共享树后续变化。只用mock provider，不调用真实模型。夹具/测量工具验证和完整原合同采证由执行者负责；必须先记录冻结版与实际限额，证据不足明确失败/不可测，不顺手改生产。完成自审、必要脚本测试、资源清理后交root，执行者不commit/push。
+
+## root执行中审核
+
+root发现初版run_load在3个生成完成后才开始读采样，预热未发送混合读，且将所有4xx归为expected。已要求保留初轮为preflight，修正为预热/采样同步混合读、SSE和持续生成并发后使用新目录完整测量；合法读取4xx应计入非预期失败。不能把初轮宣称L1/L2混合负载达标。
+
+只读辅助审核分配给eval_baseline：仅查隔离checkout中的run_contention、run_fault_recovery、collect_metrics证据因果，不修改代码、文档、运行资源或启动负载；capacity_baseline仍是唯一实现写者，root拥有最终验收。
+
+
+root续审发现mixed-load-final/l1-round-1.json仍记录provider.max_concurrency=6，不能签为3槽达标；当前mock_provider.py又在provider_slots信号量之后记录started_epoch，会隐藏HTTP已到达但在mock内等待的请求。已要求执行者暂停完整轮次试错，用短mock复现区分历史事件污染、观测器误差与真实应用超发，并记录HTTP到达至响应的在途并发及mock排队时间。模拟服务自身限流不构成应用槽位合同通过证据。SSE当前每客户端约5帧，还需核实订阅是否持续覆盖后续生成任务；未确认前不签持续状态传播预算。
+
+
+短诊断追加证据：root核对diagnostic/l1-round-96.json及mock/provider-events.jsonl，33个独立请求均为2秒mock，实际到达至末次响应跨度24.177秒，HTTP及provider执行最大并发均为3，33任务成功且无未完成响应。当前mock源码已移除provider_slots信号量，分别记录received/started/finished/responded。该证据仅证明本次短诊断，没有解释旧max6来源，也不替代原定六轮混合负载、持续SSE及争用/在途恢复验收；旧结果保留，等待执行者交回原因与剩余窗口。
+
+
+争用证据续审：contention-final.json中B的20个请求全部获得provider与终态观测，accept→provider等待p95为61659.55ms，超过10000ms目标，保留FAIL。A原始submissions为100次HTTP 202，但其中52次返回快照未包含对应prompt，submit将其记为task_id=None，使summary.a_submitted及后续账本检查仅覆盖48条。已要求从独立DB以本轮唯一prompt及merchant/session绑定已受理任务，将完整100条纳入核对；不得重发52次请求或把HTTP已受理写为未提交。未补齐前本报告不具备完整任务/结算分母。
+
+
+分母修复复核：contention-final-repaired.json保留原请求与B等待数值，独立DB补齐A的100个任务，100个均成功且各有一次provider观测；包括长任务在内124个受理请求全部绑定，无歧义或未绑定项，未重发请求。账本摘要覆盖124任务，各记录一次reserve和一次settle；完整金额/余额不变量仍随执行者完整脚本审核验收。该修复不改变B等待p95超标结论。当前queue/dispatcher.go的claimPending按available_at/id排序，未按merchant轮转；这仅是后续排队因果调查入口，尚不能把整个61.66秒归因于该排序。
+
+
+执行者已交付并清理专用容器/网络，root核对无pf-capacity-0908运行容器，容量独占计时窗口释放。root接管本单剩余脚本审核和缺口处理；当前保留正式轮次并发超额、争用等待超标、故障恢复失败及未完成六轮/commit时延证据，不视为全合同验收通过。capacity_baseline转接r7执行，不再写容量任务源码或启动采样。
+
+
+root合同复核纠正：固定e183b66b的imagesession/recovery.go明确DefaultStaleRunningAfter=90分钟，settings默认一致，夹具未覆盖image_session_stale_running_after_minutes。fault实验只在Redis恢复后观察旧任务约240秒、新任务180秒，未跨过既有闲置回收阈值。故该FAIL限定为本次短观察窗内未恢复，不能证明90分钟合同失效或永不恢复；三个running继续占槽可解释后续queued反复投递，需要进一步按实际admission因果验证。现有90分钟崩溃可见等待对用户体验不理想，但不能为取得绿灯在采证中擅自缩短生产阈值。后续应独立设计故障识别/安全unknown与槽位释放并验证活跃长请求不被误回收，或在冻结旧合同下覆盖完整恢复窗口。原始fail与时间线保留。
+
+
+root分配image_live_review辅助只读审核已交付容量fixture/测量脚本与关键原始观测，独占其review产物目录，不修改被测代码、脚本、任务文档或运行资源；root仍是本单交付/修改所有者。审核关注正式max6区间、read/SSE实际覆盖和有效时间窗、quota金额/状态匹配、资源指标分母及可重复命令。恢复等待90分钟与短观测不足已由root确认，不能重复归为未知生产故障。
+
+## 测量工具修订与再次冻结前置
+
+独立复审确认正式事件存在负时长，且旧轮次缺HTTP received/responded，不能将max6直接归因为应用超发；SSE单次连接在服务正常idle结束后停止观察；额度只验计数，缺实际金额/余额；Docker MemUsage不是RSS，collector与load未共用完整时间窗；image tag和共用事件路径不足以绑定实际代码。可用旧事实限实际记录的L1读取、124任务身份/终态与B等待超标，旧未测量字段不回填。
+
+image_live_review现接管同一容量任务的工具修订，独占/tmp/productflow-saas-capacity-0908内scripts/saas_capacity与auth/saas_capacity_fixture_test.go；保留root已改INFO clients/缺字段检测及test_metrics.py。root持文档/Git，不改生产业务。修订须使用单调时钟及不可变轮次事件/指纹、持续SSE连接覆盖、真实quota金额/hold及账户前后算术、共同测量窗口/RSS/实际CPU限额与缺失检测、固定生产源码/工具/镜像身份。初始余额作为manifest显式opening balance，不为补历史事件改变100000条规模。
+
+先交无模型确定性正反测试与可审完整脚本，root验收并提交工具候选后再冻结新的完整运行；允许此必要候选提交，任务仍认领。旧e183测量不吸收后续提交、不覆写事件。修订期间不启动完整六轮、故障、真实模型或共享服务；如需短独立mock工具验证先登记资源。下一生产候选和运行窗口由root确定，不能自行切换或重采至绿。
+
+工具首轮交付通过 21 项 Python 离线测试及静态检查，fixture 仅编译并 skip，尚不能作为真实采集链验收。root 批准 e183 checkout 加修订工具执行一次 diagnostic 短预检：新目录 `storage-dev/saas-capacity-tools-preflight-0908`，专用 `pf-capacity-0908` 容器与原 30182–30190 端口，启动前核闲置；实际 fixture、5 秒预热及 20 秒混合采样和 collector。不执行正式六轮或故障，不作为生产候选 907 的恢复证据，结束清理专用资源。
+
+root 审查要求补查：非 settle hold 的 settled_units、资源窗口中间缺测、故障前实际 running 前置、恢复后新任务终态，以及实际 provider/effect 的重复调用或 unknown 重放。原 commit-to-SSE 延迟仍为 unmeasurable，不能用 persisted timestamp 的近似值替代。缺口未关闭前不提交已验收工具候选或启动正式容量轮次。
+
+上述工具缺口已修订。独立短预检得到 33 个成功任务与 33 个完整 provider 生命周期，HTTP/执行峰值并发均为 3；125 次读取无失败，覆盖 10 个商家；20 个 SSE 客户端持续重连，无错误或提前关闭。8 个有效资源样本完整，最大间隔 3.0857 秒，RSS/CPU/PG/Redis 指标实际可读。证据位于 `/tmp/productflow-saas-capacity-0908/storage-dev/saas-capacity-tools-preflight-0908`，两个失败准备目录保留。运行后专用容器和端口已清理。
+
+root 已将审核后的工具复制到 `scripts/saas_capacity/` 及 `go/internal/auth/saas_capacity_fixture_test.go`，修正一项离线测试对开发工作树清洁状态的无关依赖；25 项 Python 测试与 ruff 通过。此提交仅冻结可复现工具候选，任务继续认领；短预检不代表完整容量或故障验收，commit-to-SSE 时间仍未测。后续须从新候选构建独立镜像并重新采证，不能沿用 e183 的生产版本身份。
