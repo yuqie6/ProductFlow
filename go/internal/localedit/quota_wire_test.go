@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -415,8 +416,9 @@ func TestProviderPreparationQuotaFailureRollsBackBoundary(t *testing.T) {
 		}
 	})
 	executor := Executor{DB: es.db, Media: es.media, Provider: provider}
-	if err := executor.Execute(ctx, taskID); err == nil {
-		t.Fatal("quota database failure must propagate")
+	var pgErr *pgconn.PgError
+	if err := executor.Execute(ctx, taskID); !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != constraint {
+		t.Fatalf("quota database cause must propagate: %v", err)
 	}
 	if provider.lastSize != "" {
 		t.Fatal("provider called without quota reservation")

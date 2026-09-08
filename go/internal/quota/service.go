@@ -245,7 +245,7 @@ func (s *Service) Adjust(ctx context.Context, merchantID, idempotencyKey string,
 				"available_units": nextAvailable,
 				"updated_at":      now,
 			}).Error; err != nil {
-			return apperr.Internal("更新额度账户失败")
+			return errors.Join(apperr.Internal("更新额度账户失败"), err)
 		}
 		acct.AvailableUnits = nextAvailable
 		acct.UpdatedAt = now
@@ -330,7 +330,7 @@ func (s *Service) Reserve(ctx context.Context, merchantID, idempotencyKey string
 				"price_version_id": priceVersionID,
 				"updated_at":       now,
 			}).Error; err != nil {
-			return apperr.Internal("更新额度账户失败")
+			return errors.Join(apperr.Internal("更新额度账户失败"), err)
 		}
 		acct.AvailableUnits = nextAvailable
 		acct.ReservedUnits = nextReserved
@@ -348,7 +348,7 @@ func (s *Service) Reserve(ctx context.Context, merchantID, idempotencyKey string
 			UpdatedAt:      now,
 		}
 		if err := gdb.Create(&row).Error; err != nil {
-			return apperr.Internal("创建预留失败")
+			return errors.Join(apperr.Internal("创建预留失败"), err)
 		}
 		holdID := row.ID
 		if err := appendEvent(gdb, schema.MerchantQuotaEvents{
@@ -446,7 +446,7 @@ func (s *Service) settle(ctx context.Context, merchantID, idempotencyKey string,
 				"reserved_units":  nextReserved,
 				"updated_at":      now,
 			}).Error; err != nil {
-			return apperr.Internal("更新额度账户失败")
+			return errors.Join(apperr.Internal("更新额度账户失败"), err)
 		}
 		acct.AvailableUnits = nextAvailable
 		acct.ReservedUnits = nextReserved
@@ -460,7 +460,7 @@ func (s *Service) settle(ctx context.Context, merchantID, idempotencyKey string,
 				"settled_units": settled,
 				"updated_at":    now,
 			}).Error; err != nil {
-			return apperr.Internal("更新预留失败")
+			return errors.Join(apperr.Internal("更新预留失败"), err)
 		}
 		row.Status = StatusSettled
 		row.SettledUnits = &settled
@@ -550,7 +550,7 @@ func (s *Service) release(ctx context.Context, merchantID, idempotencyKey string
 				"reserved_units":  nextReserved,
 				"updated_at":      now,
 			}).Error; err != nil {
-			return apperr.Internal("更新额度账户失败")
+			return errors.Join(apperr.Internal("更新额度账户失败"), err)
 		}
 		acct.AvailableUnits = nextAvailable
 		acct.ReservedUnits = nextReserved
@@ -562,7 +562,7 @@ func (s *Service) release(ctx context.Context, merchantID, idempotencyKey string
 				"status":     StatusReleased,
 				"updated_at": now,
 			}).Error; err != nil {
-			return apperr.Internal("更新预留失败")
+			return errors.Join(apperr.Internal("更新预留失败"), err)
 		}
 		row.Status = StatusReleased
 		row.UpdatedAt = now
@@ -631,7 +631,7 @@ func (s *Service) MarkUnknown(ctx context.Context, merchantID, idempotencyKey st
 				"status":     StatusPendingReconciliation,
 				"updated_at": now,
 			}).Error; err != nil {
-			return apperr.Internal("更新预留失败")
+			return errors.Join(apperr.Internal("更新预留失败"), err)
 		}
 		row.Status = StatusPendingReconciliation
 		row.UpdatedAt = now
@@ -779,7 +779,7 @@ func appendEvent(gdb *gorm.DB, ev schema.MerchantQuotaEvents) error {
 		if isUniqueViolation(err) {
 			return nil
 		}
-		return apperr.Internal("写入额度事件失败")
+		return errors.Join(apperr.Internal("写入额度事件失败"), err)
 	}
 	return nil
 }

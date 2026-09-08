@@ -50,6 +50,7 @@
 | 局部编辑结果写入失败后使用非法 attempt phase，且原持久化原因被终态错误覆盖 | 复用合法 unknown phase；errors.Join 保留结果与终态错误，失效 attempt 停手 | 真实 PG 资产失败/终态同时失败两场景；恢复后额度待对账、重复信封 consumed、Provider 仅一次 | `6eb57645` |
 | 交付结果事务失败被 failed 终态的 nil 或第二个错误覆盖 | Execute 保留原结果错误并组合 failed 持久化错误，业务保持可重试 failed | PostgreSQL 双故障分支返回原因、零派生资产、信封 pending；Retry/过期恢复后重复执行只有一个结果资产 | `6aa9dac5` |
 | 交付自行更新商品排序时间且忽略语句错误，最终只见事务提交回滚提示 | 复用 product.Touch，商品模块维护写表细节，交付直接返回错误 | 真实 PG 原实现丢失 ConstraintName；修复后原因保留、结果事务回滚，Retry 后时间推进 | `9510a457` |
+| 额度账户/预留/事件写入错误被替换为通用 Internal，调用者无法获取数据库原因 | quota 服务用 errors.Join 保留原应用错误与数据库错误，不改余额和 HTTP 合同 | 13 个 PG 写入故障回滚与 HTTP 隔离场景；局部编辑原始 SQLSTATE 透传恢复回归通过 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -70,7 +71,7 @@
 优先级按可能损害排序；修改频率与扩散范围目前只有静态调用者证据，没有生产统计。
 
 1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化已与结算同事务；明确失败终态额度已归入命令，付费成功结算已要求 hold；取消/未知/释放的缺失 hold 合同仍待核实；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 的精确绑定和缺失 hold 处理仍待核实。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
-2. **中：局部编辑未知/释放的缺失 hold 合同与额度底层错误。** 当前唯一运行时 Reserve 入口与 provider_pending 同事务，不产生 claimed + hold；新增真实数据库准备失败后恢复执行回归确认旧 attempt 零 hold、新 attempt 正常结算，不为历史组合新增恢复分支。unknown/release 的缺失 hold 容忍仍待核实。成功结算已拒绝缺 hold。quota.Reserve 的创建错误被替换为通用 Internal，底层 PostgreSQL cause 丢失已由约束故障确认；quota 文件当前被管理后台任务占用，后续在解除占用后修复。
+2. **中：局部编辑未知/释放的缺失 hold 合同与额度底层错误。** 当前唯一运行时 Reserve 入口与 provider_pending 同事务，不产生 claimed + hold；新增真实数据库准备失败后恢复执行回归确认旧 attempt 零 hold、新 attempt 正常结算，不为历史组合新增恢复分支。unknown/release 的缺失 hold 容忍仍待核实。成功结算已拒绝缺 hold。quota 的账户/hold/事件写入原因丢失已在后续切片修复并验证 HTTP 文案保持；账户初始化、锁定及读取错误转换仍待核实。
 3. **中：Graph context 服务依赖。** `WithProductGuard` 仍跨 product/recipe 装配，形成编译期不可见的前置。候选方向是显式 Graph 用例依赖与已有事务入口；必须维持跨商家统一 404、事务组合及 worker 无 HTTP 商家上下文的执行合同。Agent 的运行资格查询已归入 Graph Service，非测试 Agent 调用不再装配该 context 依赖；Graph 内部及 product/recipe 低层调用仍未整体迁移，不把依赖改善升级成已复现安全缺陷。
 4. **可选：节点执行职责与跨生成入口共享机制。** 保留三种不同的业务计费身份和 Provider 合同；只在同一规则的重复已导致漂移时抽取 owner。当前不建立统一生成框架，也不因 `execute_node.go` 较长拆文件。Graph 的 cook、效果记录、资产晋升、交付组合是后续逐边界验证对象。
 
@@ -341,3 +342,14 @@ persist 现在直接调用并返回 product.Touch，不再在执行文件中写 
 必要修改范围包含 imagesession 的 Generate/Retry、任务与 effect 持久化模型、准备调用、终态/取消/恢复及额度查询。需要在同一业务事务中固定新预留的计费身份，让实际 provider effect 记录消费的身份；取消按当前预留的 effect 判定，不能只看任务曾经调用过。不得用 progress_phase 展示值、created_at 排序或推算 worker attempts 替代持久化关联。应继续复用现有 quota 键、预留与队列事务，不建立第二套账本。最终验收须覆盖 queued 及等容量取消、调用后取消、部分候选续跑、旧 worker 返回、故障回滚与跨商家隔离。
 
 本切片实现受明确文件占用阻挡。初查时 saas-ops-console 持有 schema；本轮复核发现该任务刚随 b251f20b 交付，但新认领的 saas-preferences-settings 已将必要 schema 及测试交给 account_backend。文件变干净不代表写入所有权已释放，本任务未写这些文件。计费生命周期回归保留为未提交的红色复现，未将预期改成 pending_reconciliation 或 skip 来取得通过；尚未交付该修复。文档单独记录新证据与依赖，不代表整个目标阻塞或完成。其他独立审计工作可继续，schema 释放后才能收口此跨层切片。
+
+
+## 额度写入失败的原因与公共错误合同
+
+本切片由主代理负责，范围为 `quota/service.go`、[额度写入数据库回归](../../go/internal/quota/persistence_cause_test.go) 和既有 localedit 准备失败回归。管理后台任务已交付，当前偏好任务仅持有 auth/preferences/schema，不占 quota；本轮先核对归属后修改。连续生图计费生命周期红色回归仍保留未提交，未纳入本切片。
+
+首轮 11 个真实 PostgreSQL 约束场景全部复现 cause 丢失（1.050 秒），覆盖 Reserve/Settle/Release/MarkUnknown 的账户、hold、事件写入；MarkUnknown 不写账户余额。修改以 errors.Join 保留原 apperr.Internal 与实际 error，覆盖同一账户更新写法的 Adjust 及共享 appendEvent，不新增错误类型或包装框架。预留负债不一致等纯业务错误没有伪造 cause，读取/锁定/账户初始化的转换不在本切片改变。
+
+最终回归增加 Adjust 的两个写入边界，共 13 个场景。每例按自身商家安装 NOT VALID 约束，验证 errors.As 取得 23514 与原 ConstraintName，同时仍能取得应用 500；经真实 httpx.AbortErr 输出原 Detail，不包含约束名或 SQLSTATE。余额、事件数量不变，已有 hold 保持 reserved、新预留失败不留行。约束在每例 cleanup 清除，测试使用 quota 包数据库，不改开发库。
+
+最终 quota 整包通过（4.366 秒）；局部编辑、Graph、连续生图相关消费者组合分别通过（0.911 / 5.182 / 6.447 秒）。局部编辑准备失败现在明确要求原 SQLSTATE 与约束名，并继续验证零调用、过期恢复和新 attempt 结算。没有把该组合计为三个消费者整包；imagesession 的另一个计费取消红色复现尚未修复。quota/localedit 标准 go vet 通过，主代理自审完整任务 diff 和错误消费者，当前 docs-check 与本切片空白检查通过。共享 Web 修改中的空白问题不纳入本切片修复或提交。
