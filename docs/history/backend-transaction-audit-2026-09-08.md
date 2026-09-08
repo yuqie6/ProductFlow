@@ -47,7 +47,8 @@
 | 手动重试缺失活动预留时退回首次已结算键，旧结算幂等结果放行当前终态 | 额度键查询返回是否命中活动预留；结算必须命中，取消/释放消费者保持原合同 | 两种终态的 retry=true 原实现均返回 nil；修复后拒绝并回滚，恢复同一重试 hold 后结算 | `bca12de2` |
 | Agent 统计可运行节点时需注入 Graph 依赖并编排三步内部查询 | Graph Service.CountRunnableNodesTx 拥有依赖和查询步骤，Agent 保留审批 Conflict 解释 | PostgreSQL 正常计数/跨商家/缺依赖/零运行写入；隔离基线 Agent 空图、确认与创建消费者通过 | `d26d71dd` |
 | 局部编辑调用前数据库读取故障被归为不可重试业务失败，队列收到 nil | Execute 区分输入错误、失效 attempt 和基础设施读取错误；ReadIO 保留 cause | 独立 PG 42P01 经 queue.Consume 返回、信封 pending、task claimed，恢复后执行成功；三类媒体 I/O 映射保留 cause | `5b6105a3` |
-| 局部编辑结果写入失败后使用非法 attempt phase，且原持久化原因被终态错误覆盖 | 复用合法 unknown phase；errors.Join 保留结果与终态错误，失效 attempt 停手 | 真实 PG 资产失败/终态同时失败两场景；恢复后额度待对账、重复信封 consumed、Provider 仅一次 | 随本次提交 |
+| 局部编辑结果写入失败后使用非法 attempt phase，且原持久化原因被终态错误覆盖 | 复用合法 unknown phase；errors.Join 保留结果与终态错误，失效 attempt 停手 | 真实 PG 资产失败/终态同时失败两场景；恢复后额度待对账、重复信封 consumed、Provider 仅一次 | `6eb57645` |
+| 交付结果事务失败被 failed 终态的 nil 或第二个错误覆盖 | Execute 保留原结果错误并组合 failed 持久化错误，业务保持可重试 failed | PostgreSQL 双故障分支返回原因、零派生资产、信封 pending；Retry/过期恢复后重复执行只有一个结果资产 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -287,3 +288,14 @@ Execute 现在只将输入 Validation/NotFound 转为既有业务失败，其他
 新增两个 pf_editresult_* 独立 PostgreSQL 场景通过 queue.Consume 执行：资产插入失败必须保留原 ConstraintName；终态也失败时必须同时保留第二约束错误。第一种 task unknown，第二种 task running 并经实际过期恢复到 unknown；信封均回 pending，额度随后为 pending_reconciliation，零派生资产。模拟信封再次投递后实际 queue.Consume 成功并落 consumed，测试 Provider 累计只调用一次。测试约束仅留在自动销毁的独立数据库中，不修改共享表。没有真实模型或 broker/SIGKILL 演练。
 
 最终 localedit 整包通过（8.566 秒），标准 go vet 通过。主代理完整 diff 自审，核对 attempt phase 约束、状态消费者及测试库清理；当前 docs-check 与空白检查通过。其他任务的 schema、quota、商品和评价文件没有纳入修改。
+
+
+## 交付结果持久化错误与恢复
+
+本切片由主代理负责，范围为 `delivery/execute.go` 和既有 [终态数据库回归](../../go/internal/delivery/terminal_persistence_test.go)。原 Execute 在 persist 失败后只返回 fail 的结果：failed 能提交时返回 nil，failed 也失败时覆盖原错误。真实 PostgreSQL 分别拒绝本测试 job 的 succeeded 和 failed 更新，两个原实现负例都失败（1.092 秒），原始 succeeded 约束原因不可达。
+
+修改仅在结果持久化分支用 errors.Join 保留原错误及 fail 错误，仍以已有可重试 failed 和通用用户文案投影。本地渲染没有外部模型不确定性，不引入 unknown 或额度语义。原 attempt 条件更新、文件 compensation 和原资产保持规则不变。没有为这类简单错误组合提取跨业务执行框架。
+
+最终真实数据库回归验证：只拒绝成功写入时 job failed/is_retryable，双终态写入失败时 job running；两者 queue.Consume 均返回原成功写入 ConstraintName，双失败还保留第二项原因，信封 pending，结果 ID 为空，零派生资产。去除本测试 job 的约束后，分别调用现有 Service.Retry 或 recoverDeliveryJobState，连续 Execute 两次均只得到一个派生资产与 succeeded。测试约束按 job ID 限定，成功或异常路径均清理；未修改开发数据库。
+
+最终 delivery 整包通过（7.339 秒），标准 go vet 通过；主代理完整 diff 自审、约束清理及持久化消费者检查通过，当前 docs-check 与空白检查通过。原图读取失败的底层原因转换、persist 中直接更新商品 updated_at 的归属仍是后续调查项，本次未扩大到其他任务占用的 product 文件。没有真实模型费用或共享运行进程变更。

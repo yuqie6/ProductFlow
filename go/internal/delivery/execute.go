@@ -55,7 +55,7 @@ func (e Executor) Execute(ctx context.Context, jobID string) error {
 		return e.fail(ctx, jobID, attemptID, err, retryable)
 	}
 	if err := e.persist(ctx, claimed, rendered); err != nil {
-		return e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true)
+		return errors.Join(err, e.fail(ctx, jobID, attemptID, apperr.Validation(unexpectedFailure), true))
 	}
 	return nil
 }
