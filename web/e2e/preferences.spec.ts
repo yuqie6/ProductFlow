@@ -65,8 +65,7 @@ for (const locale of LOCALES) for (const width of [390, 1440]) for (const theme 
     await merchantSection.getByRole("button", { name: t("account.save"), exact: true }).click();
     await expect(merchantSection.getByText(t("account.saved"), { exact: true })).toBeVisible();
     expect(state.merchantWrites).toEqual(["Atelier 商品"]);
-    await page.getByRole("combobox", { name: t("nav.theme"), exact: true }).click();
-    await page.getByRole("option", { name: t("theme.system"), exact: true }).click();
+    await page.getByRole("radio", { name: t("theme.system"), exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme-preference", "system");
     expect(state.writes.at(-1)?.input).toEqual({ theme: "system" });
     const nextLocale = locale === "en-US" ? "ja-JP" : "en-US";
@@ -101,7 +100,7 @@ test("top navigation and account share pending, failure, retry and saved prefere
   await page.goto("/account");
   await page.getByRole("button", { name: "Theme: Light", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Preferences were not saved");
-  await expect(page.getByRole("combobox", { name: "Theme", exact: true })).toHaveText("Dark");
+  await expect(page.getByRole("radio", { name: "Dark", exact: true })).toBeChecked();
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   expect(state.writes.map((entry) => entry.input)).toEqual([{ theme: "light" }, { theme: "light" }]);
@@ -115,7 +114,7 @@ test("top navigation and account share pending, failure, retry and saved prefere
   });
   await page.getByRole("combobox", { name: "Language", exact: true }).click();
   await page.getByRole("option", { name: "日本語", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "Theme", exact: true })).toBeDisabled();
+  await expect(page.getByRole("radio", { name: "Light", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Theme: Dark", exact: true })).toBeDisabled();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   release();
@@ -168,8 +167,7 @@ test("merchant name validation, failed save recovery and suspended or absent mer
   await save.click(); await expect(section.getByText("Profile saved", { exact: true })).toBeVisible();
   state.accounts.alice.merchant!.status = "suspended";
   await page.reload(); await expect(input).toBeDisabled();
-  await page.getByRole("combobox", { name: "Theme", exact: true }).click();
-  await page.getByRole("option", { name: "Light", exact: true }).click();
+  await page.getByRole("radio", { name: "Light", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   state.accounts.alice = { ...state.accounts.alice, merchant: null, user: { ...state.accounts.alice.user, is_operator: true } };
   await page.reload();
@@ -192,8 +190,7 @@ test("late display-name response cannot overwrite newly saved preferences", asyn
   const form = page.locator("form").filter({ has: page.getByLabel("Display name", { exact: true }) });
   await form.getByLabel("Display name", { exact: true }).fill("Updated name");
   await form.getByRole("button", { name: "Save profile", exact: true }).click();
-  await page.getByRole("combobox", { name: "Theme", exact: true }).click();
-  await page.getByRole("option", { name: "Light", exact: true }).click();
+  await page.getByRole("radio", { name: "Light", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   release();
   await expect(form.getByText("Profile saved", { exact: true })).toBeVisible();
@@ -236,13 +233,11 @@ test.describe("preference touch and keyboard controls", () => {
     await page.getByRole("combobox", { name: "Language", exact: true }).tap();
     await page.getByRole("option", { name: "日本語", exact: true }).tap();
     await expect(page.locator("html")).toHaveAttribute("lang", "ja-JP");
-    const theme = page.getByRole("combobox", { name: translate("ja-JP", "nav.theme"), exact: true });
+    const theme = page.getByRole("radio", { name: translate("ja-JP", "theme.system"), exact: true });
     await theme.focus();
-    await page.keyboard.press("Enter");
-    await expect(page.getByRole("option", { name: translate("ja-JP", "theme.system"), exact: true })).toBeFocused();
-    await page.keyboard.press("Home");
-    await expect(page.getByRole("option", { name: translate("ja-JP", "theme.light"), exact: true })).toBeFocused();
-    await page.keyboard.press("Enter");
+    await expect(theme).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(page.getByRole("radio", { name: translate("ja-JP", "theme.light"), exact: true })).toBeChecked();
     await expect(page.locator("html")).toHaveAttribute("data-theme-preference", "light");
     expect(state.writes.at(-1)?.input).toEqual({ theme: "light" });
   });
@@ -299,9 +294,8 @@ test("mobile preference failure stays visible while its controls are scrolled in
   const state = await mockPreferences(page);
   state.failPreferences = 1;
   await page.goto("/account");
-  await page.getByRole("combobox", { name: "Theme", exact: true }).scrollIntoViewIfNeeded();
-  await page.getByRole("combobox", { name: "Theme", exact: true }).click();
-  await page.getByRole("option", { name: "Light", exact: true }).click();
+  await page.getByRole("radio", { name: "Light", exact: true }).scrollIntoViewIfNeeded();
+  await page.getByRole("radio", { name: "Light", exact: true }).click();
   const alert = page.getByRole("alert");
   await expect(alert).toContainText("Preferences were not saved");
   const bounds = await alert.boundingBox();
@@ -310,4 +304,25 @@ test("mobile preference failure stays visible while its controls are scrolled in
   await page.screenshot({ path: testInfo.outputPath("mobile-save-error.png") });
   await alert.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+});
+
+test("account section navigation preserves drafts and theme previews support keyboard at narrow desktop", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockPreferences(page);
+  await page.goto("/account");
+  const name = page.getByLabel("Display name", { exact: true });
+  await name.fill("Unsaved account name");
+  await page.locator('a[href="#preferences"]').click();
+  const dark = page.getByRole("radio", { name: "Dark", exact: true });
+  await dark.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByRole("radio", { name: "Light", exact: true })).toBeChecked();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.locator('a[href="#profile"]').click();
+  await expect(name).toHaveValue("Unsaved account name");
+  const bounds = await page.evaluate(() => ({ width: innerWidth, client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
+  expect(bounds.width).toBe(1024);
+  expect(bounds.scroll).toBeLessThanOrEqual(bounds.client);
+  await page.screenshot({ path: testInfo.outputPath("account-narrow.png"), fullPage: true });
 });

@@ -29,7 +29,7 @@ All three purposes are required by the core flow:
 
 ### 1.2 Personal account and password recovery
 
-Open `/account` from the navigation to update your display name. Email is read-only. Ordinary accounts show their own merchant; an independent Operator can have no merchant. Active sessions are paginated by sign-in time and can be revoked individually. Revoking the current session signs you out. Failed revocation or logout remains visible and retryable.
+Open `/account` from the navigation to update your display name. Section links jump to profile, preferences, merchant details, password and security, or active sessions without discarding unsaved input. Theme previews offer light, dark, and system options. Email is read-only. Ordinary accounts show their own merchant; an independent Operator can have no merchant. Active sessions are paginated by sign-in time and can be revoked individually. Revoking the current session signs you out. Failed revocation or logout remains visible and retryable.
 
 Changing a password requires the current password. The new password needs at least eight characters and at most 72 bytes. Success invalidates all existing sessions and outstanding recovery codes, requiring a new sign-in.
 
