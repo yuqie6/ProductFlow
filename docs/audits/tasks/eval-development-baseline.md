@@ -96,7 +96,7 @@
 
 2026-09-05：主代理-agent-0905-0458 核对现有开放任务。L2 state、L3 user-sim、L6 production mine 与图片池均不承担本单的冻结 L1 开发输入，无重复采证单。仅发布为阻塞，不记为采证完成。
 
-## 第四次固定开发窗口（当前）
+## 第四次固定开发窗口
 
 主代理根据完整目标授权恢复本单。既有图观察交付已消除实现前置，当前阻塞解除仅限本次独立开发采证；不追认旧暂停批次，不更改其数据。认领者eval_baseline，冻结提交 a12e10ee41fc21388f80e230db0754c923938446，checkout /tmp/productflow-eval-development-0908-r4；STORAGE_ROOT=/home/cot/ProductFlow/storage-dev/eval-development-0908-r4。Go/Agent与题集/Skill只读；schema/测试库使用独立pf_eval_development_0908前缀，先跑TestEvalObservationFixtures及必需输入合同，确认当前图操作实际可观察后再执行完整L1三次。公开题保持development用途，按现有集合/导出合同生成真实完整开发包；不创建虚假隐藏集或人工标签。
 
@@ -105,3 +105,17 @@
 ## 第四批暂停证据
 
 固定a12e10ee与全部输入/Skill/harness/lock前后未变；run `20260907T215536Z-e24d4e7f` 完成39/75任务、117/225 trial，其中7个unobservable。`finalize_product_intake_v1` 对真实模型选择返回 `eval_unobservable: no Go observation fixture for this intake selection`，按合同停止。96条passed、21条failed仅为诊断计数，measurementEligible=false，未输出summary/history/latest或development包。原始117份转录与assessment保留于 `storage-dev/eval-development-0908-r4/agent-evals/`；主代理核对报告与子代理清理结果，宿主进程与pf_eval_development_0908前缀DB已释放。等待 [创建确认观察修复](archive/eval-intake-observation.md)；不得续接本run或把117作为新分母。
+
+## 第五次固定开发窗口
+
+创建确认观察修复已交付于 `326bf59ae070687c45d0426b9ebd1f53cb798480`，协调者复核占用并确认 eval_baseline 认领。独立干净 checkout `/tmp/productflow-eval-development-0908-r5`，产物根 `storage-dev/eval-development-0908-r5`；DB 前缀 `pf_eval_r5`，intake 宿主设置 `PRODUCTFLOW_EVAL_HOST_DB_PREFIX=pf_eval_r5_intake`。其它 Go 宿主只清理本次记录的具体数据库，不碰历史库。Go 观察前置串行执行，避免同库初始化竞争。
+
+冻结该提交与依赖、题集、world、Skill、模型及请求配置；沿用公开 development 83 题中的 L1 75×3=225，11 个 world，regression/acceptance 均为 0。openai/gpt-5.6-luna、推理参数不额外覆盖、并发 3、单 trial 180 秒、最多 12 轮。旧四批只留历史，不续接、不合并分母。新合同错误或不可测按既有协议停止，正常行为失败完整保留，不为分数重采样。执行者仅写独立证据，主代理持有共享文档与 Git；不改共享服务、provider 设置或被测代码。
+
+## 第五批暂停与后续观察缺口
+
+run `20260908T003528Z-e48b5db4` 固定 326bf59a，记录 133/225 trial、45/75 题；111 passed / 22 failed 仅为诊断计数，其中 product-intake-negative-delete-images 的 trial 2/3 调用 propose_graph_change_set_v1 后无真实观察，2 条 unobservable，measurementEligible=false。按合同 SIGINT 停止（130），不续接或降分母，无 summary/development 导出。原始轨迹、stop 与清理记录保留于 `storage-dev/eval-development-0908-r5/agent-evals/evidence/`；新建五库已清理，与启动前清单一致，历史三库未动。执行者报告固定 checkout 干净；协调者已读取停止后指纹报告，all_match=true，固定提交、输入/Skill/harness/lock及133条原始记录均未变。
+
+[创建场景跨工具观察](archive/eval-intake-graph-observation.md) 承担新缺口；其检查需覆盖创建场景可调用的写工具，不再只按上一条成功路径补宿主。题目、评分、Skill 与原始五批保持冻结。完整开发包仍未交付。
+
+创建场景跨工具观察与多工作流种子已通过最终确定性回归；本单仍待新提交冻结与资源复核后恢复采证，旧五批不能用于完整开发包。

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,12 +75,7 @@ func TestEvalUserSimHost(t *testing.T) {
 		}
 		raw, _ := json.Marshal(request.Params)
 		text := string(raw)
-		mapping := map[string]string{"22222222-2222-4222-8222-222222222222": seeded.ProductID, "33333333-3333-4333-8333-333333333333": seeded.GraphID}
-		for _, ids := range []map[string]string{seeded.NodeIDs, seeded.EdgeIDs, seeded.GroupIDs, seeded.AssetIDs, seeded.FolderIDs} {
-			for fixture, actual := range ids {
-				mapping[fixture] = actual
-			}
-		}
+		mapping := evalFixtureToActualIDs(seeded)
 		for fixture, actual := range mapping {
 			if actual != "" {
 				text = strings.ReplaceAll(text, fmt.Sprintf("%q", fixture), fmt.Sprintf("%q", actual))
@@ -113,9 +109,46 @@ func TestEvalUserSimHost(t *testing.T) {
 			items, err := as.svc.InspectLibraryAssets(ctx, seeded.ConvID, ids)
 			callErr = err
 			out = map[string]any{"items": items}
+		case "products":
+			query, _ := p["query"].(string)
+			cursor, _ := p["cursor"].(string)
+			limit, _ := p["limit"].(float64)
+			out, callErr = as.svc.ListGlobalProducts(ctx, seeded.ConvID, query, cursor, int(limit))
+		case "inspect_products":
+			var items []GlobalProductResponse
+			items, callErr = as.svc.InspectGlobalProducts(ctx, seeded.ConvID, evalStringSlice(p["product_ids"]))
+			out = map[string]any{"items": items}
+		case "global_context":
+			productID, _ := p["product_id"].(string)
+			format, _ := p["response_format"].(string)
+			out, callErr = as.svc.GlobalWorkflowContext(ctx, seeded.ConvID, productID, format)
+		case "product_assets":
+			directoryKind, _ := p["directory_kind"].(string)
+			directoryKey, _ := p["directory_key"].(string)
+			query, _ := p["query"].(string)
+			sortKey, _ := p["sort"].(string)
+			after, _ := p["after"].(string)
+			limit, _ := p["limit"].(float64)
+			out, callErr = as.svc.ListProductAssets(ctx, seeded.ConvID, directoryKind, directoryKey, query, sortKey, after, int(limit))
+		case "inspect_product_assets":
+			var items []AssetMetadata
+			items, callErr = as.svc.InspectProductAssets(ctx, seeded.ConvID, evalStringSlice(p["asset_ids"]))
+			out = map[string]any{"items": items}
+		case "product_asset_content":
+			assetID, _ := p["asset_id"].(string)
+			var content AssetContent
+			content, callErr = as.svc.ReadProductAssetContent(ctx, seeded.ConvID, assetID)
+			out = evalAssetContent(content)
+		case "global_asset_content":
+			assetID, _ := p["asset_id"].(string)
+			var content AssetContent
+			content, callErr = as.svc.ReadLibraryAssetContent(ctx, seeded.ConvID, assetID)
+			out = evalAssetContent(content)
 		case "context":
 			format, _ := p["response_format"].(string)
 			out, callErr = as.svc.ProductContext(ctx, seeded.ConvID, format)
+		case "graph_state":
+			out, callErr = as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
 		case "apply":
 			out, callErr = as.svc.ApplyGraphTool(ctx, seeded.ConvID, raw, key)
 		case "propose":
@@ -125,6 +158,29 @@ func TestEvalUserSimHost(t *testing.T) {
 			out, callErr = as.svc.DiscardProposalTool(ctx, seeded.ConvID, id, key)
 		case "node":
 			out, callErr = as.svc.GetNodeDetail(ctx, seeded.ConvID, fmt.Sprint(p["node_id"]))
+		case "workflow_runs":
+			limit, _ := p["limit"].(float64)
+			out, callErr = as.svc.ListWorkflowRuns(ctx, seeded.ConvID, int(limit))
+		case "global_runs":
+			limit, _ := p["limit"].(float64)
+			out, callErr = as.svc.InspectWorkflowRuns(ctx, seeded.ConvID, evalStringSlice(p["workflow_ids"]), int(limit))
+		case "run_detail":
+			runID, _ := p["run_id"].(string)
+			out, callErr = as.svc.WorkflowRunDetail(ctx, seeded.ConvID, runID)
+		case "workspace":
+			name, _ := p["name"].(string)
+			var launch WorkspaceLaunchResponse
+			launch, callErr = as.svc.LaunchWorkspaceFromGlobal(ctx, seeded.ConvID, name, key)
+			if callErr == nil {
+				seeded.CreatedProductID = launch.ProductID
+				out = launch
+			}
+		case "cancel":
+			runID, _ := p["run_id"].(string)
+			out, callErr = as.svc.CancelRunTool(ctx, seeded.ConvID, runID, key)
+		case "focus":
+			out, callErr = as.svc.FocusCanvasTool(ctx, seeded.ConvID, key,
+				evalStringSlice(p["node_ids"]), evalStringSlice(p["edge_ids"]), evalStringSlice(p["group_ids"]))
 		case "intake":
 			var input struct {
 				Selection json.RawMessage `json:"selection"`
@@ -138,23 +194,34 @@ func TestEvalUserSimHost(t *testing.T) {
 				payload, _ := json.Marshal(p["library_payload"])
 				out, callErr = as.svc.Library.AppendOrganizationDraftRevision(ctx, seeded.ConvID, payload, "", "")
 			}
-		case "prepare", "run":
+		case "prepare", "global_prepare", "run", "global_run":
 			var input struct {
-				Revision int      `json:"expected_workflow_revision"`
-				Scope    string   `json:"scope"`
-				NodeID   *string  `json:"node_id"`
-				NodeIDs  []string `json:"node_ids"`
-				Force    bool     `json:"force"`
-				Action   string   `json:"document_action"`
+				Revision     int      `json:"expected_workflow_revision"`
+				Scope        string   `json:"scope"`
+				NodeID       *string  `json:"node_id"`
+				NodeIDs      []string `json:"node_ids"`
+				Force        bool     `json:"force"`
+				Action       string   `json:"document_action"`
+				ProductID    string   `json:"product_id"`
+				WorkflowID   string   `json:"workflow_id"`
+				SourceStepID string   `json:"source_step_id"`
+				TaskID       *string  `json:"task_id"`
+				SourceRunID  *string  `json:"source_run_id"`
 			}
 			_ = json.Unmarshal(raw, &input)
 			if request.Method == "prepare" {
-				out, callErr = as.svc.PrepareWorkflowRunRequest(ctx, seeded.ConvID, input.Revision, nil, nil)
+				out, callErr = as.svc.PrepareWorkflowRunRequest(ctx, seeded.ConvID, input.Revision, input.SourceRunID, input.TaskID)
+			} else if request.Method == "global_prepare" {
+				out, callErr = as.svc.PrepareGlobalWorkflowRunRequest(ctx, seeded.ConvID, input.ProductID, input.WorkflowID, input.Revision, input.SourceRunID, input.TaskID)
 			} else {
 				spec, e := parseRunScopeSpec(input.Scope, input.NodeID, input.NodeIDs, input.Force, input.Action)
 				callErr = e
 				if e == nil {
-					out, callErr = as.svc.CreateWorkflowRunRequest(ctx, seeded.ConvID, seeded.GraphID, clockid.New(), clockid.New(), input.Revision, nil, nil, spec)
+					if request.Method == "global_run" {
+						out, callErr = as.svc.CreateGlobalWorkflowRunRequest(ctx, seeded.ConvID, input.ProductID, input.WorkflowID, key, input.SourceStepID, input.Revision, input.TaskID, input.SourceRunID, spec)
+					} else {
+						out, callErr = as.svc.CreateWorkflowRunRequest(ctx, seeded.ConvID, input.WorkflowID, key, input.SourceStepID, input.Revision, input.TaskID, input.SourceRunID, spec)
+					}
 				}
 			}
 		case "decision":
@@ -249,6 +316,28 @@ func writeEvalHostError(w http.ResponseWriter, err error) {
 	}
 	w.WriteHeader(http.StatusInternalServerError)
 	_ = json.NewEncoder(w).Encode(map[string]any{"detail": err.Error(), "code": "eval_host"})
+}
+
+func evalStringSlice(value any) []string {
+	values, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, item := range values {
+		if text, ok := item.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func evalAssetContent(content AssetContent) map[string]any {
+	return map[string]any{
+		"data":      base64.StdEncoding.EncodeToString(content.Bytes),
+		"mediaType": content.MediaType,
+		"sizeBytes": len(content.Bytes),
+	}
 }
 
 func TestEvalHostErrorStatus(t *testing.T) {

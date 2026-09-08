@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { ProductFlowError } from "../src/contracts.js";
+import { workflowRunRequestPayload, type PreparedWorkflowRunRequest } from "../src/productflow.js";
 import type { EvalCallRecord, EvalTask } from "./schema.js";
 import type { StubWorld } from "./stub-world.js";
 
@@ -91,11 +92,47 @@ export async function openGoEvalHost(task: EvalTask, stub: StubWorld, options: G
         return result;
       },
       getNodeDetail: (_c: string, node_id: string) => invoke("node", { node_id }, "get_node_detail_v1"),
+      workflowRuns: (_c: string, limit: number) => invoke("workflow_runs", { limit }, "inspect_workflow_runs_v1"),
+      workflowRunDetail: (_c: string, run_id: string) => invoke("run_detail", { run_id }, "get_workflow_run_detail_v1"),
+      listAssets: (_c: string, params: Record<string, unknown>) => invoke("product_assets", params, "list_product_image_assets_v2"),
+      inspectAssets: (_c: string, asset_ids: string[]) => invoke("inspect_product_assets", { asset_ids }, "inspect_product_image_assets_v1"),
+      assetContent: (_c: string, asset_id: string, global: boolean) => invoke(global ? "global_asset_content" : "product_asset_content", { asset_id }),
+      listGlobalMediaAssets: (_c: string, query: string, cursor: string, limit: number, _signal?: AbortSignal,
+        options: Record<string, unknown> = {}) => invoke("assets", { query, cursor, limit, ...options }, "list_global_media_library_assets_v1"),
+      inspectGlobalMediaAssets: (_c: string, asset_ids: string[]) => invoke("inspect_assets", { asset_ids }, "inspect_global_media_library_assets_v1"),
+      listProducts: (_c: string, query: string, cursor: string, limit: number) => invoke("products", { query, cursor, limit }, "list_products_v1"),
+      inspectProducts: (_c: string, product_ids: string[]) => invoke("inspect_products", { product_ids }, "inspect_products_v1"),
+      globalWorkflowContext: (_c: string, product_id: string, _signal: AbortSignal | undefined, format: string) =>
+        invoke("global_context", { product_id, response_format: format || "detailed" }, "inspect_global_workflow_context_v1"),
+      inspectGlobalWorkflowRuns: (_c: string, workflow_ids: string[], limit: number) =>
+        invoke("global_runs", { workflow_ids, limit }, "inspect_global_workflow_runs_v1"),
+      createProductWorkspace: (_c: string, name: string, key: string) => invoke("workspace", { name }, "create_product_workspace_v1", key),
+      applyGraphChangeSet: (_c: string, params: Record<string, unknown>, key: string) => {
+        return invoke("apply", params, "apply_graph_change_set_v1", key).then((result) => {
+          if (typeof result?.revision === "number") stub.syncGraphRevision(result.revision);
+          return result;
+        });
+      },
+      proposeGraphChangeSet: (_c: string, params: Record<string, unknown>, key: string) =>
+        invoke("propose", params, "propose_graph_change_set_v1", key),
+      discardGraphProposal: (_c: string, proposalID: string | null, key: string) =>
+        invoke("discard", proposalID ? { proposal_id: proposalID } : {}, "discard_workflow_proposal_v1", key),
+      cancelWorkflowRun: (_c: string, run_id: string, key: string) =>
+        invoke("cancel", { run_id }, "cancel_workflow_run_v1", key),
+      focusCanvasItems: (_c: string, params: Record<string, unknown>, key: string) =>
+        invoke("focus", params, "focus_canvas_items_v1", key),
       finalizeProductIntake: async (_c: string, params: unknown, key: string) => {
         const result = await invoke("intake", params, "finalize_product_intake_v1", key);
         if (typeof result?.revision === "number") stub.syncGraphRevision(result.revision);
         return result;
       },
+      validateGlobalDraft: (_c: string, params: unknown) => invoke("draft", params, "propose_global_draft"),
+      prepareWorkflowRunRequest: (_c: string, params: unknown) => invoke("prepare", params),
+      executeWorkflowRunRequest: (_c: string, prepared: PreparedWorkflowRunRequest, sourceStepID: string, key: string) =>
+        invoke("run", workflowRunRequestPayload(prepared, sourceStepID), "request_workflow_run_v1", key),
+      prepareGlobalWorkflowRunRequest: (_c: string, params: unknown) => invoke("global_prepare", params),
+      executeGlobalWorkflowRunRequest: (_c: string, prepared: PreparedWorkflowRunRequest, sourceStepID: string, key: string) =>
+        invoke("global_run", { ...workflowRunRequestPayload(prepared, sourceStepID), product_id: prepared.product_id }, "request_global_workflow_run_v1", key),
     });
   } else {
     Object.assign(stub.client, {
@@ -113,11 +150,11 @@ export async function openGoEvalHost(task: EvalTask, stub: StubWorld, options: G
         invoke("intake", params, "finalize_product_intake_v1", key),
       validateGlobalDraft: (_c: string, params: unknown) => invoke("draft", params, "propose_global_draft"),
       prepareWorkflowRunRequest: (_c: string, params: unknown) => invoke("prepare", params),
-      executeWorkflowRunRequest: (_c: string, prepared: Record<string, unknown>) => invoke("run", {
-        expected_workflow_revision: prepared.workflow_revision,
-        scope: prepared.scope ?? "graph", node_id: prepared.node_id, node_ids: prepared.node_ids,
-        force: prepared.force, document_action: prepared.document_action,
-      }, "request_workflow_run_v1"),
+      executeWorkflowRunRequest: (_c: string, prepared: PreparedWorkflowRunRequest, sourceStepID: string, key: string) =>
+        invoke("run", workflowRunRequestPayload(prepared, sourceStepID), "request_workflow_run_v1", key),
+      prepareGlobalWorkflowRunRequest: (_c: string, params: unknown) => invoke("global_prepare", params),
+      executeGlobalWorkflowRunRequest: (_c: string, prepared: PreparedWorkflowRunRequest, sourceStepID: string, key: string) =>
+        invoke("global_run", { ...workflowRunRequestPayload(prepared, sourceStepID), product_id: prepared.product_id }, "request_global_workflow_run_v1", key),
     });
   }
   return {
@@ -125,6 +162,9 @@ export async function openGoEvalHost(task: EvalTask, stub: StubWorld, options: G
       const result = await invoke("observe", {});
       if (!Array.isArray(result.errors)) throw new Error("missing Go final-state observation");
       return result.errors;
+    },
+    async observeGraph(): Promise<Record<string, unknown>> {
+      return invoke("graph_state", {});
     },
     async decide(kind: string, action: "confirm" | "discard"): Promise<DecisionEvidence> {
       const evidence = await invoke("decision", { kind, action });

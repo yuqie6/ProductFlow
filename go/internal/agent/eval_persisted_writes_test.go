@@ -84,11 +84,31 @@ func gradeEvalPersistedWrites(t *testing.T, as *agentServer, seeded seededEvalWo
 			}
 			params = map[string]any{"selection": intake, "reference_asset_ids": intake["reference_asset_ids"]}
 		case "create_product_workspace_v1":
-			// Creation identity is resolved by the L2 observer before this state boundary.
-			var name string
-			if err := as.pool.QueryRow(ctx, `SELECT name FROM products WHERE id=$1`, seeded.ProductID).Scan(&name); err == nil {
-				params = map[string]any{"name": name}
+			if seeded.CreatedProductID == "" {
+				failures = append(failures, "created workspace identity was not observed")
+				continue
 			}
+			var name string
+			if err := as.pool.QueryRow(ctx, `SELECT name FROM products WHERE id=$1`, seeded.CreatedProductID).Scan(&name); err == nil {
+				params = map[string]any{"name": name}
+			} else {
+				failures = append(failures, "created workspace product was not persisted")
+				continue
+			}
+		case "cancel_workflow_run_v1":
+			if seeded.RecentRunID == "" {
+				failures = append(failures, "recent run identity was not seeded")
+				continue
+			}
+			var status string
+			if err := as.pool.QueryRow(ctx, `SELECT status FROM workflow_graph_runs WHERE id=$1`, seeded.RecentRunID).Scan(&status); err != nil {
+				failures = append(failures, "recent run was not persisted")
+				continue
+			}
+			if status != "cancelled" {
+				failures = append(failures, "recent run was not cancelled")
+			}
+			params = map[string]any{"run_id": seeded.RecentRunID}
 		default:
 			failures = append(failures, "unobservable persisted write: "+expected.Tool)
 			continue
@@ -138,12 +158,7 @@ func normalizeEvalIdentity(t *testing.T, value any, seeded seededEvalWorld) any 
 		t.Fatal(err)
 	}
 	text := string(raw)
-	mapping := map[string]string{seeded.ProductID: "22222222-2222-4222-8222-222222222222", seeded.GraphID: "33333333-3333-4333-8333-333333333333", seeded.FailedRunID: "44444444-4444-4444-8444-444444444444"}
-	for _, ids := range []map[string]string{seeded.NodeIDs, seeded.EdgeIDs, seeded.GroupIDs, seeded.AssetIDs, seeded.FolderIDs} {
-		for fixture, actual := range ids {
-			mapping[actual] = fixture
-		}
-	}
+	mapping := evalActualToFixtureIDs(seeded)
 	for actual, fixture := range mapping {
 		if actual != "" {
 			text = strings.ReplaceAll(text, strconv.Quote(actual), strconv.Quote(fixture))

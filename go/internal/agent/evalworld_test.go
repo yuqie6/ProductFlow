@@ -20,17 +20,33 @@ import (
 )
 
 type seededEvalWorld struct {
-	Scope        string
-	ProductID    string
-	GraphID      string
-	ConvID       string
-	AssetIDs     map[string]string
-	FolderIDs    map[string]string
-	NodeIDs      map[string]string
-	EdgeIDs      map[string]string
-	GroupIDs     map[string]string
-	FailedRunID  string
-	InitialGraph graph.Projection
+	Scope            string
+	ProductID        string
+	GraphID          string
+	ConvID           string
+	AssetIDs         map[string]string
+	FolderIDs        map[string]string
+	NodeIDs          map[string]string
+	EdgeIDs          map[string]string
+	GroupIDs         map[string]string
+	WorkflowIDs      map[string]string
+	RunIDs           map[string]string
+	FailedRunID      string
+	RecentRunID      string
+	CreatedProductID string
+	InitialGraph     graph.Projection
+}
+
+type evalListedWorkflowGroup struct {
+	WorkflowID       string                  `json:"workflow_id"`
+	WorkflowTitle    string                  `json:"workflow_title"`
+	WorkflowRevision int                     `json:"workflow_revision"`
+	Items            []evalListedWorkflowRun `json:"items"`
+}
+
+type evalListedWorkflowRun struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
 }
 
 func TestEvalWorldsSeedFourKinds(t *testing.T) {
@@ -90,7 +106,16 @@ func scopeForWorld(name string) string {
 func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld) seededEvalWorld {
 	t.Helper()
 	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
-	out := seededEvalWorld{Scope: task.Scope, AssetIDs: map[string]string{}, FolderIDs: map[string]string{}, NodeIDs: map[string]string{}, EdgeIDs: map[string]string{}, GroupIDs: map[string]string{}}
+	out := seededEvalWorld{
+		Scope:       task.Scope,
+		AssetIDs:    map[string]string{},
+		FolderIDs:   map[string]string{},
+		NodeIDs:     map[string]string{},
+		EdgeIDs:     map[string]string{},
+		GroupIDs:    map[string]string{},
+		WorkflowIDs: map[string]string{},
+		RunIDs:      map[string]string{},
+	}
 	if task.Scope == "global" {
 		seedGlobalLibraryWorld(t, as, task, world, &out)
 		return out
@@ -113,6 +138,7 @@ func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld
 		t.Fatal("draft missing graph")
 	}
 	out.GraphID = workbench.Graph.ID
+	out.WorkflowIDs[world.LiveGraph.ID] = out.GraphID
 	for _, node := range workbench.Graph.Nodes {
 		if node.NodeType == graph.NodeProductSource {
 			out.NodeIDs["source-1"] = node.ID
@@ -142,6 +168,11 @@ func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld
 	}
 	if world.FailedRun != nil {
 		out.FailedRunID = insertEvalFailedRun(t, as, out, world, task)
+		out.RunIDs[world.FailedRun.ID] = out.FailedRunID
+	}
+	if world.RecentRun != nil {
+		out.RecentRunID = insertEvalRecentRun(t, as, out, world)
+		out.RunIDs[world.RecentRun.ID] = out.RecentRunID
 	}
 	applyEvalInject(t, as, task, world, &out)
 	if out.GraphID != "" {
@@ -253,10 +284,12 @@ func insertEvalFailedRun(t *testing.T, as *agentServer, seeded seededEvalWorld, 
 	if task.Inject != nil && task.Inject.Payload["failure_reason"] != "" {
 		reason = task.Inject.Payload["failure_reason"]
 	}
-	revision := 1
-	if live, err := as.svc.Graph.Get(context.Background(), seeded.ProductID, seeded.GraphID); err == nil {
-		revision = live.Revision
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
+	live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
+	if err != nil {
+		t.Fatal(err)
 	}
+	revision := live.Revision
 	if _, err := as.pool.Exec(context.Background(), `
 		INSERT INTO workflow_graph_runs (
 			id, graph_id, status, run_scope, graph_revision, snapshot_json, is_retryable, failure_reason, started_at, finished_at
@@ -277,6 +310,113 @@ func insertEvalFailedRun(t *testing.T, as *agentServer, seeded seededEvalWorld, 
 	return runID
 }
 
+func insertEvalRecentRun(t *testing.T, as *agentServer, seeded seededEvalWorld, world EvalWorld) string {
+	t.Helper()
+	runID := clockid.New()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
+	live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := live.Revision
+	if _, err := as.pool.Exec(context.Background(), `
+		INSERT INTO workflow_graph_runs (
+			id, graph_id, status, run_scope, graph_revision, snapshot_json, is_retryable, started_at
+		) VALUES ($1, $2, $3, 'graph', $4, '{}'::json, FALSE, NOW())
+	`, runID, seeded.GraphID, world.RecentRun.Status, revision); err != nil {
+		t.Fatal(err)
+	}
+	return runID
+}
+
+func parseEvalListedWorkflowGroups(t *testing.T, world EvalWorld) []evalListedWorkflowGroup {
+	t.Helper()
+	groups := make([]evalListedWorkflowGroup, 0, len(world.ListedWorkflowRuns))
+	for _, raw := range world.ListedWorkflowRuns {
+		var group evalListedWorkflowGroup
+		if err := decodeStrict(raw, &group); err != nil {
+			t.Fatalf("listed workflow runs: %v", err)
+		}
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+func materializeEvalWorkflowGroups(t *testing.T, as *agentServer, ctx context.Context, groups []evalListedWorkflowGroup, seeded *seededEvalWorld) {
+	t.Helper()
+	for index, group := range groups {
+		if group.WorkflowRevision < 1 {
+			t.Fatalf("workflow %s revision must be positive, got %d", group.WorkflowID, group.WorkflowRevision)
+		}
+		graphID := seeded.WorkflowIDs[group.WorkflowID]
+		if graphID == "" {
+			workspace, err := as.svc.Product.CreateAgentDraft(ctx, fmt.Sprintf("评测商品工作流%d", index+2), clockid.New(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			live, err := as.svc.Graph.TryCurrent(ctx, workspace.Product.ID)
+			if err != nil || live == nil {
+				t.Fatalf("listed workflow %s missing live graph: %v", group.WorkflowID, err)
+			}
+			graphID = live.ID
+			seeded.WorkflowIDs[group.WorkflowID] = graphID
+		}
+		if _, err := as.pool.Exec(context.Background(), `
+			UPDATE workflow_graphs SET title=$2, revision=$3, updated_at=NOW() WHERE id=$1
+		`, graphID, group.WorkflowTitle, group.WorkflowRevision); err != nil {
+			t.Fatalf("materialize workflow %s: %v", group.WorkflowID, err)
+		}
+	}
+}
+
+func materializeEvalWorkflowRuns(t *testing.T, as *agentServer, ctx context.Context, groups []evalListedWorkflowGroup, seeded *seededEvalWorld) {
+	t.Helper()
+	for _, group := range groups {
+		graphID := seeded.WorkflowIDs[group.WorkflowID]
+		if graphID == "" {
+			t.Fatalf("workflow %s was not materialized", group.WorkflowID)
+		}
+		for index, item := range group.Items {
+			if runID := seeded.RunIDs[item.ID]; runID != "" {
+				var existing struct {
+					GraphID  string
+					Status   string
+					Revision int
+				}
+				if err := as.pool.QueryRow(ctx, `
+					SELECT graph_id, status, graph_revision FROM workflow_graph_runs WHERE id=$1
+				`, runID).Scan(&existing.GraphID, &existing.Status, &existing.Revision); err != nil {
+					t.Fatalf("listed run %s lookup: %v", item.ID, err)
+				}
+				if existing.GraphID != graphID || existing.Status != item.Status || existing.Revision != group.WorkflowRevision {
+					t.Fatalf("listed run %s = (%s, %s, %d), want (%s, %s, %d)", item.ID, existing.GraphID, existing.Status, existing.Revision, graphID, item.Status, group.WorkflowRevision)
+				}
+				continue
+			}
+			runID := insertEvalListedWorkflowRun(t, as, graphID, item.Status, group.WorkflowRevision, index)
+			seeded.RunIDs[item.ID] = runID
+		}
+	}
+}
+
+func insertEvalListedWorkflowRun(t *testing.T, as *agentServer, graphID, status string, revision, order int) string {
+	t.Helper()
+	runID := clockid.New()
+	startedAt := time.Now().UTC().Add(-time.Duration(order) * time.Second)
+	var finishedAt any
+	if status != "queued" && status != "running" {
+		finishedAt = startedAt
+	}
+	if _, err := as.pool.Exec(context.Background(), `
+		INSERT INTO workflow_graph_runs (
+			id, graph_id, status, run_scope, graph_revision, snapshot_json, is_retryable, started_at, finished_at
+		) VALUES ($1, $2, $3, 'graph', $4, '{}'::json, $5, $6, $7)
+	`, runID, graphID, status, revision, status == "failed", startedAt, finishedAt); err != nil {
+		t.Fatalf("insert listed run %s: %v", status, err)
+	}
+	return runID
+}
+
 func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld, seeded *seededEvalWorld) {
 	t.Helper()
 	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
@@ -288,20 +428,47 @@ func seedGlobalLibraryWorld(t *testing.T, as *agentServer, task EvalTask, world 
 		t.Fatal("global session missing conversation")
 	}
 	seeded.ConvID = sess.Conversations[0].ConversationID
-	if strings.HasPrefix(world.Name, "global-library") {
+	if strings.HasPrefix(world.Name, "global-library") || task.Skill == "workflow-run-request" || len(world.ListedWorkflowRuns) > 0 {
 		workspace, err := as.svc.Product.CreateAgentDraft(ctx, "评测商品", clockid.New(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		seeded.ProductID = workspace.Product.ID
+		live, err := as.svc.Graph.TryCurrent(ctx, seeded.ProductID)
+		if err != nil || live == nil {
+			t.Fatalf("global draft missing live graph: %v", err)
+		}
+		seeded.GraphID = live.ID
+		seeded.WorkflowIDs[world.LiveGraph.ID] = seeded.GraphID
+		for _, node := range live.Nodes {
+			if node.NodeType == graph.NodeProductSource {
+				seeded.NodeIDs["source-1"] = node.ID
+			}
+		}
+		if needsExpandedGraph(world) {
+			expandEvalGraph(t, as, world, seeded)
+		}
 		observed, err := as.svc.GlobalWorkflowContext(ctx, seeded.ConvID, seeded.ProductID, "concise")
 		if err != nil {
 			t.Fatal(err)
 		}
-		seeded.GraphID = observed["live_graph"].(map[string]any)["id"].(string)
+		if observedGraphID, ok := observed["live_graph"].(map[string]any)["id"].(string); ok && observedGraphID != seeded.GraphID {
+			t.Fatalf("global graph id %s != seeded %s", observedGraphID, seeded.GraphID)
+		}
 		if _, err := as.pool.Exec(context.Background(), `UPDATE workflow_graphs SET title=$2, revision=$3 WHERE id=$1`, seeded.GraphID, world.LiveGraph.Title, world.LiveGraph.Revision); err != nil {
 			t.Fatal(err)
 		}
+		groups := parseEvalListedWorkflowGroups(t, world)
+		materializeEvalWorkflowGroups(t, as, ctx, groups, seeded)
+		if world.FailedRun != nil {
+			seeded.FailedRunID = insertEvalFailedRun(t, as, *seeded, world, task)
+			seeded.RunIDs[world.FailedRun.ID] = seeded.FailedRunID
+		}
+		if world.RecentRun != nil {
+			seeded.RecentRunID = insertEvalRecentRun(t, as, *seeded, world)
+			seeded.RunIDs[world.RecentRun.ID] = seeded.RecentRunID
+		}
+		materializeEvalWorkflowRuns(t, as, ctx, groups, seeded)
 	}
 	for _, folder := range world.ListedFolders {
 		title := folder.Title
@@ -466,6 +633,44 @@ func remapIDs(ids []string, mapping map[string]string) []string {
 	return out
 }
 
+func evalFixtureToActualIDs(seeded seededEvalWorld) map[string]string {
+	mapping := map[string]string{
+		"22222222-2222-4222-8222-222222222222": seeded.ProductID,
+		"33333333-3333-4333-8333-333333333333": seeded.GraphID,
+	}
+	for fixture, actual := range seeded.WorkflowIDs {
+		mapping[fixture] = actual
+	}
+	for fixture, actual := range seeded.RunIDs {
+		mapping[fixture] = actual
+	}
+	for _, ids := range []map[string]string{seeded.NodeIDs, seeded.EdgeIDs, seeded.GroupIDs, seeded.AssetIDs, seeded.FolderIDs} {
+		for fixture, actual := range ids {
+			mapping[fixture] = actual
+		}
+	}
+	return mapping
+}
+
+func evalActualToFixtureIDs(seeded seededEvalWorld) map[string]string {
+	mapping := map[string]string{
+		seeded.ProductID: "22222222-2222-4222-8222-222222222222",
+		seeded.GraphID:   "33333333-3333-4333-8333-333333333333",
+	}
+	for fixture, actual := range seeded.WorkflowIDs {
+		mapping[actual] = fixture
+	}
+	for fixture, actual := range seeded.RunIDs {
+		mapping[actual] = fixture
+	}
+	for _, ids := range []map[string]string{seeded.NodeIDs, seeded.EdgeIDs, seeded.GroupIDs, seeded.AssetIDs, seeded.FolderIDs} {
+		for fixture, actual := range ids {
+			mapping[actual] = fixture
+		}
+	}
+	return mapping
+}
+
 func imageTypeKeyFromTitle(title string) string {
 	if strings.Contains(title, "细节") {
 		return "detail"
@@ -612,9 +817,13 @@ func gradeEvalState(t *testing.T, as *agentServer, seeded seededEvalWorld, expec
 			errors = append(errors, fmt.Sprintf("failed_run_present=%v want %v", present, *expect.FailedRunPresent))
 		}
 	}
-	if expect.ProductNameContains != "" && seeded.ProductID != "" {
+	productIDForName := seeded.ProductID
+	if seeded.CreatedProductID != "" {
+		productIDForName = seeded.CreatedProductID
+	}
+	if expect.ProductNameContains != "" && productIDForName != "" {
 		var name string
-		if err := as.pool.QueryRow(context.Background(), `SELECT name FROM products WHERE id = $1`, seeded.ProductID).Scan(&name); err != nil {
+		if err := as.pool.QueryRow(context.Background(), `SELECT name FROM products WHERE id = $1`, productIDForName).Scan(&name); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(name, expect.ProductNameContains) {
@@ -677,5 +886,123 @@ func TestEvalStateGraderSeesRename(t *testing.T) {
 	got := gradeEvalState(t, as, seeded, &EvalStateExpect{NodeTitles: map[string]string{"主图提示词": "新标题"}, MinRevision: &minRev})
 	if len(got) > 0 {
 		t.Fatalf("%v", got)
+	}
+}
+
+func TestEvalRunFixturesKeepLiveRevision(t *testing.T) {
+	as := newAgentServer(t, mockGateway{}, "tok")
+	worlds, err := LoadEvalWorlds(DefaultEvalRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
+	for _, name := range []string{"expanded-running-run", "expanded-failed-run", "global-two-workflow-runs"} {
+		t.Run(name, func(t *testing.T) {
+			scope := "product_workflow"
+			if name == "global-two-workflow-runs" {
+				scope = "global"
+			}
+			task := EvalTask{ID: "run-revision-" + name, Scope: scope, Skill: "workflow-run-request", World: name}
+			seeded := seedEvalWorld(t, as, task, worlds[name])
+			live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runID := seeded.RecentRunID
+			if runID == "" {
+				runID = seeded.FailedRunID
+			}
+			if runID == "" {
+				t.Fatal("run not seeded")
+			}
+			var revision int
+			if err := as.pool.QueryRow(ctx, "SELECT graph_revision FROM workflow_graph_runs WHERE id=$1", runID).Scan(&revision); err != nil {
+				t.Fatal(err)
+			}
+			if revision != live.Revision {
+				t.Fatalf("run revision %d != live revision %d", revision, live.Revision)
+			}
+		})
+	}
+}
+
+func TestEvalListedWorkflowRunsMaterializeActualIDs(t *testing.T) {
+	as := newEvalHostServer(t)
+	worlds, err := LoadEvalWorlds(DefaultEvalRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	world, ok := worlds["global-two-workflow-runs"]
+	if !ok {
+		t.Fatal("missing global-two-workflow-runs world")
+	}
+	task := EvalTask{ID: "global-run-materialization", Scope: "global", Skill: "run-diagnosis", World: world.Name}
+	seeded := seedEvalWorld(t, as, task, world)
+	groups := parseEvalListedWorkflowGroups(t, world)
+	if len(groups) != 2 {
+		t.Fatalf("listed workflow groups = %d, want 2", len(groups))
+	}
+	fixtureToActual := evalFixtureToActualIDs(seeded)
+	actualToFixture := evalActualToFixtureIDs(seeded)
+	workflowIDs := make([]string, 0, len(groups))
+	for _, group := range groups {
+		workflowID := seeded.WorkflowIDs[group.WorkflowID]
+		if workflowID == "" || fixtureToActual[group.WorkflowID] != workflowID || actualToFixture[workflowID] != group.WorkflowID {
+			t.Fatalf("workflow %s mapping missing or not reversible", group.WorkflowID)
+		}
+		workflowIDs = append(workflowIDs, workflowID)
+	}
+
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
+	result, err := as.svc.InspectWorkflowRuns(ctx, seeded.ConvID, workflowIDs, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed struct {
+		Items []struct {
+			WorkflowID       string `json:"workflow_id"`
+			WorkflowTitle    string `json:"workflow_title"`
+			WorkflowRevision int    `json:"workflow_revision"`
+			Items            []struct {
+				ID            string `json:"id"`
+				Status        string `json:"status"`
+				GraphRevision int    `json:"graph_revision"`
+			} `json:"items"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &observed); err != nil {
+		t.Fatal(err)
+	}
+	if len(observed.Items) != len(groups) {
+		t.Fatalf("observed workflow groups = %d, want %d", len(observed.Items), len(groups))
+	}
+	for index, group := range groups {
+		got := observed.Items[index]
+		if got.WorkflowID != workflowIDs[index] || got.WorkflowTitle != group.WorkflowTitle || got.WorkflowRevision != group.WorkflowRevision {
+			t.Fatalf("workflow %s response = (%s, %s, %d), want (%s, %s, %d)", group.WorkflowID, got.WorkflowID, got.WorkflowTitle, got.WorkflowRevision, workflowIDs[index], group.WorkflowTitle, group.WorkflowRevision)
+		}
+		if len(got.Items) != len(group.Items) {
+			t.Fatalf("workflow %s runs = %d, want %d", group.WorkflowID, len(got.Items), len(group.Items))
+		}
+		for runIndex, wantRun := range group.Items {
+			runID := seeded.RunIDs[wantRun.ID]
+			if runID == "" || fixtureToActual[wantRun.ID] != runID || actualToFixture[runID] != wantRun.ID {
+				t.Fatalf("run %s mapping missing or not reversible", wantRun.ID)
+			}
+			if got.Items[runIndex].ID != runID || got.Items[runIndex].Status != wantRun.Status || got.Items[runIndex].GraphRevision != group.WorkflowRevision {
+				t.Fatalf("run %s response = (%s, %s, %d), want (%s, %s, %d)", wantRun.ID, got.Items[runIndex].ID, got.Items[runIndex].Status, got.Items[runIndex].GraphRevision, runID, wantRun.Status, group.WorkflowRevision)
+			}
+			detail, err := as.svc.WorkflowRunDetail(ctx, seeded.ConvID, runID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if detail["run_id"] != runID || detail["workflow_id"] != workflowIDs[index] || detail["status"] != wantRun.Status || detail["graph_revision"] != group.WorkflowRevision {
+				t.Fatalf("run %s detail = %#v", wantRun.ID, detail)
+			}
+		}
 	}
 }
