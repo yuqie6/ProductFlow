@@ -96,6 +96,59 @@ export interface PasswordRecoveryChallenge {
   resend_after_seconds: number;
 }
 
+export interface OpsPage<T> {
+  items: T[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface OpsTask {
+  id: string;
+  kind: "agent_task" | "workflow_run" | "image_session" | "local_edit";
+  product_id: string | null;
+  title: string;
+  status: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  failure_reason: string | null;
+}
+
+export interface OpsAction {
+  id: string;
+  actor_user_id: string;
+  actor_name: string;
+  merchant_id: string;
+  product_id: string | null;
+  product_name: string | null;
+  action: "product.facts.update" | "product.delete";
+  created_at: string;
+  result: "succeeded" | "rejected" | "unknown";
+  failure_reason: string | null;
+}
+
+export interface OpsQuotaAccount {
+  merchant_id: string;
+  currency: string;
+  available_units: number;
+  reserved_units: number;
+  price_version_id: string;
+}
+
+export interface OpsQuotaEvent {
+  id: string;
+  merchant_id: string;
+  hold_id: string | null;
+  event_type: string;
+  amount_units: number;
+  available_after: number;
+  reserved_after: number;
+  reason: string | null;
+  actor_user_id: string | null;
+  created_at: string;
+}
+
 export interface ProductSummary {
   id: string;
   name: string;

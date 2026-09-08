@@ -847,3 +847,39 @@ func rewriteDBName(raw, name string) (string, error) {
 	parsed.Path = "/" + name
 	return parsed.String(), nil
 }
+
+func TestApplyCreatesAndPreservesOperatorActionHistory(t *testing.T) {
+	pool := testdb.Pool(t)
+	ctx := context.Background()
+	gdb, err := db.OpenGorm(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DROP TABLE IF EXISTS operator_product_actions`); err != nil {
+		t.Fatal(err)
+	}
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	event := schema.OperatorProductActions{ID: "migration-audit", ActorUserID: "deleted-user", ActorName: "Historical operator", MerchantID: "deleted-merchant", ProductID: "deleted-product", ProductName: "Deleted product", Action: "product.delete", CreatedAt: now, Result: "succeeded"}
+	if err := gdb.Create(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { gdb.Where("id = ?", event.ID).Delete(&schema.OperatorProductActions{}) })
+	if err := schema.Apply(gdb); err != nil {
+		t.Fatal(err)
+	}
+	var stored schema.OperatorProductActions
+	if err := gdb.Where("id = ?", event.ID).Take(&stored).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProductName != event.ProductName || stored.Result != "succeeded" {
+		t.Fatalf("history changed %+v", stored)
+	}
+	for _, name := range []string{"ix_operator_product_actions_merchant_created", "ix_operator_product_actions_product_created"} {
+		if !gdb.Migrator().HasIndex(&schema.OperatorProductActions{}, name) {
+			t.Fatalf("missing index %s", name)
+		}
+	}
+}

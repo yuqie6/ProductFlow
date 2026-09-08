@@ -15,11 +15,13 @@ import {
   Sun,
   Wand2,
   UserRound,
+  ShieldCheck,
 } from "lucide-react";
 import type { FocusEvent, MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 
 import { api } from "../lib/api";
+import { ownMerchantId } from "../lib/accountBoundary";
 import { LOCALES, LOCALE_LABEL_KEYS, type Locale } from "../lib/i18n";
 import { canAccessOpsSettings } from "../lib/opsAccess";
 import { usePreferences } from "../lib/preferences";
@@ -67,6 +69,12 @@ const navItems = [
     to: "/account",
     icon: UserRound,
     match: (pathname: string) => pathname === "/account",
+  },
+  {
+    labelKey: "ops.title",
+    to: "/ops",
+    icon: ShieldCheck,
+    match: (pathname: string) => pathname.startsWith("/ops"),
   },
   {
     labelKey: "nav.settings",
@@ -168,7 +176,11 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
     retry: false,
   });
   const showSettings = canAccessOpsSettings(sessionQuery.data);
-  const visibleNavItems = navItems.filter((item) => item.to !== "/settings" || showSettings);
+  const operatorWithoutMerchant = sessionQuery.data?.user?.is_operator && !ownMerchantId(sessionQuery.data);
+  const visibleNavItems = navItems.filter((item) => {
+    if ((item.to === "/settings" || item.to === "/ops") && !showSettings) return false;
+    return !(operatorWithoutMerchant && ["/products", "/image-chat", "/media-library"].includes(item.to));
+  });
   const CurrentThemeIcon = themeIcons[themePreference];
   const nextThemePreference =
     THEME_PREFERENCES[(THEME_PREFERENCES.indexOf(themePreference) + 1) % THEME_PREFERENCES.length];
@@ -298,7 +310,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
         className="fixed inset-x-0 bottom-0 z-50 border-t border-border-l1 bg-surface-raised/96 px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+0.4rem)] shadow-elev-2 backdrop-blur dark:border-border-l2 dark:bg-surface-base/94 lg:hidden"
       >
         <div
-          className="mx-auto grid w-full max-w-xl gap-1"
+          className="mx-auto grid w-full max-w-xl gap-0 sm:gap-1"
           style={{ gridTemplateColumns: `repeat(${visibleNavItems.length}, minmax(0, 1fr))` }}
         >
           {visibleNavItems.map((item) => {

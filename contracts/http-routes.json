@@ -70,6 +70,36 @@
     "name": "list_operator_merchants"
   },
   {
+    "method": "GET",
+    "path": "/api/ops/merchants/{merchant_id}",
+    "name": "get_operator_merchant"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ops/merchants/{merchant_id}/products/{product_id}/image-assets",
+    "name": "list_operator_product_assets"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ops/merchants/{merchant_id}/product-image-assets/{asset_id}/download",
+    "name": "download_operator_product_asset"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ops/merchants/{merchant_id}/tasks",
+    "name": "list_operator_merchant_tasks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ops/merchants/{merchant_id}/actions",
+    "name": "list_operator_product_actions"
+  },
+  {
+    "method": "GET",
+    "path": "/api/ops/merchants/{merchant_id}/quota/events",
+    "name": "list_operator_quota_events"
+  },
+  {
     "method": "PATCH",
     "path": "/api/ops/merchants/{merchant_id}/status",
     "name": "set_merchant_status"

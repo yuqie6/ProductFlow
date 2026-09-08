@@ -1,13 +1,13 @@
 import { lazy, Suspense, useEffect, useMemo, useRef } from "react";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { AppToaster } from "./components/ui/toast";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { api } from "./lib/api";
 import { canAccessOpsSettings } from "./lib/opsAccess";
-import { accountIdentity, applyAccountSwitchBoundary, sameAccountIdentity } from "./lib/accountBoundary";
+import { accountIdentity, applyAccountSwitchBoundary, ownMerchantId, sameAccountIdentity } from "./lib/accountBoundary";
 import { PreferencesProvider, useI18n } from "./lib/preferences";
 import { disposeAllConversationRuntimes } from "./pages/workbench/agent/conversation/runtime";
 
@@ -20,6 +20,9 @@ const HomePage = lazy(() =>
 const HelpPage = lazy(() =>
   import("./pages/HelpPage").then((module) => ({ default: module.HelpPage })),
 );
+const OpsPage = lazy(() => import("./pages/OpsPage").then((module) => ({ default: module.OpsPage })));
+const OpsMerchantPage = lazy(() => import("./pages/OpsMerchantPage").then((module) => ({ default: module.OpsMerchantPage })));
+const OpsProductPage = lazy(() => import("./pages/OpsProductPage").then((module) => ({ default: module.OpsProductPage })));
 const AccountPage = lazy(() => import("./pages/AccountPage").then((module) => ({ default: module.AccountPage })));
 const PasswordRecoveryPage = lazy(() => import("./pages/PasswordRecoveryPage").then((module) => ({ default: module.PasswordRecoveryPage })));
 const LoginPage = lazy(() =>
@@ -57,6 +60,7 @@ function LoadingScreen() {
 
 function AppRoutes() {
   const queryClient = useQueryClient();
+  const { pathname } = useLocation();
   const sessionQuery = useQuery({
     queryKey: ["session"],
     queryFn: api.getSessionState,
@@ -64,6 +68,7 @@ function AppRoutes() {
   });
 
   const authenticated = Boolean(sessionQuery.data?.authenticated);
+  const showMerchantDock = authenticated && Boolean(ownMerchantId(sessionQuery.data)) && pathname !== "/ops" && !pathname.startsWith("/ops/");
   const canOpenSettings = canAccessOpsSettings(sessionQuery.data);
   const identity = useMemo(() => accountIdentity(sessionQuery.data), [sessionQuery.data]);
   const previousIdentityRef = useRef<typeof identity>(null);
@@ -96,6 +101,9 @@ function AppRoutes() {
         <Routes>
           <Route path="/login" element={<LoginPage authenticated={authenticated} />} />
           <Route path="/password-recovery" element={<PasswordRecoveryPage />} />
+          <Route path="/ops" element={canOpenSettings ? <OpsPage /> : <Navigate to={authenticated ? "/account" : "/login"} replace />} />
+          <Route path="/ops/merchants/:merchantId" element={canOpenSettings ? <OpsMerchantPage /> : <Navigate to={authenticated ? "/account" : "/login"} replace />} />
+          <Route path="/ops/merchants/:merchantId/products/:productId" element={canOpenSettings ? <OpsProductPage /> : <Navigate to={authenticated ? "/account" : "/login"} replace />} />
           <Route path="/account" element={authenticated ? <AccountPage /> : <Navigate to="/login" replace />} />
           <Route
             path="/home"
@@ -138,7 +146,7 @@ function AppRoutes() {
           <Route path="*" element={<Navigate to={authenticated ? "/home" : "/login"} replace />} />
         </Routes>
       </Suspense>
-      {authenticated ? (
+      {showMerchantDock ? (
         <Suspense fallback={null}>
           <GlobalAgentDock />
         </Suspense>

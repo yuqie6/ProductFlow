@@ -75,8 +75,8 @@
 | 配方 | `go/internal/product/recipe_create.go` 及测试；预览、事务确认、幂等与新商品输入已实现 | 这些不是新任务；下一缺口是可复用的品牌和视觉决策 |
 | 配方内容 | `go/internal/recipe/payload.go` 清除商品身份、事实版本、视觉版本引用和 `visual_overrides`；`extract.go` 清除来源绑定 | 结构复用不等于品牌风格复用；不能通过原样复制来源商品文案解决 |
 | 图片与交付 | `go/internal/product/`、`go/internal/localedit/`、`go/internal/delivery/`；采用快照、规格转换和 ZIP 已实现 | mock 商家闭环已有局部证据；真实修图质量与 R2/R3 仍未通过 |
-| 身份 | `go/internal/auth/`、`schema/identity.go`；User 密码会话、直接商家归属与会话撤销 | 公开邮箱验证码注册、SMTP恢复、本人资料与会话管理已交付；个人偏好与管理员商品页面仍需增量交付 |
-| 数据范围 | 商家根表 `merchant_id`、子链所有权、B0–B10 自动化隔离 | 账号通过 `users.merchant_id` 直接归属，前端消费 `session.merchant`；管理员商品 API 显式指定目标商家，完整管理页面仍待交付；实例 settings 保持 Operator 权限 |
+| 身份 | `go/internal/auth/`、`schema/identity.go`；User 密码会话、直接商家归属与会话撤销 | 公开邮箱验证码注册、SMTP恢复、本人资料与会话管理已交付；管理员商品页面已交付，个人偏好仍需增量交付 |
+| 数据范围 | 商家根表 `merchant_id`、子链所有权、B0–B10 自动化隔离 | 账号通过 `users.merchant_id` 直接归属，前端消费 `session.merchant`；管理员商品 API 显式指定目标商家，商品管理页面与本次操作记录已交付；实例 settings 保持 Operator 权限 |
 | Agent 范围 | `go/internal/agent/contract.go`、`agent-service/src/runtime-scope.ts` 的 merchant_id | 已有商家合同与工具隔离；不重新建设 Pi runtime，新增 UI 不得丢失作用域 |
 | 费用 | `go/internal/quota/` 的 account/hold/event、版本价格、试用种子和 unknown 裁定 | 多入口已接账本；消费明细和运营工作流不足，内部单位不代表真实支付或商业毛利 |
 | 部署 | `release/`、固定镜像与恢复/升级脚本；R6 pin 证据 | 特定候选发行门已过；空闲/轻负载不能推导多商混合负载或 SLA |
@@ -278,7 +278,7 @@
 | 普通商家账号 | 本人资料/密码、自己的商品/素材/任务/额度与交付 | 不能访问其他商家或修改站点凭据、自行增加额度 |
 | 平台管理员 | 管理各商家商品、商家状态、额度、任务与站点配置 | 操作保留真实管理员身份和目标商家归属，不伪装成商家成员 |
 
-管理员跨商家商品读、编辑和删除接口位于 /api/ops/merchants/{merchant_id}/products，显式验证管理员身份及目标商家；完整管理页面与完整操作审计仍待交付。通过管理员权限访问目标对象并复用业务用例，不建立临时支持会话作为日常管理的前置。修改、删除和调账应记录操作人、目标、时间与结果；生成等付费动作的权限与费用归属单独说明，不能由跨商读取权限推导出来。
+管理员跨商家商品读、编辑和删除接口位于 /api/ops/merchants/{merchant_id}/products，显式验证管理员身份及目标商家；商品管理页面与本次商品修改/删除记录已交付；记录不追补历史操作或覆盖全部 HTTP 探测。通过管理员权限访问目标对象并复用业务用例，不建立临时支持会话作为日常管理的前置。修改、删除和调账应记录操作人、目标、时间与结果；生成等付费动作的权限与费用归属单独说明，不能由跨商读取权限推导出来。
 
 注册继续使用已验证的 SMTP 邮箱验证码流程。密码恢复、本人资料和会话管理已取得隔离Go/PG、真实SMTP/IMAP与浏览器证据；个人偏好持久化仍待交付，不依赖团队功能。管理员配置页无需旧的二次解锁；未来若确有敏感操作需再认证，必须说明具体风险并由用户裁定，不能作为全部运营任务的隐含前置。
 
@@ -485,7 +485,7 @@ G-07 干净固定 checkout 全量检查和原 [平台发布合同](audits/perfor
 | `/home`、`/products`、商品工作台、`/image-chat`、`/media-library` | 复用现有商家生产入口；只访问账号自有数据 |
 | `/account` | 目标：本人资料、密码与会话；不要求团队前置 |
 | `/merchant/usage` | 目标：本人商家额度、消费和待核对记录 |
-| `/ops/merchants`、`/ops/products` | 目标：管理员管理商家及其商品；完整入口尚未实现 |
+| `/ops`、`/ops/merchants/:merchantId`、`/ops/merchants/:merchantId/products/:productId` | 已实现商家目录、商品资料/媒体/删除、任务与额度记录、调账及商品操作记录 |
 | `/settings` | 已实现管理员站点配置；普通用户拒绝 |
 
 不新增 `/workspaces` 或成员管理页面。商家资料与个人偏好可在账户页面分区；字段持久化按真实需求实现，不为语言/主题强制复制多人协作版本流程。目标路由尚未实现时不展示空按钮或 501 占位。

@@ -143,6 +143,8 @@ END $enum$;`,
 
 // ExtraDDL 补上 CreateTable/AddColumn 不管的 CHECK/UNIQUE/FK 与索引。改约束只改这里，不要在模型 tag 里再写一份。
 var ExtraDDL = []string{
+	`CREATE INDEX IF NOT EXISTS ix_operator_product_actions_merchant_created ON operator_product_actions (merchant_id, created_at DESC, id DESC);`,
+	`CREATE INDEX IF NOT EXISTS ix_operator_product_actions_product_created ON operator_product_actions (merchant_id, product_id, created_at DESC, id DESC);`,
 	`DO $c$ BEGIN
 ALTER TABLE products DROP CONSTRAINT IF EXISTS uq_products_creation_idempotency_key;
 EXCEPTION WHEN undefined_object THEN NULL;

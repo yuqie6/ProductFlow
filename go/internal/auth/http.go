@@ -77,6 +77,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	ops := engine.Group("/api/ops")
 	ops.Use(RequireOperator())
 	ops.GET("/merchants", h.listMerchants)
+	ops.GET("/merchants/:merchant_id", h.getMerchant)
 	ops.PATCH("/merchants/:merchant_id/status", h.RequireOperatorMerchantTarget("merchant_id"), h.setMerchantStatus)
 }
 
@@ -124,12 +125,21 @@ func (h HTTP) listMerchants(c *gin.Context) {
 		httpx.AbortErr(c, err)
 		return
 	}
-	pageResult, err := h.svc().ListMerchants(c.Request.Context(), page, pageSize)
+	pageResult, err := h.svc().ListMerchants(c.Request.Context(), page, pageSize, c.Query("q"), c.Query("status"))
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, pageResult)
+}
+
+func (h HTTP) getMerchant(c *gin.Context) {
+	merchant, err := h.svc().GetMerchant(c.Request.Context(), c.Param("merchant_id"))
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, merchant)
 }
 
 func parseMerchantListInt(c *gin.Context, key string, def, min, max int) (int, error) {

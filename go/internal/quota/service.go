@@ -20,6 +20,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
@@ -33,6 +34,10 @@ import (
 const (
 	CurrencyInternalUnits = "iu"
 	DefaultPriceVersionID = "pv-placeholder-v0"
+
+	quotaEventDefaultPageSize = 20
+	quotaEventMaxPageSize     = 100
+	quotaEventMaxPage         = 100000
 
 	StatusReserved              = "reserved"
 	StatusSettled               = "settled"
@@ -82,6 +87,29 @@ type Hold struct {
 	PriceVersionID string
 }
 
+// Event 是额度账本的原始审计投影。幂等键和价格版本仍留在账本中，
+// 但不属于管理员事件页的公开字段。
+type Event struct {
+	ID             string    `json:"id"`
+	MerchantID     string    `json:"merchant_id"`
+	HoldID         *string   `json:"hold_id"`
+	EventType      string    `json:"event_type"`
+	AmountUnits    int64     `json:"amount_units"`
+	AvailableAfter int64     `json:"available_after"`
+	ReservedAfter  int64     `json:"reserved_after"`
+	Reason         *string   `json:"reason"`
+	ActorUserID    *string   `json:"actor_user_id"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// EventPage 是管理员额度事件页的有界响应。
+type EventPage struct {
+	Items    []Event `json:"items"`
+	Total    int64   `json:"total"`
+	Page     int     `json:"page"`
+	PageSize int     `json:"page_size"`
+}
+
 // GetAccount 读取商家额度账户；尚无行时返回零余额账户投影（不自动建行）。
 func (s *Service) GetAccount(ctx context.Context, merchantID string) (Account, error) {
 	merchantID = strings.TrimSpace(merchantID)
@@ -105,6 +133,67 @@ func (s *Service) GetAccount(ctx context.Context, merchantID string) (Account, e
 	return accountFromRow(row), nil
 }
 
+// ListEvents 直接读取指定商家的追加式额度账本。商家存在但没有事件时返回空数组；
+// 不存在的商家返回 404，避免把一个不存在的目标伪装成空账本。
+func (s *Service) ListEvents(ctx context.Context, merchantID string, page, pageSize int) (EventPage, error) {
+	if s == nil || s.DB == nil {
+		return EventPage{}, apperr.Internal("额度存储未配置")
+	}
+	merchantID = strings.TrimSpace(merchantID)
+	if merchantID == "" {
+		return EventPage{}, apperr.Validation("缺少商家")
+	}
+	if page < 1 || page > quotaEventMaxPage {
+		return EventPage{}, apperr.Validation("额度事件页码无效")
+	}
+	if pageSize < 1 || pageSize > quotaEventMaxPageSize {
+		return EventPage{}, apperr.Validation("额度事件每页数量无效")
+	}
+
+	db := s.DB.WithContext(ctx)
+	var merchant schema.Merchants
+	err := db.Select("id").Where("id = ?", merchantID).Take(&merchant).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return EventPage{}, apperr.NotFound("资源不存在")
+	}
+	if err != nil {
+		return EventPage{}, apperr.Internal("读取商家失败")
+	}
+
+	query := db.Model(&schema.MerchantQuotaEvents{}).Where("merchant_id = ?", merchantID)
+	out := EventPage{
+		Items:    make([]Event, 0, pageSize),
+		Page:     page,
+		PageSize: pageSize,
+	}
+	if err := query.Count(&out.Total).Error; err != nil {
+		return EventPage{}, apperr.Internal("读取额度事件失败")
+	}
+	var rows []schema.MerchantQuotaEvents
+	if err := query.Select("id", "merchant_id", "hold_id", "event_type", "amount_units", "available_after", "reserved_after", "reason", "actor_user_id", "created_at").
+		Order("created_at DESC, id DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Find(&rows).Error; err != nil {
+		return EventPage{}, apperr.Internal("读取额度事件失败")
+	}
+	for _, row := range rows {
+		out.Items = append(out.Items, Event{
+			ID:             row.ID,
+			MerchantID:     row.MerchantID,
+			HoldID:         row.HoldID,
+			EventType:      row.EventType,
+			AmountUnits:    row.AmountUnits,
+			AvailableAfter: row.AvailableAfter,
+			ReservedAfter:  row.ReservedAfter,
+			Reason:         row.Reason,
+			ActorUserID:    row.ActorUserID,
+			CreatedAt:      row.CreatedAt,
+		})
+	}
+	return out, nil
+}
+
 // Adjust 由 Operator 增减 available（正数入账、负数扣减）。相同幂等键重放不重复调账。
 func (s *Service) Adjust(ctx context.Context, merchantID, idempotencyKey string, deltaUnits int64, reason, actorUserID string) (Account, error) {
 	merchantID = strings.TrimSpace(merchantID)
@@ -117,8 +206,17 @@ func (s *Service) Adjust(ctx context.Context, merchantID, idempotencyKey string,
 	if idempotencyKey == "" {
 		return Account{}, apperr.Validation("缺少幂等键")
 	}
+	if utf8.RuneCountInString(idempotencyKey) > 200 {
+		return Account{}, apperr.Validation("幂等键不能超过 200 个字符")
+	}
 	if deltaUnits == 0 {
 		return Account{}, apperr.Validation("调账额度不能为 0")
+	}
+	if reason == "" {
+		return Account{}, apperr.Validation("调账原因不能为空")
+	}
+	if utf8.RuneCountInString(reason) > 2000 {
+		return Account{}, apperr.Validation("调账原因不能超过 2000 个字符")
 	}
 
 	var out Account
@@ -127,9 +225,12 @@ func (s *Service) Adjust(ctx context.Context, merchantID, idempotencyKey string,
 		if err != nil {
 			return err
 		}
-		if _, ok, err := loadEvent(gdb, merchantID, EventAdjust, idempotencyKey); err != nil {
+		if existing, ok, err := loadEvent(gdb, merchantID, EventAdjust, idempotencyKey); err != nil {
 			return err
 		} else if ok {
+			if existing.AmountUnits != deltaUnits || normalizedOptionalString(existing.Reason) != reason || normalizedOptionalString(existing.ActorUserID) != actorUserID {
+				return apperr.Conflict("幂等键已用于其他调账")
+			}
 			out = accountFromRow(acct)
 			return nil
 		}
@@ -167,6 +268,13 @@ func (s *Service) Adjust(ctx context.Context, merchantID, idempotencyKey string,
 		return nil
 	})
 	return out, err
+}
+
+func normalizedOptionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 // Reserve 生成前原子预留。相同幂等键重放返回原 hold，不重复扣 available。

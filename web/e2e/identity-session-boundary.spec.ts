@@ -35,13 +35,11 @@ const SESSIONS: Record<AccountName, SessionState> = {
 
 interface IdentityMockState {
   account: AccountName;
-  operatorStatus: "active" | "suspended";
   loginEmails: string[];
   logoutRequests: number;
   productReads: AccountName[];
   agentReads: AccountName[];
   quotaReads: string[];
-  statusPatches: Array<{ path: string; status: string }>;
 }
 
 async function fulfillJson(route: Route, status: number, payload: unknown): Promise<void> {
@@ -49,16 +47,7 @@ async function fulfillJson(route: Route, status: number, payload: unknown): Prom
 }
 
 function sessionFor(state: IdentityMockState): SessionState {
-  if (state.account !== "operator") {
-    return SESSIONS[state.account];
-  }
-  const operatorSession = SESSIONS.operator as Extract<SessionState, { authenticated: true }>;
-  return {
-    ...operatorSession,
-    merchant: operatorSession.merchant
-      ? { ...operatorSession.merchant, status: state.operatorStatus }
-      : null,
-  };
+  return SESSIONS[state.account];
 }
 
 function productsFor(account: AccountName): ProductListResponse {
@@ -90,13 +79,11 @@ function productsFor(account: AccountName): ProductListResponse {
 async function installIdentityMock(page: Page): Promise<IdentityMockState> {
   const state: IdentityMockState = {
     account: "anonymous",
-    operatorStatus: "active",
     loginEmails: [],
     logoutRequests: 0,
     productReads: [],
     agentReads: [],
     quotaReads: [],
-    statusPatches: [],
   };
 
   await page.route("**/api/**", async (route) => {
@@ -129,6 +116,10 @@ async function installIdentityMock(page: Page): Promise<IdentityMockState> {
       }
     }
 
+    if (request.method() === "GET" && pathname === "/api/ops/merchants") {
+      await fulfillJson(route, 200, { items: [], total: 0, page: 1, page_size: 20 });
+      return;
+    }
     if (request.method() === "GET" && pathname === "/api/v2/products") {
       state.productReads.push(state.account);
       await fulfillJson(route, 200, productsFor(state.account));
@@ -166,21 +157,7 @@ async function installIdentityMock(page: Page): Promise<IdentityMockState> {
       await fulfillJson(route, 200, { profiles: [], bindings: [] });
       return;
     }
-    if (pathname.match(/^\/api\/ops\/merchants\/[^/]+\/status$/)) {
-      const body = request.postDataJSON() as { status?: unknown };
-      state.statusPatches.push({ path: pathname, status: String(body.status ?? "") });
-      if (state.account !== "operator" || request.method() !== "PATCH") {
-        await fulfillJson(route, 403, { detail: "Operator access required" });
-        return;
-      }
-      state.operatorStatus = body.status === "suspended" ? "suspended" : "active";
-      await fulfillJson(route, 200, {
-        id: "merchant-operator",
-        name: "Operator shop",
-        status: state.operatorStatus,
-      });
-      return;
-    }
+
 
     await fulfillJson(route, 200, { items: [], next_cursor: null });
   });
@@ -232,7 +209,7 @@ async function loginAs(page: Page, email: string): Promise<void> {
   await page.locator("#auth-email").fill(email);
   await page.locator("#auth-password").fill("password123");
   await page.getByRole("button", { name: translate("zh-CN", "login.submit"), exact: true }).click();
-  await expect(page).toHaveURL(/\/products/);
+  await expect(page).toHaveURL(email === "operator-no-merchant@example.com" ? /\/ops$/ : /\/products/);
 }
 
 test("login, logout, and account switching isolate data and fence late SSE", async ({ page }) => {
@@ -277,7 +254,7 @@ test("login, logout, and account switching isolate data and fence late SSE", asy
   expect(state.loginEmails).toEqual(["alice@example.com", "bob@example.com"]);
 });
 
-test("operator settings use the ops status route and ordinary accounts cannot enter", async ({ page }) => {
+test("operator settings expose the operations entry and ordinary accounts cannot enter", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.addInitScript(() => {
     localStorage.setItem("productflow.locale", "zh-CN");
@@ -291,12 +268,7 @@ test("operator settings use the ops status route and ordinary accounts cannot en
   await expect(settingsLink).toBeVisible();
   await settingsLink.click();
   await expect(page).toHaveURL(/\/settings/);
-  await expect(page.getByRole("region", { name: translate("zh-CN", "settings.merchantOps.title"), exact: true })).toBeVisible();
-
-  await page.getByRole("button", { name: translate("zh-CN", "settings.merchantOps.suspend"), exact: true }).click();
-  await expect.poll(() => state.statusPatches.length).toBe(1);
-  expect(state.statusPatches[0]).toEqual({ path: "/api/ops/merchants/merchant-operator/status", status: "suspended" });
-  await expect(page.getByRole("button", { name: translate("zh-CN", "settings.merchantOps.activate"), exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: translate("zh-CN", "ops.title"), exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: translate("zh-CN", "nav.logout"), exact: true }).last().click();
   await expect(page).toHaveURL(/\/login/);
@@ -304,7 +276,7 @@ test("operator settings use the ops status route and ordinary accounts cannot en
   await expect(page.getByRole("link", { name: translate("zh-CN", "nav.settings"), exact: true })).toHaveCount(0);
   await page.goto("/settings");
   await expect(page).toHaveURL(/\/home/);
-  expect(state.statusPatches).toHaveLength(1);
+  expect(state.logoutRequests).toBe(1);
 });
 
 test("operator without a merchant can open settings without merchant controls or empty-id quota reads", async ({ page }) => {
@@ -320,7 +292,5 @@ test("operator without a merchant can open settings without merchant controls or
   await page.goto("/settings");
   await expect(page).toHaveURL(/\/settings/);
   await expect(page.getByText(translate("zh-CN", "settings.title"), { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("region", { name: translate("zh-CN", "settings.merchantOps.title"), exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: translate("zh-CN", "settings.merchantOps.suspend"), exact: true })).toHaveCount(0);
   expect(state.quotaReads).toEqual([]);
 });

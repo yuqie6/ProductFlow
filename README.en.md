@@ -63,6 +63,7 @@ The intended product is a self-hostable, multi-merchant SaaS, also operated by t
 | Route | Purpose |
 |---|---|
 | `/account` | Personal profile, password and active sessions |
+| `/ops` | Administrator merchant and product management, task records and quota history |
 | `/password-recovery` | Email-code password recovery |
 | `/home` | Feature navigation and real product showcase |
 | `/products` | Product list |

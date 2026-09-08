@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
@@ -340,9 +341,33 @@ func (s Service) OwnMerchant(ctx context.Context, userID string) (*MerchantView,
 	return &MerchantView{ID: *merchantID, Name: row.MerchantName.String, Status: row.MerchantStatus.String}, nil
 }
 
+// GetMerchant 返回 Operator 商家发现所需的单个商家摘要。
+// 该读取不建立工作商家 context，也不授予目标商家业务权限。
+func (s Service) GetMerchant(ctx context.Context, merchantID string) (MerchantView, error) {
+	if err := s.requireDB(); err != nil {
+		return MerchantView{}, err
+	}
+	merchantID = strings.TrimSpace(merchantID)
+	if merchantID == "" {
+		return MerchantView{}, apperr.Validation("缺少商家 ID")
+	}
+	var row schema.Merchants
+	err := s.DB.WithContext(ctx).
+		Select("id", "name", "status").
+		Where("id = ?", merchantID).
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return MerchantView{}, NotFoundCrossMerchant()
+	}
+	if err != nil {
+		return MerchantView{}, apperr.Internal("读取商家失败")
+	}
+	return MerchantView{ID: row.ID, Name: row.Name, Status: row.Status}, nil
+}
+
 // ListMerchants 返回 Operator 商家发现所需的有界商家摘要。
 // 该列表不建立工作商家 context，也不授予目标商家业务权限。
-func (s Service) ListMerchants(ctx context.Context, page, pageSize int) (MerchantPage, error) {
+func (s Service) ListMerchants(ctx context.Context, page, pageSize int, nameQuery, status string) (MerchantPage, error) {
 	if err := s.requireDB(); err != nil {
 		return MerchantPage{}, err
 	}
@@ -352,8 +377,22 @@ func (s Service) ListMerchants(ctx context.Context, page, pageSize int) (Merchan
 	if pageSize < 1 || pageSize > merchantListMaxPageSize {
 		return MerchantPage{}, apperr.Validation("商家列表每页数量无效")
 	}
+	nameQuery = strings.TrimSpace(nameQuery)
+	if utf8.RuneCountInString(nameQuery) > 100 {
+		return MerchantPage{}, apperr.Validation("商家列表搜索条件无效")
+	}
+	status = strings.TrimSpace(status)
+	if status != "" && status != MerchantStatusActive && status != MerchantStatusSuspended {
+		return MerchantPage{}, apperr.Validation("商家列表状态无效")
+	}
 
 	q := s.DB.WithContext(ctx).Model(&schema.Merchants{})
+	if nameQuery != "" {
+		q = q.Where(`name ILIKE ? ESCAPE '\'`, "%"+escapeLikeLiteral(nameQuery)+"%")
+	}
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return MerchantPage{}, err
@@ -369,6 +408,12 @@ func (s Service) ListMerchants(ctx context.Context, page, pageSize int) (Merchan
 		items = append(items, MerchantView{ID: row.ID, Name: row.Name, Status: row.Status})
 	}
 	return MerchantPage{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func escapeLikeLiteral(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, "%", `\%`)
+	return strings.ReplaceAll(value, "_", `\_`)
 }
 
 // RequireOwnMerchant 验证用户直接归属目标商家。停用商家仍可读，写请求由

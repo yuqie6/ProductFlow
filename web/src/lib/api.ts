@@ -1,4 +1,10 @@
 import type {
+  OpsPage,
+  OpsTask,
+  OpsAction,
+  OpsQuotaAccount,
+  OpsQuotaEvent,
+  SessionMerchant,
   AccountProfile,
   AccountSessionPage,
   PasswordRecoveryChallenge,
@@ -270,14 +276,57 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
-  setMerchantStatus(
-    merchantId: string,
-    status: "active" | "suspended",
-  ): Promise<{ id: string; name: string; status: string }> {
-    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/status`, {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    });
+  listOpsMerchants(input: { page: number; page_size: number; q?: string; status?: "" | "active" | "suspended" }): Promise<OpsPage<SessionMerchant>> {
+    const params = new URLSearchParams({ page: String(input.page), page_size: String(input.page_size) });
+    if (input.q) params.set("q", input.q);
+    if (input.status) params.set("status", input.status);
+    return request(`/api/ops/merchants?${params}`);
+  },
+  getOpsMerchant(merchantId: string): Promise<SessionMerchant> {
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}`);
+  },
+  listOpsProducts(merchantId: string, input: { page: number; page_size: number; q?: string; sort?: ProductListSort }): Promise<ProductListResponse> {
+    const params = new URLSearchParams({ page: String(input.page), page_size: String(input.page_size) });
+    if (input.q) params.set("q", input.q);
+    if (input.sort) params.set("sort", input.sort);
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/products?${params}`);
+  },
+  getOpsProductFacts(merchantId: string, productId: string): Promise<ProductFactsResponse> {
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/products/${encodeURIComponent(productId)}/facts`);
+  },
+  updateOpsProductFacts(merchantId: string, productId: string, input: Omit<UpdateProductFactsInput, "update_node_ids">): Promise<ProductFactsUpdateResponse> {
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/products/${encodeURIComponent(productId)}/facts`, { method: "PUT", body: JSON.stringify(input) });
+  },
+  deleteOpsProduct(merchantId: string, productId: string): Promise<void> {
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/products/${encodeURIComponent(productId)}`, { method: "DELETE" });
+  },
+  listOpsProductAssets(merchantId: string, productId: string, input: { after?: string; limit?: number } = {}): Promise<GalleryAssetPage> {
+    const params = new URLSearchParams({ directory_kind: "all", sort: "created_desc", limit: String(input.limit ?? 20) });
+    if (input.after) params.set("after", input.after);
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/products/${encodeURIComponent(productId)}/image-assets?${params}`);
+  },
+  downloadOpsAsset(downloadUrl: string): Promise<Blob> {
+    return requestBlob(downloadUrl);
+  },
+  listOpsTasks(merchantId: string, input: { page: number; page_size: number; product_id?: string }): Promise<OpsPage<OpsTask>> {
+    const params = new URLSearchParams({ page: String(input.page), page_size: String(input.page_size) });
+    if (input.product_id) params.set("product_id", input.product_id);
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/tasks?${params}`);
+  },
+  listOpsActions(merchantId: string, input: { page: number; page_size: number; product_id?: string }): Promise<OpsPage<OpsAction>> {
+    const params = new URLSearchParams({ page: String(input.page), page_size: String(input.page_size) });
+    if (input.product_id) params.set("product_id", input.product_id);
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/actions?${params}`);
+  },
+  getOpsQuota(merchantId: string): Promise<OpsQuotaAccount> {
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/quota`);
+  },
+  listOpsQuotaEvents(merchantId: string, input: { page: number; page_size: number }): Promise<OpsPage<OpsQuotaEvent>> {
+    const params = new URLSearchParams({ page: String(input.page), page_size: String(input.page_size) });
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/quota/events?${params}`);
+  },
+  adjustOpsQuota(merchantId: string, input: { idempotency_key: string; delta_units: number; reason: string }): Promise<OpsQuotaAccount> {
+    return request(`/api/ops/merchants/${encodeURIComponent(merchantId)}/quota/adjust`, { method: "POST", body: JSON.stringify(input) });
   },
   getMerchantQuotaPrice(merchantId: string): Promise<QuotaPriceVersion> {
     return request(`/api/merchants/${encodeURIComponent(merchantId)}/quota/price`);

@@ -15,11 +15,12 @@ import (
 func (s Service) DeleteProduct(ctx context.Context, productID string) error {
 	var files []media.Deleted
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if _, err := loadProductForUpdate(ctx, pgxTx, productID); err != nil {
+		product, err := loadProductForUpdate(ctx, pgxTx, productID)
+		if err != nil {
 			return err
 		}
 		var running schema.WorkflowGraphRuns
-		err := pgxTx.WithContext(ctx).Table("workflow_graph_runs AS r").
+		err = pgxTx.WithContext(ctx).Table("workflow_graph_runs AS r").
 			Select("r.id").
 			Joins("JOIN workflow_graphs g ON g.id = r.graph_id").
 			Where("g.product_id = ? AND r.status = ?", productID, "running").
@@ -52,7 +53,10 @@ func (s Service) DeleteProduct(ctx context.Context, productID string) error {
 			return err
 		}
 		files, err = media.PruneUnreferenced(ctx, pgxTx, mediaIDs)
-		return err
+		if err != nil {
+			return err
+		}
+		return completeOperatorAction(ctx, pgxTx, product)
 	})
 	if err != nil {
 		return err

@@ -43,23 +43,3 @@ describe("credential exchange errors", () => {
     },
   );
 });
-
-describe("operator merchant status API", () => {
-  it("uses the dedicated ops route", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      id: "merchant-1",
-      name: "Merchant",
-      status: "suspended",
-    })));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(api.setMerchantStatus("merchant/1", "suspended")).resolves.toEqual({
-      id: "merchant-1",
-      name: "Merchant",
-      status: "suspended",
-    });
-    expect(fetchMock.mock.calls[0][0]).toContain("/api/ops/merchants/merchant%2F1/status");
-    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "PATCH" });
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ status: "suspended" });
-  });
-});

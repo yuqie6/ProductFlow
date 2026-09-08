@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/yuqie6/productflow/internal/auth"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
 	"gorm.io/gorm"
 )
@@ -86,6 +89,7 @@ func (h HTTP) Register(engine *gin.Engine) {
 	ops := engine.Group("/api/ops")
 	ops.Use(auth.RequireOperator())
 	ops.GET("/merchants/:merchant_id/quota", h.getOpAccount)
+	ops.GET("/merchants/:merchant_id/quota/events", h.listOpEvents)
 	ops.POST("/merchants/:merchant_id/quota/adjust", h.adjust)
 	ops.POST("/merchants/:merchant_id/quota/holds/resolve", h.resolveUnknown)
 	ops.GET("/quota/price-versions/default", h.getDefaultPriceVersion)
@@ -99,6 +103,38 @@ func (h HTTP) getMerchantAccount(c *gin.Context) {
 // getOpAccount 是 GET /api/ops/merchants/:merchant_id/quota：200 返回指定商余额。
 func (h HTTP) getOpAccount(c *gin.Context) {
 	h.writeAccount(c, c.Param("merchant_id"))
+}
+
+// listOpEvents 是 GET /api/ops/merchants/:merchant_id/quota/events：200 返回原始额度事件页。
+func (h HTTP) listOpEvents(c *gin.Context) {
+	page, err := parseQuotaEventInt(c, "page", 1, 1, quotaEventMaxPage)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	pageSize, err := parseQuotaEventInt(c, "page_size", quotaEventDefaultPageSize, 1, quotaEventMaxPageSize)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	events, err := h.svc().ListEvents(c.Request.Context(), c.Param("merchant_id"), page, pageSize)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, events)
+}
+
+func parseQuotaEventInt(c *gin.Context, key string, def, min, max int) (int, error) {
+	raw := strings.TrimSpace(c.Query(key))
+	if raw == "" {
+		return def, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < min || value > max {
+		return 0, apperr.Validation("额度事件分页参数无效")
+	}
+	return value, nil
 }
 
 func (h HTTP) writeAccount(c *gin.Context, merchantID string) {

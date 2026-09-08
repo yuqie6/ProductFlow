@@ -1156,6 +1156,7 @@ func AllModels() []any {
 		&MerchantQuotaAccounts{},
 		&MerchantQuotaHolds{},
 		&MerchantQuotaEvents{},
+		&OperatorProductActions{},
 		&AgentConversations{},
 		&AgentPageContextSnapshots{},
 		&AgentSessions{},

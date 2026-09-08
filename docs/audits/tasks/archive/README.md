@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [saas-ops-console.md](saas-ops-console.md) | 完成 | 显式商家商品管理、授权媒体、原账本调账与真实操作记录；隔离 PG 和真实浏览器验收 |
 | [eval-intake-observation.md](eval-intake-observation.md) | 完成 | 创建确认走真实Go反馈与写后状态，保留4xx拒绝和幂等冲突；无付费重采 |
 | [saas-account-team.md](saas-account-team.md) | 完成 | 本人资料、密码/会话、SMTP恢复与防重放；真实隔离PG/API及邮件验证 |
 | [saas-account-interface.md](saas-account-interface.md) | 完成 | 四语账户与恢复页面；35项浏览器mock及真实Go接线验证 |

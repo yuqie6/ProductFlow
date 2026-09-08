@@ -81,6 +81,14 @@ func TestOperatorProductManagementUsesExplicitMerchantWithoutGeneration(t *testi
 		t.Fatalf("operator without home cannot manage target: %d", withoutHome.StatusCode)
 	}
 	withoutHome.Body.Close()
+	for _, suffix := range []string{"/tasks", "/actions", "/products/" + target.ID + "/image-assets"} {
+		response := ps.do(t, http.MethodGet, "/api/ops/merchants/"+target.MerchantID+suffix, nil, "")
+		response.Body.Close()
+		if response.StatusCode != 200 {
+			t.Fatalf("independent operator %s: %d", suffix, response.StatusCode)
+		}
+	}
+
 	ordinaryPath := ps.do(t, http.MethodGet, "/api/v2/products", nil, "")
 	if ordinaryPath.StatusCode != http.StatusForbidden {
 		t.Fatalf("operator without home gained ordinary product scope: %d", ordinaryPath.StatusCode)
@@ -100,6 +108,14 @@ func TestOperatorProductManagementUsesExplicitMerchantWithoutGeneration(t *testi
 		t.Fatalf("ordinary account ops %d", denied.StatusCode)
 	}
 	denied.Body.Close()
+	for _, suffix := range []string{"/tasks", "/actions", "/products/" + target.ID + "/image-assets", "/product-image-assets/" + foreign.assetID + "/download"} {
+		response := ps.do(t, http.MethodGet, "/api/ops/merchants/"+target.MerchantID+suffix, nil, "")
+		response.Body.Close()
+		if response.StatusCode != 403 {
+			t.Fatalf("ordinary operator route %s: %d", suffix, response.StatusCode)
+		}
+	}
+
 	if err := ps.db.Model(&schema.Users{}).Where("merchant_id = ?", ownRow.MerchantID).Update("is_operator", true).Error; err != nil {
 		t.Fatal(err)
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
+	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/settings"
 )
 
@@ -81,8 +82,13 @@ func (h HTTP) Register(engine *gin.Engine) {
 	ops.GET("", h.list)
 	ops.GET("/:product_id", h.get)
 	ops.GET("/:product_id/facts", h.getFacts)
-	ops.PUT("/:product_id/facts", h.updateFacts)
-	ops.DELETE("/:product_id", h.requireDeletion, h.deleteProduct)
+	ops.PUT("/:product_id/facts", h.auditOperatorAction("product.facts.update"), h.updateFacts)
+	ops.DELETE("/:product_id", h.auditOperatorAction("product.delete"), h.requireDeletion, h.deleteProduct)
+	ops.GET("/:product_id/image-assets", h.listGalleryAssets)
+	opsRecords := engine.Group("/api/ops/merchants/:merchant_id", operatorAuth.RequireOperatorMerchantTarget("merchant_id"))
+	opsRecords.GET("/product-image-assets/:asset_id/download", h.download)
+	opsRecords.GET("/tasks", h.listOperatorTasks)
+	opsRecords.GET("/actions", h.listOperatorActions)
 
 }
 
@@ -192,6 +198,15 @@ func (h HTTP) list(c *gin.Context) {
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
+	}
+	if merchantID := c.Param("merchant_id"); merchantID != "" {
+		for i := range out.Items {
+			item := &out.Items[i]
+			if item.CoverImageAssetID != nil {
+				d, p, t := operatorAssetURLs(merchantID, *item.CoverImageAssetID)
+				item.CoverImageDownloadURL, item.CoverImagePreviewURL, item.CoverImageThumbnailURL = &d, &p, &t
+			}
+		}
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -373,6 +388,10 @@ func (h HTTP) updateFacts(c *gin.Context) {
 		return
 	}
 	if in.UpdateNodeIDsProvided {
+		if c.Param("merchant_id") != "" {
+			httpx.AbortErr(c, apperr.Validation("管理员资料修改不支持图位采纳"))
+			return
+		}
 		out, err := h.Service.UpdateFactsAndAdopt(c.Request.Context(), c.Param("product_id"), in)
 		if err != nil {
 			httpx.AbortErr(c, err)
@@ -565,6 +584,12 @@ func (h HTTP) listGalleryAssets(c *gin.Context) {
 	if err != nil {
 		httpx.AbortErr(c, err)
 		return
+	}
+	if merchantID := c.Param("merchant_id"); merchantID != "" {
+		for i := range out.Items {
+			item := &out.Items[i]
+			item.DownloadURL, item.PreviewURL, item.ThumbnailURL = operatorAssetURLs(merchantID, item.ID)
+		}
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -977,4 +1002,8 @@ func parseProductListSort(c *gin.Context) (string, error) {
 	default:
 		return "", apperr.Validation("请求参数无效")
 	}
+}
+
+func operatorAssetURLs(merchantID, assetID string) (string, string, string) {
+	return storage.ImageURLs("/api/ops/merchants/" + merchantID + "/product-image-assets/" + assetID + "/download")
 }

@@ -5,6 +5,8 @@ import { Link, useNavigate } from "react-router-dom";
 
 import { api, ApiError } from "../lib/api";
 import { useI18n } from "../lib/preferences";
+import { authenticatedLandingPath } from "../lib/opsAccess";
+import type { SessionState } from "../lib/types";
 
 interface LoginPageProps {
   authenticated: boolean;
@@ -49,14 +51,14 @@ export function LoginPage({ authenticated }: LoginPageProps) {
 
   useEffect(() => {
     if (authenticated) {
-      navigate("/products", { replace: true });
+      navigate(authenticatedLandingPath(sessionQuery.data), { replace: true });
     }
-  }, [authenticated, navigate]);
+  }, [authenticated, navigate, sessionQuery.data]);
 
   const finishLogin = async () => {
     queryClient.removeQueries({ queryKey: ["config"] });
     await queryClient.invalidateQueries({ queryKey: ["session"] });
-    navigate("/products", { replace: true });
+    navigate(authenticatedLandingPath(queryClient.getQueryData<SessionState>(["session"])), { replace: true });
   };
 
   const handleLoginError = (mutationError: Error) => {

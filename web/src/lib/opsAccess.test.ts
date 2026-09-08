@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canAccessOpsSettings, isWorkingMerchantSuspended } from "./opsAccess";
+import { authenticatedLandingPath, canAccessOpsSettings, isWorkingMerchantSuspended } from "./opsAccess";
 import type { SessionState } from "./types";
 
 describe("opsAccess", () => {
@@ -32,5 +32,14 @@ describe("opsAccess", () => {
       merchant: { id: "m1", name: "停用商", status: "suspended" },
     };
     expect(isWorkingMerchantSuspended(session)).toBe(true);
+  });
+});
+
+describe("authenticated landing", () => {
+  it("routes only merchant-less operators to the operations console", () => {
+    const operator: SessionState = { authenticated: true, access_required: true, user: { id: "op", email: "op@example.com", display_name: "Op", is_operator: true }, merchant: null };
+    expect(authenticatedLandingPath(operator)).toBe("/ops");
+    expect(authenticatedLandingPath({ ...operator, merchant: { id: "merchant", name: "Shop", status: "active" } })).toBe("/products");
+    expect(authenticatedLandingPath({ ...operator, user: { ...operator.user, is_operator: false } })).toBe("/products");
   });
 });

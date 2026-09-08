@@ -2,7 +2,7 @@
 
 ## 1. System Boundary
 
-The current ProductFlow development baseline starts with one administrator and one bootstrap development merchant; public registration can create an ordinary User and that user's own Merchant. Ordinary accounts use their own merchant directly; administrators use explicit merchant-targeted authorization. Personal profile, password recovery and session management are implemented; account-persisted preferences and complete operations pages remain pending. The system has seven runtime units:
+The current ProductFlow development baseline starts with one administrator and one bootstrap development merchant; public registration can create an ordinary User and that user's own Merchant. Ordinary accounts use their own merchant directly; administrators use explicit merchant-targeted authorization. Personal profile, password recovery and session management are implemented; administrator product pages and operation records are implemented, while account-persisted preferences remain pending. The system has seven runtime units:
 
 1. React/Vite Web.
 2. Go business API.
@@ -25,6 +25,8 @@ Public email registration is implemented. After deployer bootstrap, the Operator
 Personal account and recovery behavior belongs to `go/internal/auth`: GET/PATCH `/api/account` exposes the current user's profile and only updates the display name; `/api/account/sessions` provides bounded cursor pagination and owner-scoped revocation. Login, password changes and recovery lock User first. Password changes and recovery consume outstanding recovery codes and revoke all sessions in one transaction. The independent `password_recovery_challenges` table stores code hashes, failed attempts, expiry and consumption. Failed attempts commit their counter. Recovery requests return 202 with consistent repeated-ID behavior; IDs derive from SESSION_SECRET without a hardcoded fallback. Invalid confirmation credentials return 400 `invalid_recovery_code`. Failed delivery cleanup uses a bounded independent context and the issued code hash so a later resend survives stale cleanup. Logout clears the cookie after successful revocation and remains retryable on failure. `productflow-migrate` creates the new table. Real SMTP/IMAP and isolated API/browser evidence is recorded in the [account delivery](audits/tasks/archive/saas-account-team.md).
 
 Account ownership is stored in `users.merchant_id`, required and unique among ordinary accounts. Operator permission is independent and permits a null home merchant. Sessions return `merchant:{id,name,status}|null`; browser merchant selection headers and team membership readers are removed. Ordinary product routes require the authenticated account’s own merchant. Administrator product read/edit/delete routes use an explicit merchant target and do not expose generation. Background jobs retain persisted ownership. Migration checks historical ownership within one transaction, fails on ambiguity, and removes the old member table and first-merchant fill triggers. Unowned business data is never assigned by guessing.
+
+The Operator console uses explicit merchant routes for product reads, facts, gallery media and deletion. `go/internal/product` projects gallery and cover URLs onto the authorized Ops download route; ordinary media routes retain their owner checks. Merchant task records read Agent tasks, graph runs, image-session generation tasks and local edits without exposing provider payloads. Product changes create `operator_product_actions` attempts before processing; the existing facts/delete transaction records success atomically, public 4xx rejection is recorded separately, and unconfirmed outcomes remain unknown. Product deletion retains the actor and target-name snapshot. Filesystem cleanup remains after the product transaction commits. Quota pages read `merchant_quota_events`; adjustment replay validates quantity, reason and actor. Apply the migration and restart the API to expose the new table and routes.
 
 `go/cmd/productflow-api/register.go` mounts `httpx.BrowserStateProtection` before registering all API routes. Browser POST/PUT/PATCH/DELETE requests, including JSON and multipart, must match an exact origin from `BACKEND_CORS_ORIGINS`. Referer is checked when Origin is absent; missing or untrusted sources return 403. The request Host does not establish trust. Internal calls must pass the configured token check and retain route-specific service authorization. `TRUSTED_PROXY_CIDRS` is empty by default, so untrusted forwarding headers do not change the rate-limit IP. API route contract tests and auth/httpx tests own this coverage.
 
@@ -66,6 +68,9 @@ ImageSession, Delivery and LocalEdit recovery use `FOR UPDATE SKIP LOCKED` durin
 `web/src/App.tsx` registers the current pages:
 
 - `/account` — personal account
+- `/ops` — Operator merchant directory
+- `/ops/merchants/:merchantId` — Explicit merchant products, tasks, quota and action records
+- `/ops/merchants/:merchantId/products/:productId` — Administrator product facts and authorized media
 - `/password-recovery` — public email recovery
 - `/login`
 - `/home`

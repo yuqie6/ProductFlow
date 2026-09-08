@@ -28,8 +28,8 @@ type UpdateFactsInput struct {
 	Facts                    *[]map[string]any // nil 表示不改 facts 数组
 	Fields                   map[string]bool   // JSON 里实际出现的键
 	// UpdateNodeIDs 是用户多选的更新图位；仅当 UpdateNodeIDsProvided 时采用新 fact 版本并保留未选中产物。
-	UpdateNodeIDs          []string
-	UpdateNodeIDsProvided  bool
+	UpdateNodeIDs         []string
+	UpdateNodeIDsProvided bool
 }
 
 // GetFacts 返回当前选中的 fact 版本；v2 无图出生尚未写 fact 时 id 为 null。
@@ -117,7 +117,10 @@ func (s Service) UpdateFacts(ctx context.Context, productID string, in UpdateFac
 			return err
 		}
 		out, err = factsResponse(ctx, pgxTx, product)
-		return err
+		if err != nil {
+			return err
+		}
+		return completeOperatorAction(ctx, pgxTx, product)
 	})
 	return out, err
 }

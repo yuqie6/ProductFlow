@@ -35,7 +35,15 @@ Changing a password requires the current password. The new password needs at lea
 
 Choose Reset password on the login page to open `/password-recovery`. Request a six-digit code through the account email, then enter it with a new password. An accepted request does not disclose account existence or promise mail delivery; check the inbox and spam folder and use the resend countdown. Recovery uses the existing SMTP configuration, a ten-minute validity window, a 60-second send interval and at most five failed attempts. Success consumes the code and revokes every existing session. A new send replaces the old code; a request during the send interval retains the code and refreshes its validity window. Unconfigured email service is reported as unavailable. No additional administrator unlock is required.
 
-Account-persisted language/theme preferences, merchant renaming and complete operations pages remain under development.
+Account-persisted language/theme preferences and merchant renaming remain under development.
+
+### 1.3 Administrator product management
+
+Open `/ops` to search merchants by name and status. Open a merchant to view its products, task states, quota ledger and administrator action records. Every product management page identifies the owning merchant. Image preview and download use the same explicit authorization; administrators can work without a merchant of their own.
+
+Save product facts against the displayed version. A conflict retains your draft so you can reload and compare. Editing facts does not run generation or adopt new graph results. Product deletion requires confirmation and remains subject to the site deletion setting and current business restrictions. Action records retain the deleted product name. An unknown audit outcome must not be treated as a confirmed failure.
+
+Quota values are internal units. Adjustments require a signed quantity and a reason; retrying an uncertain submission checks the same operation. Read the resulting balance and ledger record to confirm it. Task records are read-only; merchant suspension controls and manual unknown-consumption resolution are not provided on this page.
 
 ## 2. Create a Product
 
