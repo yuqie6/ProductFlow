@@ -97,6 +97,15 @@ func TestCatalogHasRequiredImageTypesAndNeedles(t *testing.T) {
 	if !strings.Contains(detailLine, "特写") || !strings.Contains(detailLine, "裁切") {
 		t.Fatalf("detail type line %q", detailLine)
 	}
+	if !strings.Contains(compile.FamilyLine("photography"), "暗色或哑光") || !strings.Contains(compile.FamilyLine("photography"), "用户已确认背景") || !strings.Contains(compile.FamilyLine("photography"), "整体照明氛围") {
+		t.Fatalf("photography family must preserve material-aware contrast guidance: %q", compile.Photography)
+	}
+	if !strings.Contains(heroLine, "局部补光") || !strings.Contains(heroLine, "已确认构图") {
+		t.Fatalf("hero type line must preserve dark-product readability without recoloring: %q", heroLine)
+	}
+	if strings.Contains(compile.TypeLine("specifications"), "暗色或哑光") {
+		t.Fatalf("specification modules must not inherit photography contrast guidance: %q", compile.TypeLine("specifications"))
+	}
 	faqLine := compile.TypeLine("faq")
 	if !strings.Contains(faqLine, "问答") || strings.Contains(faqLine, "详情转化卖点") {
 		t.Fatalf("faq must stay a Q&A module: %q", faqLine)
@@ -126,6 +135,9 @@ func TestCatalogHasRequiredImageTypesAndNeedles(t *testing.T) {
 	}
 	if !strings.Contains(PromptInstructions(), "Do not add generic rendering-defect lists") || !strings.Contains(PromptInstructions(), "one strong visual concept") {
 		t.Fatal("prompt instructions must prioritize art direction over guardrail lists")
+	}
+	if !strings.Contains(PromptInstructions(), "For a dark or matte subject") || !strings.Contains(PromptInstructions(), "user's requested background") || !strings.Contains(PromptInstructions(), "overall lighting mood") || !strings.Contains(PromptInstructions(), "without replacing the background") {
+		t.Fatal("prompt instructions must preserve conditional dark-product readability guidance")
 	}
 	if !strings.Contains(PromptInstructions(), "complete ecommerce conversion page") || !strings.Contains(PromptInstructions(), "compact trust strip") {
 		t.Fatal("prompt instructions must preserve infographic conversion hierarchy")

@@ -118,6 +118,9 @@ func TestCompileImageModelPromptUsesPerTypeQualityLine(t *testing.T) {
 	if !strings.Contains(hero, "封面") || strings.Contains(hero, "双列") || strings.Contains(hero, "信息流") {
 		t.Fatalf("hero compile\n%s", hero)
 	}
+	if !strings.Contains(hero, "暗色或哑光") || !strings.Contains(hero, "缩略图") || !strings.Contains(hero, "用户已确认背景") || !strings.Contains(hero, "整体照明氛围") {
+		t.Fatalf("hero compile must carry conditional dark-product readability guidance\n%s", hero)
+	}
 	if strings.Contains(hero, "像标签不像说明书") {
 		t.Fatalf("hero must not use the old infographic label line\n%s", hero)
 	}
@@ -133,6 +136,10 @@ func TestCompileImageModelPromptUsesPerTypeQualityLine(t *testing.T) {
 	}
 	if strings.Contains(selling, "像搜索列表标签") {
 		t.Fatalf("selling_point must not use photography label copy\n%s", selling)
+	}
+	specifications := CompileImageModelPrompt(ImageRequest{ImageTypeKey: "specifications", Prompt: map[string]any{"design_goal": "规格"}})
+	if strings.Contains(specifications, "暗色或哑光") || strings.Contains(specifications, "缩略图中的轮廓") {
+		t.Fatalf("specification modules must not inherit hero photography contrast guidance\n%s", specifications)
 	}
 	scene := CompileImageModelPrompt(ImageRequest{ImageTypeKey: "scene", Prompt: map[string]any{"design_goal": "使用"}})
 	if !strings.Contains(scene, "真实环境") || !strings.Contains(scene, "暖白台面") {
