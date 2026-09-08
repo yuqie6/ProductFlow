@@ -359,10 +359,10 @@ export function ProductWorkbenchSurface({
     const inspectable = Boolean(
       liveGraph && nodeIds[0] && inspectableGraphNodeId(liveGraph, nodeIds[0]),
     );
-    if (shouldOpenInspectorForCanvasSelection(source, nodeIds.length, inspectable)) {
+    if (mainView === "flow" && shouldOpenInspectorForCanvasSelection(source, nodeIds.length, inspectable)) {
       void requestSidebarTool("details");
     }
-  }, [actions, liveGraph, requestSidebarTool]);
+  }, [actions, liveGraph, mainView, requestSidebarTool]);
 
 
 
@@ -554,6 +554,7 @@ export function ProductWorkbenchSurface({
       <AgentWorkbenchShell
         productId={product.id}
         workflowAvailable={workflowAvailable}
+        canvasOwnsDetails={mainView === "results"}
         activeSidebarTool={activeSidebarTool}
         onSidebarToolChange={(toolId) => requestSidebarTool(toolId as AgentSidebarToolId)}
         agentOpenRequest={agentOpenRequest}

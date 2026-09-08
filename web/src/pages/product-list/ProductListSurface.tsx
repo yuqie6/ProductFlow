@@ -5,14 +5,17 @@ import {
   ChevronRight,
   Image as ImageIcon,
   LoaderCircle,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
   Trash2,
   X,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
+import { Dialog, DialogContent } from "../../components/ui/dialog";
+import { overviewMessage } from "./overviewMessages";
 import { CONTROL_CLASS } from "../../components/ui/field";
 import { cn } from "../../components/ui/cn";
 import { buttonVariants } from "../../components/ui/button";
@@ -76,7 +79,14 @@ export function ProductListSurface({
   onRetry,
   onDelete,
 }: ProductListSurfaceProps) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const showOverview = Boolean(overview) && searchParams.get("view") === "overview";
+  const changeView = (show: boolean) => setSearchParams((current) => {
+    const next = new URLSearchParams(current);
+    if (show) next.set("view", "overview"); else next.delete("view");
+    return next;
+  });
   const hasSearch = Boolean(searchDraft.trim());
   const rangeStart = (page - 1) * pageSize + 1;
   const rangeEnd = Math.min(page * pageSize, total);
@@ -96,7 +106,18 @@ export function ProductListSurface({
         </Link>
       </div>
 
-      {overview}
+      {overview ? (
+        <div className="mb-6 flex flex-wrap gap-6 border-b border-border-l1" role="group" aria-label={t("products.title")}>
+          <button type="button" aria-pressed={!showOverview} onClick={() => changeView(false)} className={`min-h-11 border-b-2 px-1 py-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-focus-ring ${!showOverview ? "border-accent text-accent" : "border-transparent text-text-muted"}`}>
+            {t("products.listTitle")}
+          </button>
+          <button type="button" aria-pressed={showOverview} onClick={() => changeView(true)} className={`min-h-11 border-b-2 px-1 py-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-focus-ring ${showOverview ? "border-accent text-accent" : "border-transparent text-text-muted"}`}>
+            {overviewMessage(locale, "title")}
+          </button>
+        </div>
+      ) : null}
+      {showOverview ? overview : null}
+      <div hidden={showOverview}>
 
       <div className="relative rounded-lg border border-border-l1 bg-surface-raised dark:border-border-l1 dark:bg-surface-panel">
         <div className="grid grid-cols-1 items-center gap-2.5 border-b border-border-l1 p-2.5 sm:grid-cols-[minmax(220px,360px)_minmax(0,1fr)] sm:gap-4 sm:px-3.5 sm:py-2.5 dark:border-border-l1">
@@ -159,10 +180,10 @@ export function ProductListSurface({
           </div>
         ) : null}
 
-        <div className="hidden min-h-[38px] grid-cols-[minmax(320px,1fr)_130px_150px_78px] items-center border-b border-border-l1 bg-surface-base text-[11px] font-medium text-text-muted lg:grid xl:grid-cols-[minmax(300px,1.05fr)_minmax(220px,.8fr)_130px_150px_78px] dark:border-border-l1 dark:bg-surface-panel dark:text-text-muted">
+        <div className="hidden min-h-[38px] grid-cols-[minmax(260px,1fr)_120px_160px_60px] items-center border-b border-border-l1 bg-surface-base text-[11px] font-medium text-text-muted lg:grid xl:grid-cols-[minmax(280px,1fr)_150px_120px_160px_60px] dark:border-border-l1 dark:bg-surface-panel dark:text-text-muted">
           <div className="px-[18px]">{t("products.table.product")}</div>
-          <div className="hidden px-[18px] xl:block">{t("products.table.coverImage")}</div>
-          <div className="px-[18px]">{t("products.table.created")}</div>
+          <div className="hidden px-[18px] xl:block">{t("detail.inspector.category")}</div>
+          <div className="px-[18px]">{t("detail.inspector.price")}</div>
           <div className="px-[18px]">{t("products.table.updated")}</div>
           <div className="px-3 text-center">{t("products.table.actions")}</div>
         </div>
@@ -249,6 +270,7 @@ export function ProductListSurface({
           </footer>
         ) : null}
       </div>
+      </div>
     </section>
   );
 }
@@ -267,22 +289,14 @@ function ProductRow({
   onDelete,
 }: ProductRowProps) {
   const { locale, t } = useI18n();
-  const metadata = [
-    product.category,
-    product.price ? formatPrice(product.price) : null,
-  ].filter((value): value is string => Boolean(value));
-  const metadataText = metadata.join(" · ");
-  const compactMetadata = [...metadata, product.cover_image_filename].filter(
-    (value): value is string => Boolean(value),
-  );
-  const compactMetadataText = compactMetadata.join(" · ");
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const createdDate = formatShortDate(product.created_at, locale);
   const createdTime = formatTime(product.created_at, locale);
   const updatedDate = formatShortDate(product.updated_at, locale);
   const updatedTime = formatTime(product.updated_at, locale);
 
   return (
-    <article role="listitem" className="group relative isolate grid min-h-[112px] grid-cols-[minmax(0,1fr)_70px] items-center transition-colors hover:bg-surface-base focus-within:bg-surface-base lg:min-h-[88px] lg:grid-cols-[minmax(320px,1fr)_130px_150px_78px] xl:grid-cols-[minmax(300px,1.05fr)_minmax(220px,.8fr)_130px_150px_78px] dark:hover:bg-surface-subtle dark:focus-within:bg-surface-subtle">
+    <article role="listitem" className="group relative isolate grid min-h-[112px] grid-cols-[minmax(0,1fr)_70px] items-center transition-colors hover:bg-surface-base focus-within:bg-surface-base lg:min-h-[96px] lg:grid-cols-[minmax(260px,1fr)_120px_160px_60px] xl:grid-cols-[minmax(280px,1fr)_150px_120px_160px_60px] dark:hover:bg-surface-subtle dark:focus-within:bg-surface-subtle">
       <span className="pointer-events-none absolute top-3 bottom-3 left-[-1px] z-[2] w-0.5 rounded-r-sm bg-transparent transition-colors group-hover:bg-accent group-focus-within:bg-accent dark:group-hover:bg-accent-strong dark:group-focus-within:bg-accent" aria-hidden="true" />
       <Link
         to={`/products/${product.id}`}
@@ -296,42 +310,22 @@ function ProductRow({
           <div className="truncate text-sm font-semibold text-text-primary transition-colors group-hover:text-accent group-focus-within:text-accent sm:text-[15px] dark:text-text-primary dark:group-hover:text-accent-strong dark:group-focus-within:text-accent" title={product.name}>
             {product.name}
           </div>
-          {metadataText ? (
-            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-text-muted sm:text-xs dark:text-text-muted">
-              {compactMetadataText ? (
-                <span className="hidden min-w-0 truncate sm:inline xl:hidden" title={compactMetadataText}>
-                  {compactMetadataText}
-                </span>
-              ) : null}
-              <span className="hidden min-w-0 truncate xl:inline" title={metadataText}>
-                {metadataText}
-              </span>
-              <span className="hidden shrink-0 md:inline lg:hidden">·</span>
-              <span className="shrink-0 tabular-nums lg:hidden">{updatedDate}</span>
-            </div>
-          ) : (
-            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-text-muted sm:text-xs xl:hidden dark:text-text-muted">
-              {compactMetadataText ? (
-                <span className="hidden min-w-0 truncate sm:inline" title={compactMetadataText}>
-                  {compactMetadataText}
-                </span>
-              ) : null}
-              {compactMetadataText ? <span className="hidden shrink-0 md:inline lg:hidden">·</span> : null}
-              <span className="shrink-0 tabular-nums lg:hidden">{updatedDate}</span>
-            </div>
-          )}
+          <div className="mt-1 flex flex-wrap gap-x-2 text-xs text-text-muted xl:hidden">
+            {product.category ? <span>{product.category}</span> : null}
+            {product.price ? <span className="lg:hidden">{formatPrice(product.price)}</span> : null}
+            <span className="lg:hidden">{updatedDate}</span>
+          </div>
         </div>
       </div>
 
       <div className="relative z-0 hidden min-w-0 px-[18px] text-xs text-text-muted xl:col-start-2 xl:row-start-1 xl:block dark:text-text-secondary">
-        <span className="block truncate" title={product.cover_image_filename ?? undefined}>
-          {product.cover_image_filename ?? "--"}
+        <span className="block truncate" title={product.category ?? undefined}>
+          {product.category || "--"}
         </span>
       </div>
 
       <div className="relative z-0 hidden min-w-0 px-[18px] text-xs tabular-nums text-text-muted lg:col-start-2 lg:row-start-1 lg:block xl:col-start-3 dark:text-text-secondary">
-        <span className="block">{createdDate}</span>
-        <span className="mt-0.5 block text-text-muted dark:text-text-muted">{createdTime}</span>
+        <span className="block">{product.price ? formatPrice(product.price) : "--"}</span>
       </div>
 
       <div className="relative z-0 hidden min-w-0 px-[18px] text-xs tabular-nums text-text-muted lg:col-start-3 lg:row-start-1 lg:block xl:col-start-4 dark:text-text-secondary">
@@ -340,21 +334,24 @@ function ProductRow({
       </div>
 
       <div className="pointer-events-none relative z-10 col-start-2 row-start-1 flex h-full items-center justify-end gap-0 pr-2 lg:col-start-4 lg:gap-1 lg:pr-3 xl:col-start-5">
-        <button
-          type="button"
-          onClick={onDelete}
-          disabled={isDeleting || !deletionEnabled}
-          aria-label={deletionEnabled ? t("products.deleteProduct", { name: product.name }) : t("products.deleteDisabled")}
-          title={deletionEnabled ? t("products.delete") : t("products.deleteDisabled")}
-          className="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-md border border-transparent text-text-muted transition-[background-color,border-color,color] hover:border-state-error hover:bg-state-error-soft hover:text-state-error focus:outline-none focus-visible:ring-2 focus-visible:ring-state-error disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:border-transparent disabled:hover:bg-transparent lg:h-[34px] lg:w-[34px] dark:text-text-muted dark:hover:border-state-error dark:hover:bg-state-error-soft dark:hover:text-state-error dark:disabled:text-text-muted"
-        >
-          <Trash2 size={16} aria-hidden="true" />
+        <button type="button" onClick={() => setDetailsOpen(true)} aria-label={`${t("products.table.actions")} · ${product.name}`} className="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-control text-text-muted hover:bg-surface-subtle focus-visible:ring-2 focus-visible:ring-focus-ring">
+          <MoreHorizontal size={18} aria-hidden="true" />
         </button>
-        <ChevronRight
-          size={17}
-          className="text-text-muted transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-accent group-focus-within:translate-x-0.5 group-focus-within:text-accent motion-reduce:transform-none dark:text-text-muted dark:group-hover:text-accent-strong dark:group-focus-within:text-accent"
-          aria-hidden="true"
-        />
+        <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+          <DialogContent title={product.name} closeLabel={t("common.cancel")} size="sm">
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-4 text-sm">
+              <dt className="text-text-muted">{t("products.table.coverImage")}</dt><dd className="break-all">{product.cover_image_filename || "--"}</dd>
+              <dt className="text-text-muted">{t("products.table.created")}</dt><dd>{createdDate} {createdTime}</dd>
+              <dt className="text-text-muted">{t("products.table.updated")}</dt><dd>{updatedDate} {updatedTime}</dd>
+            </dl>
+            <div className="mt-6 flex flex-wrap justify-between gap-3">
+              <Link to={`/products/${product.id}`} className={buttonVariants({variant: "primary"})}>{overviewMessage(locale, "openProduct")}</Link>
+              <button type="button" onClick={() => { setDetailsOpen(false); onDelete(); }} disabled={isDeleting || !deletionEnabled} title={deletionEnabled ? t("products.delete") : t("products.deleteDisabled")} className="inline-flex min-h-11 items-center gap-2 rounded-control px-3 text-state-error disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-focus-ring">
+                <Trash2 size={16} aria-hidden="true" />{t("products.delete")}
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </article>
   );
@@ -388,7 +385,7 @@ function ProductListSkeleton() {
       {Array.from({ length: 7 }, (_, index) => (
         <div
           key={index}
-          className="grid min-h-[112px] grid-cols-[minmax(0,1fr)_70px] items-center px-3 lg:min-h-[88px] lg:grid-cols-[minmax(320px,1fr)_130px_150px_78px] lg:px-[18px] xl:grid-cols-[minmax(300px,1.05fr)_minmax(220px,.8fr)_130px_150px_78px]"
+          className="grid min-h-[112px] grid-cols-[minmax(0,1fr)_70px] items-center px-3 lg:min-h-[96px] lg:grid-cols-[minmax(260px,1fr)_120px_160px_60px] lg:px-[18px] xl:grid-cols-[minmax(280px,1fr)_150px_120px_160px_60px]"
         >
           <div className="flex items-center gap-3.5">
             <span className="h-20 w-20 shrink-0 animate-pulse rounded-md bg-surface-subtle lg:h-16 lg:w-16 dark:bg-surface-subtle" />

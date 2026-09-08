@@ -35,6 +35,7 @@ interface AgentWorkbenchShellProps {
   productId?: string;
   workflowAvailable: boolean;
   canvasContent: ReactNode;
+  canvasOwnsDetails?: boolean;
   agentContent: ReactNode;
   sidebarTools?: AgentWorkbenchSidebarTool[];
   activeSidebarTool?: string;
@@ -76,6 +77,7 @@ export function AgentWorkbenchShell({
   productId,
   workflowAvailable,
   canvasContent,
+  canvasOwnsDetails = false,
   agentContent,
   sidebarTools = [],
   activeSidebarTool = "agent",
@@ -95,6 +97,14 @@ export function AgentWorkbenchShell({
     inspectorInitialRef.current = stored ?? !workflowAvailable;
   }
   const inspector = useProductWorkbenchInspectorState(inspectorInitialRef.current);
+  const previousCanvasDetailsRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (previousCanvasDetailsRef.current === canvasOwnsDetails) return;
+    previousCanvasDetailsRef.current = canvasOwnsDetails;
+    // On entering results, its detail panel replaces the automatic node inspector.
+    // Explicit sidebar choices after entry remain available.
+    if (canvasOwnsDetails && activeSidebarTool === "details") inspector.setCollapsed(true);
+  }, [canvasOwnsDetails, activeSidebarTool, inspector.setCollapsed]);
   const sidebarCollapsed = inspector.collapsed;
   const inspectorWidth = inspector.width;
   const previousWorkflowAvailableRef = useRef(workflowAvailable);

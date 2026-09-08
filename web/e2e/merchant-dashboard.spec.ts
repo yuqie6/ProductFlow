@@ -59,7 +59,7 @@ for (const locale of LOCALES) for (const width of [390, 1440]) for (const theme 
     const m = (key: Parameters<typeof overviewMessage>[1]) => overviewMessage(locale, key);
     await page.setViewportSize({ width, height: 960 }); await page.emulateMedia({ reducedMotion: "reduce", colorScheme: theme });
     await mockDashboard(page, locale, theme); const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
-    await page.goto("/products");
+    await page.goto("/products?view=overview");
     const overview = page.locator('section[aria-labelledby="merchant-overview-title"]');
     await expect(overview.getByRole("heading", { name: m("title") })).toBeVisible();
     await expect(overview.getByText("alice: Work old-waiting", { exact: false })).toBeVisible();
@@ -80,7 +80,7 @@ for (const locale of LOCALES) for (const width of [390, 1440]) for (const theme 
 }
 
 test("filters, pages, old waiting records and real continuation destinations", async ({ page }) => {
-  const state = await mockDashboard(page); await page.goto("/products?q=lamp&page=2&sort=name_asc");
+  const state = await mockDashboard(page); await page.goto("/products?view=overview&q=lamp&page=2&sort=name_asc");
   const overview = page.locator('section[aria-labelledby="merchant-overview-title"]');
   await expect(overview.getByText("alice: Work old-waiting", { exact: false })).toBeVisible();
   await overview.getByRole("combobox", { name: "Recent record window", exact: true }).click();
@@ -109,13 +109,15 @@ test("filters, pages, old waiting records and real continuation destinations", a
 });
 
 test("overview error retry and empty result preserve the product directory", async ({ page }, testInfo) => {
-  const state = await mockDashboard(page); state.failOverview = true; await page.goto("/products");
+  const state = await mockDashboard(page); state.failOverview = true; await page.goto("/products?view=overview");
   const overview = page.locator('section[aria-labelledby="merchant-overview-title"]');
-  await expect(overview.getByRole("alert")).toContainText(overviewMessage("en-US", "loadError")); await expect(page.getByText("alice product", { exact: true })).toBeVisible();
+  await expect(overview.getByRole("alert")).toContainText(overviewMessage("en-US", "loadError")); await expect(page.getByText("alice product", { exact: true })).toBeHidden();
   await page.screenshot({ path: testInfo.outputPath("overview-error.png"), fullPage: true });
   state.failOverview = false; state.empty = true; await overview.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(overview.getByText(overviewMessage("en-US", "empty"))).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("overview-empty.png"), fullPage: true });
+  await page.getByRole("button", {name: translate("en-US", "products.listTitle"), exact: true}).click();
+  await expect(page.getByText("alice product", {exact: true})).toBeVisible();
 });
 
 for (const id of ["", "missing", "foreign"]) test(`explicit unavailable session ${id || "empty"} never creates or falls back`, async ({ page }) => {
@@ -180,7 +182,7 @@ test("explicit session retry, URL back, late reads and account changes keep the 
 
 test("operator without a merchant uses Ops and does not request a merchant overview", async ({ page }) => {
   const state = await mockDashboard(page); state.account = "operator";
-  await page.goto("/products"); await expect(page).toHaveURL(/\/ops$/);
+  await page.goto("/products?view=overview"); await expect(page).toHaveURL(/\/ops$/);
   expect(state.overviewCalls).toEqual([]);
 });
 
@@ -200,7 +202,7 @@ test("mobile explicit session failure has visible retry and list recovery", asyn
 
 test("a late overview response cannot restore the previous account's records", async ({ page }) => {
   const state = await mockDashboard(page);
-  await page.goto("/products");
+  await page.goto("/products?view=overview");
   await expect(page.getByText("alice: Work old-waiting", { exact: false })).toBeVisible();
   let release = () => {}; const gate = new Promise<void>((resolve) => { release = resolve; });
   let delayed = false;
@@ -216,6 +218,7 @@ test("a late overview response cannot restore the previous account's records", a
   await page.getByLabel(translate(locale, "login.email"), { exact: true }).fill("bob@example.com");
   await page.getByLabel(translate(locale, "login.password"), { exact: true }).fill("password123");
   await page.getByRole("button", { name: translate(locale, "login.submit"), exact: true }).click();
+  await page.getByRole("button", {name: overviewMessage("en-US", "title"), exact: true}).click();
   await expect(page.getByText("bob: Work old-waiting", { exact: false })).toBeVisible();
   const lateResponse = page.waitForResponse("**/api/v2/products/overview?*"); release(); await lateResponse;
   await expect(page.getByText("ALICE PRIVATE LATE RECORD")).toHaveCount(0);
@@ -225,7 +228,7 @@ test("a late overview response cannot restore the previous account's records", a
 
 test("narrow desktop keeps overview controls and source columns within their surface", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1024, height: 900 }); await mockDashboard(page, "ja-JP", "dark");
-  await page.goto("/products");
+  await page.goto("/products?view=overview");
   const overview = page.locator('section[aria-labelledby="merchant-overview-title"]');
   await expect(overview.getByText("alice: Work old-waiting", { exact: false })).toBeVisible();
   const bounds = await overview.locator("table").evaluate((table) => {
@@ -258,4 +261,44 @@ test("a session refresh changing the account hides cached image detail and permi
   await page.locator("input").filter({ visible: true }).first().fill("Bob saved title");
   await page.getByRole("button", { name: translate("en-US", "chat.saveSessionName"), exact: true }).filter({ visible: true }).click();
   await expect(page.getByRole("heading", { name: "Bob saved title", exact: true })).toBeVisible();
+});
+
+
+test("directory is the default and switching overview preserves search and sort", async ({page}) => {
+  await mockDashboard(page);
+  await page.goto("/products?q=lamp&sort=name_asc");
+  await expect(page.getByText("alice product", {exact: true})).toBeVisible();
+  await expect(page.locator('section[aria-labelledby="merchant-overview-title"]')).toHaveCount(0);
+  await page.getByRole("button", {name: overviewMessage("en-US", "title"), exact: true}).click();
+  await expect(page.getByText("alice: Work old-waiting", {exact: false})).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("alice: Work old-waiting", {exact: false})).toBeVisible();
+  await page.getByRole("button", {name: translate("en-US", "products.listTitle"), exact: true}).click();
+  expect(new URL(page.url()).searchParams.get("q")).toBe("lamp");
+  expect(new URL(page.url()).searchParams.get("sort")).toBe("name_asc");
+  await page.getByRole("button", {name: `${translate("en-US", "products.table.actions")} · alice product`, exact: true}).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("dialog").getByRole("button", {name: translate("en-US", "products.delete"), exact: true})).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+});
+
+test("product actions require confirmation before deleting", async ({page}) => {
+  const state = await mockDashboard(page);
+  let deletes = 0;
+  await page.route("**/api/settings/runtime", route => route.fulfill({json: {deletion_enabled: true}}));
+  await page.route("**/api/v2/products/product-a", route => {
+    expect(route.request().method()).toBe("DELETE");
+    deletes += 1; state.empty = true;
+    return route.fulfill({json: {ok:true}});
+  });
+  await page.goto("/products");
+  await page.getByRole("button", {name: `${translate("en-US", "products.table.actions")} · alice product`, exact:true}).click();
+  await page.getByRole("dialog").getByRole("button", {name: translate("en-US", "products.delete"), exact:true}).click();
+  await expect(page.getByRole("dialog")).toContainText(translate("en-US", "products.deleteConfirm", {name:"alice product"}));
+  expect(deletes).toBe(0);
+  await page.getByRole("dialog").getByRole("button", {name: translate("en-US", "confirm.delete.confirm"), exact:true}).click();
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByText("alice product", {exact:true})).toHaveCount(0);
+  expect(deletes).toBe(1);
 });

@@ -15,8 +15,9 @@ import {
   Play,
   RefreshCw,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, type MutableRefObject, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 
+import { Dialog, DialogContent } from "../../../components/ui/dialog";
 import { IconButton } from "../../../components/ui/icon-button";
 import { Tooltip } from "../../../components/ui/tooltip";
 import { ApiError, api } from "../../../lib/api";
@@ -105,6 +106,21 @@ export function GraphResultsView({
   headerActions,
 }: GraphResultsViewProps) {
   const { t } = useI18n();
+  const [sectionKey, setSectionKey] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [compact, setCompact] = useState(false);
+  const regionRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = regionRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => setCompact(entry.contentRect.width < 960));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const activeSection = sections.find(section => section.key === sectionKey);
+  const visibleSections = activeSection ? [activeSection] : sections;
+  const detailNodeId = selectedNodeIds.find(id => visibleSections.some(section => section.items.some(item => item.nodeId === id)));
+  const selectItem = (item: GraphResultItem) => { onSelectItem(item); setDetailOpen(true); };
   const error = operationError ?? runsError;
   const itemCount = useMemo(
     () => sections.reduce((count, section) => count + section.items.length, 0),
@@ -132,11 +148,11 @@ export function GraphResultsView({
     <section
       data-graph-results-view
       aria-label={t("graph.results.title")}
-      className="absolute inset-0 z-10 flex min-h-0 flex-col bg-surface-base"
+      className="absolute inset-0 z-10 flex min-h-0 flex-col bg-surface-base @container/results"
     >
-      <header className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border-l1 px-3 py-2 sm:px-4">
+      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border-l1 bg-surface-raised px-4 py-4">
         <Images size={16} className="shrink-0 text-text-muted" aria-hidden="true" />
-        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">
+        <h2 className="min-w-0 flex-1 truncate text-lg font-semibold text-text-primary">
           {t("graph.results.title")}
         </h2>
         <span className="shrink-0 text-[11px] font-medium text-text-muted">
@@ -149,12 +165,15 @@ export function GraphResultsView({
               label={t("graph.results.exportAdoption")}
               size="sm"
               data-graph-results-export-adoption
+              variant="primary"
+              className="!w-auto gap-2 px-3"
               disabled={busy || exportingAdoption}
               onClick={onExportAdoption}
             >
               {exportingAdoption
                 ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
                 : <Package size={13} aria-hidden="true" />}
+              <span className="text-xs">{t("graph.results.exportAdoption")}</span>
             </IconButton>
           ) : null}
           {runsFetching ? (
@@ -194,10 +213,18 @@ export function GraphResultsView({
           ) : null}
         </div>
       ) : null}
+      <div ref={regionRef} className="relative flex min-h-0 flex-1 flex-col @min-[960px]/results:flex-row">
+        <nav aria-label={t("graph.results.title")} className="flex shrink-0 gap-1 overflow-auto border-b border-border-l1 bg-surface-raised p-2 @min-[960px]/results:w-40 @min-[960px]/results:flex-col @min-[960px]/results:border-r @min-[960px]/results:border-b-0 @min-[960px]/results:py-5">
+          {[{key: null, title: t("graph.results.title"), count: itemCount}, ...sections.map(section => ({key: section.key, title: section.kind === "group" ? section.title : t(section.kind === "evidence" ? "graph.results.evidenceSection" : "graph.results.ungroupedSection"), count: section.items.length}))].map(entry => (
+            <button key={entry.key ?? "all"} type="button" aria-pressed={(activeSection?.key ?? null) === entry.key} onClick={() => {setSectionKey(entry.key); setDetailOpen(false);}} className={`flex min-h-11 shrink-0 items-center justify-between gap-3 rounded-control px-3 py-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-focus-ring ${(activeSection?.key ?? null) === entry.key ? "bg-accent-soft text-accent" : "text-text-secondary hover:bg-surface-subtle"}`}>
+              <span className="max-w-40 truncate" title={entry.title}>{entry.title}</span><span className="tabular-nums text-text-muted">{entry.count}</span>
+            </button>
+          ))}
+        </nav>
       <div
         ref={scrollerRef}
         data-graph-results-scroll
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4"
+        className={`min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 ${detailNodeId && !compact ? "pr-[320px]" : ""}`}
       >
         {runsLoading && !itemCount ? (
           <div className="flex min-h-40 items-center justify-center text-text-muted" aria-label={t("app.loading")}>
@@ -210,17 +237,21 @@ export function GraphResultsView({
           </p>
         ) : null}
         <div className="flex flex-col gap-5">
-          {sections.map((section) => (
+          {visibleSections.map((section) => (
             <ResultSection
               key={section.key}
               section={section}
+              compact={compact}
+              detailNodeId={detailNodeId}
+              detailOpen={detailOpen}
+              onCloseDetail={() => setDetailOpen(false)}
               selectedSet={selectedSet}
               busy={busy}
               runningNodeId={runningNodeId}
               plannedActions={plannedActions}
               blockedReasons={blockedReasons}
               cardRefs={cardRefs}
-              onSelectItem={onSelectItem}
+              onSelectItem={selectItem}
               onLocateItem={onLocateItem}
               onOpenHistory={onOpenHistory}
               onRunItem={onRunItem}
@@ -238,12 +269,14 @@ export function GraphResultsView({
           ))}
         </div>
       </div>
+      </div>
     </section>
   );
 }
 
 function ResultSection({
   section,
+  compact, detailNodeId, detailOpen, onCloseDetail,
   selectedSet,
   busy,
   runningNodeId,
@@ -266,6 +299,10 @@ function ResultSection({
   onAdoptItem,
 }: {
   section: GraphResultSection;
+  compact: boolean;
+  detailNodeId?: string;
+  detailOpen: boolean;
+  onCloseDetail: () => void;
   selectedSet: ReadonlySet<string>;
   busy: boolean;
   runningNodeId: string | null;
@@ -304,11 +341,15 @@ function ResultSection({
       <h3 className="mb-2 truncate text-xs font-semibold tracking-wide text-text-secondary">
         {title}
       </h3>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,160px),1fr))] gap-4 @min-[600px]/results:grid-cols-[repeat(auto-fill,minmax(min(100%,210px),1fr))]">
         {section.items.map((item) => (
           <ResultCard
             key={item.nodeId}
             item={item}
+            showDetail={detailNodeId === item.nodeId}
+            compact={compact}
+            detailOpen={detailOpen}
+            onCloseDetail={onCloseDetail}
             selected={selectedSet.has(item.nodeId)}
             busy={busy}
             running={runningNodeId === item.nodeId}
@@ -341,6 +382,7 @@ function ResultSection({
 
 function ResultCard({
   item,
+  showDetail, compact, detailOpen, onCloseDetail,
   selected,
   busy,
   running,
@@ -363,6 +405,10 @@ function ResultCard({
   onAdoptItem,
 }: {
   item: GraphResultItem;
+  showDetail: boolean;
+  compact: boolean;
+  detailOpen: boolean;
+  onCloseDetail: () => void;
   selected: boolean;
   busy: boolean;
   running: boolean;
@@ -418,6 +464,108 @@ function ResultCard({
     ?? adoptionQuality?.issueCodes.map((code) => t(adoptionQualityIssueMessageKey(code))).join(" · ")
     ?? null;
 
+  const detailBody = (
+    <div className="space-y-5">
+      {showDetail && item.currentAssetId ? <img src={api.getProductImageAssetMediaUrl(item.currentAssetId, "preview")} alt={item.title} className="aspect-square w-full rounded-panel bg-surface-subtle object-contain" /> : null}
+      <div><h3 className="break-words text-sm font-semibold">{item.title}</h3>{purpose ? <p className="mt-1 text-xs text-text-muted">{purpose}</p> : null}</div>
+      <div className="flex flex-wrap gap-2 text-xs"><span>{statusLabel}</span>{isAdopted ? <span className="text-accent">{t("graph.results.adopted")}</span> : null}</div>
+      {failureReason ? <p role="alert" className="break-words text-xs text-state-error">{failureReason}</p> : null}
+      {item.showingStaleCurrent ? <p className="text-xs text-state-warning">{t("graph.results.staleCurrent")}</p> : null}
+          <div className="grid grid-cols-2 gap-2">
+            <IconButton
+              label={t("graph.results.locate")}
+              size="sm"
+              data-graph-result-locate
+              className="!h-11 !w-full justify-start gap-2 px-3"
+              onClick={() => { onCloseDetail(); onLocateItem(item); }}
+            >
+              <LocateFixed size={14} aria-hidden="true" /><span className="text-xs">{t("graph.results.locate")}</span>
+            </IconButton>
+            <IconButton
+              label={t("graph.results.history")}
+              size="sm"
+              data-graph-result-history
+              className="!h-11 !w-full justify-start gap-2 px-3"
+              onClick={() => { onCloseDetail(); onOpenHistory(item); }}
+            >
+              <History size={14} aria-hidden="true" /><span className="text-xs">{t("graph.results.history")}</span>
+            </IconButton>
+            {canAdopt ? (
+              <IconButton
+                label={t("graph.results.adopt")}
+                size="sm"
+                data-graph-result-adopt
+                variant="primary"
+                className="order-first col-span-2 !h-11 !w-full gap-2 px-3"
+                busy={adopting}
+                disabled={busy || adopting}
+                onClick={() => { onCloseDetail(); onAdoptItem?.(item); }}
+              >
+                <Check size={14} aria-hidden="true" /><span className="text-xs">{t("graph.results.adopt")}</span>
+              </IconButton>
+            ) : null}
+            {canEdit ? (
+              <IconButton
+                label={t("localEdit.open")}
+                size="sm"
+                data-graph-result-edit
+                className="!h-11 !w-full justify-start gap-2 px-3"
+                onClick={() => { onCloseDetail(); onOpenLocalEdit?.(item); }}
+              >
+                <Pencil size={14} aria-hidden="true" /><span className="text-xs">{t("localEdit.open")}</span>
+              </IconButton>
+            ) : null}
+            {canBind ? (
+              <IconButton
+                label={t("graph.inspector.bind")}
+                size="sm"
+                data-graph-result-bind
+                className="!h-11 !w-full justify-start gap-2 px-3"
+                onClick={() => { onCloseDetail(); onBindEvidence?.(item); }}
+              >
+                <Images size={14} aria-hidden="true" /><span className="text-xs">{t("graph.inspector.bind")}</span>
+              </IconButton>
+            ) : null}
+            {item.runnable ? (
+              <Tooltip content={runBlockedReason ?? t("graph.canvas.runNode")}>
+                <span>
+                  <IconButton
+                    label={runBlockedReason ?? t("graph.canvas.runNode")}
+                    size="sm"
+                    busy={running}
+                    disabled={busy || Boolean(runBlockedReason)}
+                    data-graph-result-run
+                    className="!h-11 !w-full justify-start gap-2 px-3"
+                    {...runPreviewPointerHandlers(
+                      { scope: "node", node_id: item.nodeId },
+                      onPreviewRun,
+                      onHideRunPreview,
+                    )}
+                    onClick={() => onRunItem(item)}
+                  >
+                    <Play size={14} aria-hidden="true" /><span className="text-xs">{t("graph.canvas.runNode")}</span>
+                  </IconButton>
+                </span>
+              </Tooltip>
+            ) : null}
+          </div>
+        {qualityStatus ? (
+          <div
+            data-graph-result-quality
+            data-graph-result-quality-status={qualityStatus}
+            className={`flex min-w-0 flex-col gap-0.5 text-[10px] leading-4 ${
+              qualityStatus === "fail" ? "text-state-error" : qualityStatus === "unchecked" ? "text-state-warning" : "text-state-success"
+            }`}
+          >
+            <span className="font-semibold">{t(adoptionQualityStatusMessageKey(qualityStatus))}</span>
+            {qualityDetail ? (
+              <span title={qualityDetail} className="break-words">{qualityDetail}</span>
+            ) : null}
+          </div>
+        ) : null}
+    </div>
+  );
+
   return (
     <article
       ref={cardRef}
@@ -427,7 +575,7 @@ function ResultCard({
       data-graph-result-stale={item.showingStaleCurrent ? "true" : "false"}
       data-graph-result-delivery-adopted={isAdopted ? "true" : "false"}
       data-graph-planned-action={plannedAction ?? undefined}
-      className={`group relative flex min-w-0 flex-col overflow-hidden rounded-control border bg-surface-raised ${plannedActionClassName(plannedAction)} ${
+      className={`group flex min-w-0 flex-col rounded-panel border bg-surface-raised ${plannedActionClassName(plannedAction)} ${
         failed
           ? "border-state-error/60"
           : selected
@@ -435,6 +583,7 @@ function ResultCard({
             : "border-border-l1"
       }`}
     >
+      <div className="relative overflow-hidden rounded-t-panel">
       <Tooltip content={failureReason ?? focusLabel}>
         <button
           type="button"
@@ -449,7 +598,7 @@ function ResultCard({
             <img
               src={api.getProductImageAssetMediaUrl(item.currentAssetId, "thumbnail")}
               alt=""
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
             />
           ) : (
             <span className="flex h-full w-full items-center justify-center">
@@ -461,7 +610,7 @@ function ResultCard({
             aria-hidden="true"
           />
           {item.showingStaleCurrent ? (
-            <span className="absolute bottom-1 left-1 rounded bg-surface-inverse/80 px-1 text-[9px] font-semibold text-surface-raised">
+            <span className="absolute bottom-1 left-1 rounded bg-surface-inverse/80 px-1 text-[9px] font-semibold text-surface-inverse-fg">
               {t("graph.results.staleCurrent")}
             </span>
           ) : null}
@@ -486,108 +635,26 @@ function ResultCard({
           <Eye size={12} aria-hidden="true" />
         </IconButton>
       ) : null}
-      <div className="flex min-w-0 flex-col gap-1 px-2 py-1.5">
-        <span className="truncate text-[11px] font-semibold text-text-primary" title={item.title}>
+      </div>
+      <div className="flex min-w-0 flex-col gap-2 p-3">
+        <span className="truncate text-sm font-semibold text-text-primary" title={item.title}>
           {item.title}
         </span>
         {purpose ? (
-          <span className="truncate text-[10px] text-text-muted" title={purpose}>{purpose}</span>
+          <span className="truncate text-xs text-text-muted" title={purpose}>{purpose}</span>
         ) : null}
         <div className="flex items-center justify-between gap-1">
-          <span className="min-w-0 truncate text-[10px] font-medium text-text-secondary">{statusLabel}</span>
-          <div className="flex shrink-0 items-center gap-0.5">
-            <IconButton
-              label={t("graph.results.locate")}
-              size="sm"
-              data-graph-result-locate
-              className="!h-7 !w-7"
-              onClick={() => onLocateItem(item)}
-            >
-              <LocateFixed size={12} aria-hidden="true" />
-            </IconButton>
-            <IconButton
-              label={t("graph.results.history")}
-              size="sm"
-              data-graph-result-history
-              className="!h-7 !w-7"
-              onClick={() => onOpenHistory(item)}
-            >
-              <History size={12} aria-hidden="true" />
-            </IconButton>
-            {canAdopt ? (
-              <IconButton
-                label={t("graph.results.adopt")}
-                size="sm"
-                data-graph-result-adopt
-                className="!h-7 !w-7"
-                busy={adopting}
-                disabled={busy || adopting}
-                onClick={() => onAdoptItem?.(item)}
-              >
-                <Check size={12} aria-hidden="true" />
-              </IconButton>
-            ) : null}
-            {canEdit ? (
-              <IconButton
-                label={t("localEdit.open")}
-                size="sm"
-                data-graph-result-edit
-                className="!h-7 !w-7"
-                onClick={() => onOpenLocalEdit?.(item)}
-              >
-                <Pencil size={12} aria-hidden="true" />
-              </IconButton>
-            ) : null}
-            {canBind ? (
-              <IconButton
-                label={t("graph.inspector.bind")}
-                size="sm"
-                data-graph-result-bind
-                className="!h-7 !w-7"
-                onClick={() => onBindEvidence?.(item)}
-              >
-                <Images size={12} aria-hidden="true" />
-              </IconButton>
-            ) : null}
-            {item.runnable ? (
-              <Tooltip content={runBlockedReason ?? t("graph.canvas.runNode")}>
-                <span>
-                  <IconButton
-                    label={runBlockedReason ?? t("graph.canvas.runNode")}
-                    size="sm"
-                    variant="primary"
-                    busy={running}
-                    disabled={busy || Boolean(runBlockedReason)}
-                    data-graph-result-run
-                    className="!h-7 !w-7"
-                    {...runPreviewPointerHandlers(
-                      { scope: "node", node_id: item.nodeId },
-                      onPreviewRun,
-                      onHideRunPreview,
-                    )}
-                    onClick={() => onRunItem(item)}
-                  >
-                    <Play size={12} aria-hidden="true" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            ) : null}
-          </div>
+          <span className="min-w-0 truncate text-xs font-medium text-text-secondary">{statusLabel}</span>
         </div>
-        {qualityStatus ? (
-          <div
-            data-graph-result-quality
-            data-graph-result-quality-status={qualityStatus}
-            className={`flex min-w-0 flex-col gap-0.5 text-[10px] leading-4 ${
-              qualityStatus === "fail" ? "text-state-error" : qualityStatus === "unchecked" ? "text-state-warning" : "text-state-success"
-            }`}
-          >
-            <span className="font-semibold">{t(adoptionQualityStatusMessageKey(qualityStatus))}</span>
-            {qualityDetail ? (
-              <span title={qualityDetail} className="break-words">{qualityDetail}</span>
-            ) : null}
-          </div>
-        ) : null}
+        {compact ? (
+          <Dialog open={showDetail && detailOpen} onOpenChange={(open) => { if (!open) onCloseDetail(); }}>
+            <DialogContent title={t("graph.inspector.title")} closeLabel={t("common.cancel")} placement="right" bodyClassName="max-h-[calc(100dvh-80px)] overflow-y-auto">{detailBody}</DialogContent>
+          </Dialog>
+        ) : (
+          <aside hidden={!showDetail} data-graph-result-detail={item.nodeId} aria-label={t("graph.inspector.title")} className="absolute inset-y-0 right-0 z-20 w-[300px] overflow-y-auto border-l border-border-l1 bg-surface-raised p-5">
+            <h2 className="mb-5 text-sm font-semibold">{t("graph.inspector.title")}</h2>{detailBody}
+          </aside>
+        )}
       </div>
     </article>
   );

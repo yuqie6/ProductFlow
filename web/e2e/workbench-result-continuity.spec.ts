@@ -347,6 +347,11 @@ for (const locale of ["zh-CN", "en-US", "ja-JP", "vi-VN"] as const) {
       await expect(dialog).toBeHidden();
       await card.locator("button").first().click();
       await expect(card).toHaveClass(/border-accent/);
+      const compactResults = await page.locator("[data-graph-results-view]").evaluate(el => el.clientWidth < 960);
+      if (compactResults) {
+        await expect(dialog).toBeVisible();
+        await dialog.locator("button").first().click();
+      }
       await expect(dialog).toBeHidden();
       const geometry = await warning.evaluate(element => {
         const r = element.getBoundingClientRect();
@@ -357,7 +362,7 @@ for (const locale of ["zh-CN", "en-US", "ja-JP", "vi-VN"] as const) {
       expect(geometry.right).toBeLessThanOrEqual(geometry.client);
       expect(geometry.scroll).toBeLessThanOrEqual(geometry.width);
       const cardBounds = await card.boundingBox();
-      for (const button of await card.locator("button").all()) {
+      for (const button of await card.locator("[data-graph-result-select], [data-graph-result-preview]").all()) {
         const bounds = await button.boundingBox();
         if (bounds && cardBounds) {
           expect(bounds.x).toBeGreaterThanOrEqual(cardBounds.x);
@@ -371,7 +376,8 @@ for (const locale of ["zh-CN", "en-US", "ja-JP", "vi-VN"] as const) {
       expect(mock.exportVersions).toEqual(["adoption-version-1"]);
       expect(mock.adoptionRequests).toEqual([]);
       await expect(dialog).toBeHidden();
-      await card.locator("[data-graph-result-adopt]").click();
+      if (compactResults) await card.locator("[data-graph-result-select]").click();
+      await page.locator("[data-graph-result-adopt]:visible").click();
       await expect(dialog).toBeVisible();
       await dialog.locator("button").last().click();
       await expect(dialog).toBeHidden();
@@ -432,3 +438,58 @@ test("unlinked adopted slot reports uncertainty and remains exportable", async (
   expect(mock.adoptionRequests).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath("unlinked-slot.png") });
 });
+
+for (const width of [390, 1024, 1440]) for (const theme of ["light", "dark"] as const) {
+  test(`result groups and selection detail ${width} ${theme}`, async ({ page }, info) => {
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    const mock = await installPolicyMock(page);
+    await page.route("**/workflows/current", async route => {
+      const value = graph(PRODUCT_ONE);
+      const template = value.nodes[0];
+      value.nodes = Array.from({length: 6}, (_, index) => ({
+        ...template, id: index === 0 ? NODE_ID : `layout-image-${index}`,
+        title: `春季陶瓷马克杯 · ${index + 1} · 长标题验证`,
+        group_id: index < 3 ? "hero-group" : "scene-group",
+      }));
+      value.groups = [
+        {id: "hero-group", title: "商品主图", member_ids: value.nodes.slice(0,3).map(node => node.id)},
+        {id: "scene-group", title: "场景与细节", member_ids: value.nodes.slice(3).map(node => node.id)},
+      ];
+      await route.fulfill({json: value});
+    });
+    await openResults(page, PRODUCT_ONE, "zh-CN", theme, width);
+    const view = page.locator("[data-graph-results-view]");
+    await expect(view.locator("[data-graph-result-item]")).toHaveCount(6);
+    await view.getByRole("navigation").getByRole("button", {name: /场景与细节/}).click();
+    await expect(view.locator("[data-graph-result-item]")).toHaveCount(3);
+    await view.getByRole("navigation").getByRole("button", {name: /商品主图/}).click();
+    await expect(view.locator("[data-graph-result-item]")).toHaveCount(3);
+    await view.locator("[data-graph-result-select]").first().click();
+    await expect(page.locator("[data-inspector-node-id]:visible")).toHaveCount(0);
+    const compact = await view.evaluate(el => el.clientWidth < 960);
+    const detail = compact ? page.getByRole("dialog") : view.locator(`[data-graph-result-detail="${NODE_ID}"]`);
+    await expect(detail).toBeVisible();
+    await expect(detail.locator("[data-graph-result-history]")).toBeVisible();
+    await expect(detail.locator("[data-graph-result-edit]")).toBeVisible();
+    await expect(detail.locator("[data-graph-result-adopt]")).toBeVisible();
+    const bounds = await detail.evaluate(el => { const r = el.getBoundingClientRect(); return {left:r.left,right:r.right,scroll:el.scrollWidth,width:el.clientWidth,viewport:innerWidth}; });
+    expect(bounds.left).toBeGreaterThanOrEqual(0);
+    expect(bounds.right).toBeLessThanOrEqual(bounds.viewport);
+    expect(bounds.scroll).toBeLessThanOrEqual(bounds.width);
+    await page.screenshot({path:info.outputPath("selected-result.png")});
+    if (compact) {
+      await detail.locator("button").first().click();
+      await expect(detail).toBeHidden();
+      await view.locator("[data-graph-result-select]").first().focus();
+      await page.keyboard.press("Enter");
+      await expect(detail).toBeVisible();
+      await detail.locator("button").first().click();
+    }
+    await view.getByRole("navigation").getByRole("button", {name: /图片成果/}).click();
+    await expect(view.locator("[data-graph-result-item]")).toHaveCount(6);
+    await page.screenshot({path:info.outputPath("result-grid.png")});
+    expect(mock.writes).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+}
