@@ -272,6 +272,7 @@ async def sse_reader(
                 headers={"Cookie": f"session={cookie}"},
                 timeout=aiohttp.ClientTimeout(total=None, sock_read=None),
             ) as response:
+                last_payload: dict[str, Any] | None = None
                 connected_at = time.monotonic()
                 if last_closed_at is not None:
                     stats.coverage_gaps_ms.append(max(0.0, connected_at - last_closed_at) * 1000)
@@ -287,19 +288,23 @@ async def sse_reader(
                         if not line.startswith("data: "):
                             continue
                         payload = json.loads(line[6:])
+                        last_payload = payload
+                        received_epoch = time.time()
                         rows = await db_probe.task_rows(set(task_ids))
-                        stats.record(payload, time.time(), rows)
+                        stats.record(payload, received_epoch, rows)
                 stats.connections_closed += 1
                 closed_at = time.monotonic()
                 last_closed_at = closed_at
                 if closed_at >= stop_at:
                     return
-                active_rows = await db_probe.task_rows(set(task_ids))
-                if any(row.get("status") in {"queued", "running"} for row in active_rows.values()):
-                    stats.premature_closures += 1
-                    stats.error = stats.error or "SSE closed while this generation slot remained active"
-                else:
+                # The server deliberately closes after an idle snapshot. A
+                # successor may already be queued by the time EOF is observed;
+                # consulting the mutable task set here misclassifies that close.
+                if last_payload is not None and last_payload.get("has_active_generation_task") is False:
                     stats.idle_closures += 1
+                else:
+                    stats.premature_closures += 1
+                    stats.error = stats.error or "SSE closed without a final idle snapshot"
                 stats.reconnects += 1
         except asyncio.CancelledError:
             raise

@@ -132,3 +132,5 @@ root 已将审核后的工具复制到 `scripts/saas_capacity/` 及 `go/internal
 - fault 前置真实读回 3 running + 1 queued；Redis 实际中断约 44.1s。短观察结束时 3 long 仍 running、新任务 queued/timed_out，provider 仅记录 3/5 预期请求。不能据此证明 90 分钟 stale 恢复失效，也不能宣称恢复通过。
 
 root 接管剩余判读与工具修正；本单尚未完整验收。商家公平性、故障后短窗口不可用、SSE/commit 测量缺口分别保留，不以修复统计器掩盖实际业务失败。
+
+root 已核对生产 SSE 关闭合同：服务发出 `has_active_generation_task=false` 的状态后正常关闭。测量器现以同一连接最后状态判定 EOF，避免新任务进入可变集合造成误报；无状态或最后仍 active 的关闭仍失败。收帧时刻在数据库探测前记录。30 项离线回归通过，包含正常空闲关闭后新任务已 running、active 中断及空连接；尚未运行修订后的真实 SSE 采样，旧 L2 失败不会直接改为通过。

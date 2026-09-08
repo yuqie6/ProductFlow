@@ -229,14 +229,24 @@ class IdentityEvidenceTest(unittest.TestCase):
 
 class SseReconnectTest(unittest.TestCase):
     def test_idle_stream_close_is_reconnected_until_stop(self):
-        class EmptyContent:
+        self.check_close(False, expected_idle=2)
+
+    def test_active_snapshot_close_is_not_idle(self):
+        self.check_close(True, expected_idle=0)
+
+    def test_empty_stream_close_is_not_idle(self):
+        self.check_close(None, expected_idle=0)
+
+    def check_close(self, active, expected_idle):
+        class Content:
             async def __aiter__(self):
-                if False:
-                    yield b""
+                if active is not None:
+                    payload = {"has_active_generation_task": active, "generation_tasks": []}
+                    yield ("data: " + json.dumps(payload) + "\n").encode()
 
         class Response:
             status = 200
-            content = EmptyContent()
+            content = Content()
 
             async def __aenter__(self):
                 return self
@@ -256,7 +266,9 @@ class SseReconnectTest(unittest.TestCase):
 
         class DB:
             async def task_rows(self, _task_ids):
-                return {}
+                # A new task exists after the server's final snapshot. Its
+                # presence must not invalidate the previous stream's idle EOF.
+                return {"next-task": {"status": "running"}}
 
         async def no_sleep(_seconds):
             return None
@@ -268,7 +280,9 @@ class SseReconnectTest(unittest.TestCase):
                 asyncio.run(run_load.sse_reader(client, "http://example", 0, "cookie", stats, DB(), set(), 0.0, 1.0))
         self.assertEqual(client.calls, 3)
         self.assertEqual(stats.connections_opened, 2)
-        self.assertEqual(stats.idle_closures, 2)
+        self.assertEqual(stats.idle_closures, expected_idle)
+        self.assertEqual(stats.premature_closures, 2 - expected_idle)
+        self.assertEqual(bool(stats.error), expected_idle == 0)
         self.assertEqual(stats.reconnects, 2)
 
 
