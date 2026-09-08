@@ -63,7 +63,9 @@
 | Graph/连续生图/局部编辑的商家归属读取丢失数据库及取消原因 | 各既有查询保留 apperr 文案并 Join 原错误，不增加共享查询或第二份规则 | 三个真实数据库读取故障和取消回归；Graph 终态事务回滚及恢复 | `19889e5a` |
 | Graph 商品服务经 context 隐式传播，事务函数及测试 helper 隐藏装配前置 | Service/Executor 保留 Products；Graph 事务函数和商品/配方调用显式传入既有 ProductGuard，删除 context 通道 | 商品/配方、跨商家和事务/执行/恢复合同验收见本节 | `fc193c91` |
 | 原图事务吞掉可选交付错误，SQL 故障污染原图、普通错误留下交付写入 | Graph 用原 tx.WithGorm 保存点隔离交付；delivery 只跳过业务校验失败，读取错误返回 | 实际交付服务的 dispatch SQL/源图读取/暂存后错误及外层结算回滚；原图结算与重排幂等 | `80808850` |
-| 两个交付创建入口复制唯一冲突后回读逻辑，并发时事务失效返回 25P02 | delivery.createOrReuseJob 统一原图/规格去重与信封暂存，精确 OnConflict 只处理既有唯一键 | 主动/自动三个并发组合和首个暂存 SQL 失败后竞争者接续；一作业一信封 | 随本次提交 |
+| 两个交付创建入口复制唯一冲突后回读逻辑，并发时事务失效返回 25P02 | delivery.createOrReuseJob 统一原图/规格去重与信封暂存，精确 OnConflict 只处理既有唯一键 | 主动/自动三个并发组合和首个暂存 SQL 失败后竞争者接续；一作业一信封 | `9a7c0bb8` |
+
+| Graph 终态同步吞掉 Agent 投影写错，信封消费后确认单滞留 | Executor 返回既有 AfterRunStatus 事务错误，终态重投只补同步 | 真实 PG 23514 保留信封 pending，解除后确认单 succeeded/信封 consumed，Provider 调用与额度不变 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -82,6 +84,8 @@
 ## 后续优先级
 
 优先级按可能损害排序；修改频率与扩散范围目前只有静态调用者证据，没有生产统计。
+
+新增高优先级：Agent 的 syncRequestRowFromRun 与 applyGraphRunStatusToTask 均缺 Graph unknown 分支。真实执行已观察到 run unknown 而确认单仍 confirmed、信封 consumed；Task 的遗漏来自静态调用链，尚未做对应数据库场景。终态同步错误传播的切片不解决此状态映射缺口；后续须核对持久化枚举及全部消费者，不能将 unknown 映射为明确失败来启用自动重试。
 
 1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化已与结算同事务；明确失败终态额度已归入命令，付费成功结算已要求 hold；付费未知与调用后取消已依据 effect 的明确额度身份要求 hold，非付费 effect 跳过图像账本；释放入口的缺失 hold 合同仍待进一步核实；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 已在后续切片绑定 task/effect 并删除前缀最新预留查询；unknown/release 的缺失 hold 容忍已在后续切片删除；准确预留缺失时终态回滚。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
 2. **中：局部编辑未知/释放的缺失 hold 合同与额度底层错误。** 当前唯一运行时 Reserve 入口与 provider_pending 同事务，不产生 claimed + hold；新增真实数据库准备失败后恢复执行回归确认旧 attempt 零 hold、新 attempt 正常结算，不为历史组合新增恢复分支。unknown 的缺失 hold 容忍已在后续切片删除并覆盖终态/取消/恢复；调用准备前 Release 可无 hold，本轮已核对 Execute 的全部 failed 分支均位于 prepareProviderCall 成功之前，Provider 返回错误及结果持久化失败均走 unknown，未发现生产调用后明确失败 Release 路径。成功结算已拒绝缺 hold。quota 的账户/hold/事件写入原因丢失已在后续切片修复并验证 HTTP 文案保持；账户初始化、锁定及读取错误转换仍待核实。
@@ -556,3 +560,18 @@ Graph 复用 tx.WithGorm 的嵌套保存点，仅包围可选交付调用：其�
 该共享 owner 消除实际重复的并发机制；修改交付作业创建或信封暂存规则不再同步维护两个实现。没有增加新的幂等键、状态、schema、重试调度或模型调用。可选交付的自动补排与持久化故障提示仍不在本切片交付范围。
 
 当前 checkout 交付整包 PASS 7.920 秒，Graph 可选交付错误/外层回滚消费者回归 PASS 8.291 秒；交付标准 go vet、just docs-check 与完整 diff 空白检查通过。生产修改仅在 delivery/service.go；新增测试的数据库读写与屏障、真实 SQL 故障、自身 callback 清理均已自审。Graph 本轮未重跑整包，范围由受影响的交付调用点决定，不将针对性通过表述为 Graph 全量验收。日志保留 /tmp/pf-delivery-concurrency-suite.log 和 /tmp/pf-delivery-concurrency-graph.log。测试进程已结束，无共享服务或其他任务文件变更，按独占文件提交。
+
+
+## Graph 终态投影写错保留队列重投
+
+本切片由主代理唯一负责 graph/execute.go、新增 status_projection_recovery_test.go 与本记录。并行 eval 文件保持原样，共享业务进程未重启。实际调用链为 queue.Consume → Executor.ExecuteRun → notifyRunStatus → agent.SyncGraphRunToTasks → 确认单/Task 投影。Agent 同步函数会返回数据库错误，但 notifyRunStatus 忽略整个事务结果，worker 返回 nil，队列将信封消费，确认单可能长期停在 confirmed。
+
+只改变该错误传播边界：notifyRunStatus 返回既有 tx.WithGorm 的错误，ExecuteRun 的成功、明确失败、未知及已终态重投分支直接返回它。Graph 已提交终态保持权威；队列沿既有重投机制再次同步，不重新执行终态图节点。原 lease、attempt、额度、取消组合事务和队列重试上限均未更改，没有第二套同步调度。调用者不再需要另行发现并修补被消费信封对应的投影事务失败。
+
+新回归使用实际 Graph HTTP 创建/执行、agent.SyncGraphRunToTasks、queue.Consume 和独立 PostgreSQL。确认单约束拒绝从 confirmed 变更；旧实现成功运行场景复现 run succeeded、确认单 confirmed、信封 consumed 且错误为 nil。修复后原 SQLSTATE 23514 和约束名透传，图仍 succeeded，确认单 confirmed，信封 pending。故障未解除时再次投递仍返回数据库错误；移除约束再投递，确认单 succeeded、信封 consumed，图像 Provider 调用计数及账户 available/reserved 不变。测试使用确定性 Provider，没有真实模型费用。
+
+探索 unknown 场景另发现 Agent 两处状态 switch 缺少 unknown 分支；实际 run unknown 时没有投影写入，故不能用同一约束证明吞错。首轮包含两个场景 FAIL 4.383 秒；错误传播修复后中间运行仅 unknown 场景仍失败（4.762 秒）。最终本回归限定已证明的成功终态故障，并把 unknown 单独列入高优先级风险；没有宣称它已解决。新夹具未绑定 Agent Task，验证的是实际确认单持久化恢复；Task 的既有 Goal/user-owned 语义由消费者测试另行覆盖。
+
+针对性恢复和缺失 Graph 消费回归 PASS 3.284 秒。最终当前 checkout Graph 整包 PASS 103.886 秒，受影响 Agent 确认/Goal 保持/用户控制状态/取消消费者回归 PASS 1.307 秒。Graph go vet -stdversion=false 通过；标准 vet 的既有 Go 版本声明问题仍未解决。日志保留 /tmp/pf-graph-projection-suite.log 与 /tmp/pf-graph-projection-agent.log。重投测试把既有信封置 sent 后调用真实 Consume，没有运行真实 dispatcher 或 SIGKILL；不据此宣称整套进程崩溃矩阵完成。
+
+完整 diff 自审确认四处调用均消费同步错误，旧吞错实现已删除；测试故障约束只存在于一次性数据库，测试进程已结束。相关文档与空白检查通过后按三个独占文件提交，不包含 eval 修改。

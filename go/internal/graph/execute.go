@@ -26,7 +26,7 @@ type Executor struct {
 	Deps Dependencies // Prompt/Image 为 nil 时用 Mock；Delivery 排队失败只记日志，不失败 cook
 	Log  *zap.Logger  // nil 时用 Nop
 	// AfterRunStatus 在 ExecuteRun 到达终态（成功、failed、unknown）后回调，供 Agent 同步 Task。
-	// nil 跳过。失败被吞掉，不回滚已写入的 run 状态。
+	// nil 跳过。同步失败返回 worker，保留信封重投；不回滚已提交的 run 终态。
 	AfterRunStatus func(ctx context.Context, tx *gorm.DB, runID string) error
 	// Products 显式传入执行事务，用于锁商品、读 facts 与绑定图。
 	// nil 时需要守卫的路径返回 Internal。
@@ -37,8 +37,8 @@ type Executor struct {
 //
 // 进程内互斥只做同进程重复提交的快速门禁；跨实例执行权由 GraphRun 行上的 token/expiry lease 决定。
 // lease 丢失时取消本次执行并返回 queue.ErrBusy，旧 worker 不能再收口 run 或晋升产物。
-// 找不到 run 视为已消费，返回 nil。无法证明的 provider 结果标 unknown，返回 nil，不把 run 标 failed、不自动重试。
-// 已证明的节点失败会把 run 标 failed 后仍返回 nil，让 worker 消费任务。
+// 找不到 run 视为已消费，返回 nil。无法证明的 provider 结果标 unknown，不把 run 标 failed、不重调 Provider。
+// 已证明的节点失败会把 run 标 failed；终态同步成功后返回 nil，同步失败返回错误供信封重投。
 // 不要在这里打 broker，也不要把 unknown 改成 failed。副作用见 executeLoop / claim / persist。
 func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 	e.logger().Info("graph run", zap.String("workflow_run_id", runID))
@@ -57,8 +57,7 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 		return err
 	}
 	if !active {
-		e.notifyRunStatus(ctx, runID)
-		return nil
+		return e.notifyRunStatus(ctx, runID)
 	}
 	if !acquired {
 		return queue.ErrBusy
@@ -104,8 +103,7 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 			return nil
 		}
 		if isProviderUnknown(err) {
-			e.notifyRunStatus(ctx, runID)
-			return nil
+			return e.notifyRunStatus(ctx, runID)
 		}
 		if failErr := failGraphRun(leaseCtx, e.Products, e.DB, runID, "工作流运行失败"); failErr != nil {
 			if isMissingGraphRun(failErr) {
@@ -116,18 +114,16 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 			}
 			return failErr
 		}
-		e.notifyRunStatus(ctx, runID)
-		return nil
+		return e.notifyRunStatus(ctx, runID)
 	}
-	e.notifyRunStatus(ctx, runID)
-	return nil
+	return e.notifyRunStatus(ctx, runID)
 }
 
-func (e Executor) notifyRunStatus(ctx context.Context, runID string) {
+func (e Executor) notifyRunStatus(ctx context.Context, runID string) error {
 	if e.AfterRunStatus == nil {
-		return
+		return nil
 	}
-	_ = tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+	return tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
 		return e.AfterRunStatus(ctx, pgxTx, runID)
 	})
 }
