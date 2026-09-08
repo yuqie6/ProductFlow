@@ -63,8 +63,6 @@ for (const locale of LOCALES) for (const width of [390, 1440]) for (const theme 
     const overview = page.locator('section[aria-labelledby="merchant-overview-title"]');
     await expect(overview.getByRole("heading", { name: m("title") })).toBeVisible();
     await expect(overview.getByText("alice: Work old-waiting", { exact: false })).toBeVisible();
-    await expect(overview.getByText(m("adoptionNote"))).toBeVisible();
-    await expect(overview.getByText(m("filterNote"))).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("lang", locale); await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
     await page.screenshot({ path: testInfo.outputPath("overview.png"), fullPage: true });
     const geometry = await page.evaluate(() => ({ width: innerWidth, client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
@@ -314,8 +312,6 @@ test("overview source counts filter records without changing the global summary"
   expect(new URL(page.url()).searchParams.has("work_page")).toBe(false);
   await expect(overview.locator("dl").first()).toContainText("24");
   await expect(overview.locator("dl").first()).toContainText("8");
-  await overview.getByText(overviewMessage("en-US", "scopeDetails"), {exact:true}).click();
-  await expect(overview.getByText(overviewMessage("en-US", "currentNote"), {exact:false})).toBeVisible();
 });
 
 test("overview loading and zero-data surfaces remain usable on mobile", async ({page}, info) => {

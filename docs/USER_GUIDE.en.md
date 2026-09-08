@@ -107,7 +107,7 @@ On the create page, enter a product brief plus on-image copy and language, then 
 
 ### Product directory and work overview
 
-`/products` opens the product directory with search, sorting and pagination. Switch to Merchant work overview for existing statistics, work records and source, state and date filters. Returning to the directory preserves product search and sorting; reload preserves the selected view. Click a source/status count in the overview to filter work records; the global summary remains unchanged. Expand About these counts for the time scope of ongoing and recent failed records. Each row prioritizes the product, category, price and last update. Its Actions button opens the cover filename and timestamps, with links to the workbench and the existing confirmed, permission-controlled deletion flow.
+`/products` opens the product directory with search, sorting and pagination. Switch to Merchant work overview for existing statistics, work records and source, state and date filters. Returning to the directory preserves product search and sorting; reload preserves the selected view. Click a source/status count in the overview to filter work records; the global summary remains unchanged. Each row prioritizes the product, category, price and last update. Its Actions button opens the cover filename and timestamps, with links to the workbench and the existing confirmed, permission-controlled deletion flow.
 
 ## 3. Product Workbench
 

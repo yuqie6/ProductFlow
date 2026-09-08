@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, RefreshCw, Package, CheckCheck, Bot, Workflow, Images, Pencil, Clock3, ChevronDown, Inbox, AlertCircle } from "lucide-react";
+import { ArrowUpRight, RefreshCw, Package, CheckCheck, Bot, Workflow, Images, Pencil, Clock3, Inbox, AlertCircle } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
@@ -92,7 +92,6 @@ export function MerchantOverview({ merchantId }: { merchantId: string }) {
               <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-surface-subtle" aria-hidden="true">
                 <div className="h-full rounded-full bg-accent" style={{ width: `${adoptedShare}%` }} />
               </div>
-              <p className="mt-4 text-xs leading-5 text-text-muted">{m("adoptionNote")}</p>
             </div>
             <div className="min-w-0 p-4 sm:p-6">
               <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-text-secondary"><Workflow size={17} aria-hidden="true" />{m("sourceCounts")}</h3>
@@ -121,7 +120,6 @@ export function MerchantOverview({ merchantId }: { merchantId: string }) {
                   );
                 })}</tbody>
               </table>
-              <p className="mt-3 text-xs leading-5 text-text-muted">{m("sourceNote")}</p>
             </div>
           </div>
           <footer className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-t border-border-l1 bg-surface-base/60 px-5 py-3 text-[11px] leading-5 text-text-muted sm:px-6">
@@ -140,7 +138,6 @@ export function MerchantOverview({ merchantId }: { merchantId: string }) {
               <Select ariaLabel={m("allStates")} value={input.state} options={WORK_STATES.map(value => ({ value, label: m(value === "all" ? "allStates" : value === "failed" ? "recentFailed" : value) }))} onChange={value => update({ state: WORK_STATES.find(state => state === value) ?? "all" })} className="sm:w-52" />
             </div>
           </div>
-          <p className="mt-3 text-xs leading-5 text-text-muted">{m("filterNote")}</p>
         </div>
         {query.isPlaceholderData ? <div role="status" className="px-5 py-10 text-center text-sm text-text-muted">{t("app.loading")}</div> : null}
         {records ? <>
@@ -158,10 +155,6 @@ export function MerchantOverview({ merchantId }: { merchantId: string }) {
           </footer>
         </> : null}
       </div>
-      <details className="group text-xs leading-5 text-text-muted">
-        <summary className="flex w-fit cursor-pointer list-none items-center gap-2 rounded-control py-1 outline-none focus-visible:ring-2 focus-visible:ring-focus-ring"><ChevronDown size={14} className="transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />{m("scopeDetails")}</summary>
-        <p className="mt-2 max-w-3xl pl-6">{m("currentNote")} {m("failureNote")}</p>
-      </details>
     </section>
   );
 }
