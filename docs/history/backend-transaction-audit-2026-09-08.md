@@ -62,7 +62,8 @@
 | Graph 付费调用缺预留仍提交 unknown，通用 effect 又不能直接区分非付费调用 | effect 保存可空 quota_key，准备与预留同事务；未知、取消、恢复复用准确额度身份 | 真实调用故障复现与回滚、非付费文稿/合成、迁移及 Graph 整包通过 | `1dedc721` |
 | Graph/连续生图/局部编辑的商家归属读取丢失数据库及取消原因 | 各既有查询保留 apperr 文案并 Join 原错误，不增加共享查询或第二份规则 | 三个真实数据库读取故障和取消回归；Graph 终态事务回滚及恢复 | `19889e5a` |
 | Graph 商品服务经 context 隐式传播，事务函数及测试 helper 隐藏装配前置 | Service/Executor 保留 Products；Graph 事务函数和商品/配方调用显式传入既有 ProductGuard，删除 context 通道 | 商品/配方、跨商家和事务/执行/恢复合同验收见本节 | `fc193c91` |
-| 原图事务吞掉可选交付错误，SQL 故障污染原图、普通错误留下交付写入 | Graph 用原 tx.WithGorm 保存点隔离交付；delivery 只跳过业务校验失败，读取错误返回 | 实际交付服务的 dispatch SQL/源图读取/暂存后错误及外层结算回滚；原图结算与重排幂等 | 随本次提交 |
+| 原图事务吞掉可选交付错误，SQL 故障污染原图、普通错误留下交付写入 | Graph 用原 tx.WithGorm 保存点隔离交付；delivery 只跳过业务校验失败，读取错误返回 | 实际交付服务的 dispatch SQL/源图读取/暂存后错误及外层结算回滚；原图结算与重排幂等 | `80808850` |
+| 两个交付创建入口复制唯一冲突后回读逻辑，并发时事务失效返回 25P02 | delivery.createOrReuseJob 统一原图/规格去重与信封暂存，精确 OnConflict 只处理既有唯一键 | 主动/自动三个并发组合和首个暂存 SQL 失败后竞争者接续；一作业一信封 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -540,3 +541,18 @@ Graph 复用 tx.WithGorm 的嵌套保存点，仅包围可选交付调用：其�
 这保证可选派生失败的隔离和既有入口的幂等重排，不提供自动补排调度，也不将 Graph succeeded 当作交付件已经完成。日志可解释排队故障，但本切片没有新增持久化失败投影或 UI 提示。没有真实模型费用、生产操作或迁移。
 
 最终当前 checkout 的 Graph/交付整包分别 PASS 106.167/7.384 秒，包含源图业务校验跳过的回归；Graph go vet -stdversion=false、交付标准 go vet、just docs-check 与 diff 空白检查通过。保存点初版整包 103.145/7.619 秒仅代表加入源图错误传播前的代码，最终结果以上述复验为准。日志保留 /tmp/pf-optional-delivery-suite.log 和 /tmp/pf-optional-delivery-final.log。完整自审包含新增测试文件、所有 QueueAfterImageSuccess 生产调用者及实际数据库读取分支；故障约束和重命名仅作用于测试库，无运行中的本轮测试进程。按本切片文件选择性提交，不包含评测任务修改。
+
+
+## 交付创建统一并发幂等与信封写入
+
+本轮主代理独占 delivery/service.go、新增 submit_concurrency_test.go 与本记录。并行 eval 路径及共享 API/worker/dispatcher 进程保持不动。沿主动 Submit 与自动 QueueAfterImageSuccess 两个入口读取原图、校验规格、创建作业及 StageForActor，确认两处复制了先查缺失、Create、捕获任意 23505 再回读的实现。PostgreSQL 唯一冲突已使事务失效，原回读无法兑现幂等合同。
+
+真实 PostgreSQL 回归在 GORM 查询后的观测 callback 设置并发屏障，只控制调度、不替代数据库读写。两个事务均读到作业不存在后才继续；submit/submit、submit/auto、auto/auto 三组合全部复现 25P02（首轮 FAIL 0.941 秒）。这证明影响为并发请求报错，未观察到重复作业或重复信封。
+
+两个入口现在复用 delivery 内部 createOrReuseJob，继续使用既有 NormalizedSpec、jobFromModel、loadBySourceHash、模型和队列合同。在调用方原事务内，精确以 (source_asset_id,spec_hash) 的既有唯一约束执行 OnConflict DoNothing；只有插入者 StageForActor，冲突方回读胜出作业。其他约束错误直接返回，删除两处 23505 后回读路径。源图资格/商家校验仍由各入口在调用 helper 前完成，Graph 保存点与主动 Submit 外层事务保持原边界。
+
+三个并发组合均得到一作业、一信封，主动重复请求返回同一 ID，只有一个 Created=true。增加首个插入者在信封暂存时触发真实 SELECT 1/0 的场景，错误保留 22012；其作业回滚，等待者接续插入并提交，一作业一信封。最终四组合针对性 PASS 1.050 秒。SubmitResult.Queued 原本在复用 queued/running 作业时也返回 true，本轮仅更正其注释，未更改返回行为。
+
+该共享 owner 消除实际重复的并发机制；修改交付作业创建或信封暂存规则不再同步维护两个实现。没有增加新的幂等键、状态、schema、重试调度或模型调用。可选交付的自动补排与持久化故障提示仍不在本切片交付范围。
+
+当前 checkout 交付整包 PASS 7.920 秒，Graph 可选交付错误/外层回滚消费者回归 PASS 8.291 秒；交付标准 go vet、just docs-check 与完整 diff 空白检查通过。生产修改仅在 delivery/service.go；新增测试的数据库读写与屏障、真实 SQL 故障、自身 callback 清理均已自审。Graph 本轮未重跑整包，范围由受影响的交付调用点决定，不将针对性通过表述为 Graph 全量验收。日志保留 /tmp/pf-delivery-concurrency-suite.log 和 /tmp/pf-delivery-concurrency-graph.log。测试进程已结束，无共享服务或其他任务文件变更，按独占文件提交。

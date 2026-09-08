@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/media"
@@ -27,6 +26,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"github.com/yuqie6/productflow/internal/product"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Service 拥有 DeliverySpec 派生任务的提交、查询与重试。
@@ -36,12 +36,12 @@ type Service struct {
 }
 
 // SubmitResult 是提交一次交付派生的内部结果，HTTP 只回 Job。
-// Created=false 表示相同源图+SpecHash 已有任务。Queued=true 表示写了 PENDING dispatch。
+// Created=false 表示相同源图+SpecHash 已有任务。Queued=true 表示作业 queued/running，不代表本次新写信封。
 // 不要把 Created 和 HTTP 201 绑死：handler 按 Job.Status 回 200 或 202。
 type SubmitResult struct {
 	Job     JobResponse // HTTP 只回这一份任务投影
 	Created bool        // false 表示相同源图+SpecHash 已有任务，本次没有新建
-	Queued  bool        // true 表示写了 PENDING dispatch；HTTP 不直接入队 broker
+	Queued  bool        // true 表示任务已排队或正在执行；HTTP 不直接入队 broker
 }
 
 // Submit 按规范化 DeliverySpec 创建或复用交付任务，并写入 PENDING dispatch。
@@ -63,49 +63,13 @@ func (s Service) Submit(ctx context.Context, sourceAssetID string, specRaw map[s
 		if err := validateSource(ctx, pgxTx, source); err != nil {
 			return err
 		}
-		existing, err := loadBySourceHash(ctx, pgxTx, source.ID, normalized.Hash)
+		row, inserted, err := createOrReuseJob(ctx, pgxTx, source, normalized)
 		if err != nil {
 			return err
 		}
-		if existing != nil {
-			jobID = existing.ID
-			created = false
-			queued = existing.Status == "queued" || existing.Status == "running"
-			return nil
-		}
-		id := clockid.New()
-		specJSON, err := json.Marshal(normalized.Payload)
-		if err != nil {
-			return err
-		}
-		now := time.Now().UTC()
-		row := schema.DeliveryRenditionJobs{
-			ID: id, ProductID: source.ProductID, SourceAssetID: source.ID,
-			SpecSchemaVersion: specSchemaVersion, SpecJSON: string(specJSON), SpecHash: normalized.Hash,
-			Status: "queued", Attempts: 0, IsRetryable: true, CreatedAt: now, UpdatedAt: now,
-		}
-		if err := pgxTx.Create(&row).Error; err != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-				dup, loadErr := loadBySourceHash(ctx, pgxTx, source.ID, normalized.Hash)
-				if loadErr != nil {
-					return loadErr
-				}
-				if dup != nil {
-					jobID = dup.ID
-					created = false
-					queued = dup.Status == "queued" || dup.Status == "running"
-					return nil
-				}
-			}
-			return err
-		}
-		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, id, 0); err != nil {
-			return err
-		}
-		jobID = id
-		created = true
-		queued = true
+		jobID = row.ID
+		created = inserted
+		queued = row.Status == "queued" || row.Status == "running"
 		return nil
 	})
 	if err != nil {
@@ -222,39 +186,50 @@ func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx *gorm.DB, nod
 		}
 		return err
 	}
-	existing, err := loadBySourceHash(ctx, pgxTx, source.ID, normalized.Hash)
+	_, _, err = createOrReuseJob(ctx, pgxTx, source, normalized)
+	return err
+}
+
+// createOrReuseJob owns source/spec deduplication and dispatch staging in the caller's transaction.
+// Only the insert winner stages a dispatch; conflicts on other constraints remain errors.
+func createOrReuseJob(ctx context.Context, db *gorm.DB, source product.ImageAsset, normalized NormalizedSpec) (jobRow, bool, error) {
+	existing, err := loadBySourceHash(ctx, db, source.ID, normalized.Hash)
 	if err != nil {
-		return err
+		return jobRow{}, false, err
 	}
 	if existing != nil {
-		return nil
+		return *existing, false, nil
 	}
-	id := clockid.New()
 	specJSON, err := json.Marshal(normalized.Payload)
 	if err != nil {
-		return err
+		return jobRow{}, false, err
 	}
 	now := time.Now().UTC()
 	row := schema.DeliveryRenditionJobs{
-		ID: id, ProductID: source.ProductID, SourceAssetID: source.ID,
+		ID: clockid.New(), ProductID: source.ProductID, SourceAssetID: source.ID,
 		SpecSchemaVersion: specSchemaVersion, SpecJSON: string(specJSON), SpecHash: normalized.Hash,
 		Status: "queued", Attempts: 0, IsRetryable: true, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := pgxTx.Create(&row).Error; err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			dup, loadErr := loadBySourceHash(ctx, pgxTx, source.ID, normalized.Hash)
-			if loadErr != nil {
-				return loadErr
-			}
-			if dup != nil {
-				return nil
-			}
-		}
-		return err
+	insert := db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "source_asset_id"}, {Name: "spec_hash"}}, DoNothing: true,
+	}).Create(&row)
+	if insert.Error != nil {
+		return jobRow{}, false, insert.Error
 	}
-	_, err = queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, id, 0)
-	return err
+	if insert.RowsAffected == 0 {
+		existing, err := loadBySourceHash(ctx, db, source.ID, normalized.Hash)
+		if err != nil {
+			return jobRow{}, false, err
+		}
+		if existing == nil {
+			return jobRow{}, false, gorm.ErrRecordNotFound
+		}
+		return *existing, false, nil
+	}
+	if _, err := queue.StageForActor(ctx, db, queue.ActorDelivery, row.ID, 0); err != nil {
+		return jobRow{}, false, err
+	}
+	return jobFromModel(row), true, nil
 }
 
 // serialize 把作业行投影成 JobResponse；结果资产缺失时返回 LoadAsset 的 error，不伪造空结果。
