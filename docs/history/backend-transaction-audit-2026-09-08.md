@@ -65,7 +65,9 @@
 | 原图事务吞掉可选交付错误，SQL 故障污染原图、普通错误留下交付写入 | Graph 用原 tx.WithGorm 保存点隔离交付；delivery 只跳过业务校验失败，读取错误返回 | 实际交付服务的 dispatch SQL/源图读取/暂存后错误及外层结算回滚；原图结算与重排幂等 | `80808850` |
 | 两个交付创建入口复制唯一冲突后回读逻辑，并发时事务失效返回 25P02 | delivery.createOrReuseJob 统一原图/规格去重与信封暂存，精确 OnConflict 只处理既有唯一键 | 主动/自动三个并发组合和首个暂存 SQL 失败后竞争者接续；一作业一信封 | `9a7c0bb8` |
 
-| Graph 终态同步吞掉 Agent 投影写错，信封消费后确认单滞留 | Executor 返回既有 AfterRunStatus 事务错误，终态重投只补同步 | 真实 PG 23514 保留信封 pending，解除后确认单 succeeded/信封 consumed，Provider 调用与额度不变 | 随本次提交 |
+| Graph 终态同步吞掉 Agent 投影写错，信封消费后确认单滞留 | Executor 返回既有 AfterRunStatus 事务错误，终态重投只补同步 | 真实 PG 23514 保留信封 pending，解除后确认单 succeeded/信封 consumed，Provider 调用与额度不变 | `8cdc5973` |
+
+| Graph unknown 缺确认单枚举及 Task 投影，UI 以 confirmed 推导并持续轮询 | Agent 原同步事务保存 unknown；商品 Goal 与全局 Task 遵守既有终态合同，Web 消费明确状态 | 商品/全局 PG 投影、原子回滚、HTTP 确认重放、Graph 未知信封恢复及枚举升级 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -85,7 +87,7 @@
 
 优先级按可能损害排序；修改频率与扩散范围目前只有静态调用者证据，没有生产统计。
 
-新增高优先级：Agent 的 syncRequestRowFromRun 与 applyGraphRunStatusToTask 均缺 Graph unknown 分支。真实执行已观察到 run unknown 而确认单仍 confirmed、信封 consumed；Task 的遗漏来自静态调用链，尚未做对应数据库场景。终态同步错误传播的切片不解决此状态映射缺口；后续须核对持久化枚举及全部消费者，不能将 unknown 映射为明确失败来启用自动重试。
+Graph unknown 的确认单/Task 投影缺口已在后续切片修复，实际数据库证据覆盖商品与全局场景、用户拥有状态和写失败回滚。确认单枚举需迁移后启用，尚未迁移共享开发库；跨多次运行关联同一 Task 的旧运行返回顺序仍待专项核实，不从单次运行的投影恢复推定全部时序安全。
 
 1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化已与结算同事务；明确失败终态额度已归入命令，付费成功结算已要求 hold；付费未知与调用后取消已依据 effect 的明确额度身份要求 hold，非付费 effect 跳过图像账本；释放入口的缺失 hold 合同仍待进一步核实；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 已在后续切片绑定 task/effect 并删除前缀最新预留查询；unknown/release 的缺失 hold 容忍已在后续切片删除；准确预留缺失时终态回滚。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
 2. **中：局部编辑未知/释放的缺失 hold 合同与额度底层错误。** 当前唯一运行时 Reserve 入口与 provider_pending 同事务，不产生 claimed + hold；新增真实数据库准备失败后恢复执行回归确认旧 attempt 零 hold、新 attempt 正常结算，不为历史组合新增恢复分支。unknown 的缺失 hold 容忍已在后续切片删除并覆盖终态/取消/恢复；调用准备前 Release 可无 hold，本轮已核对 Execute 的全部 failed 分支均位于 prepareProviderCall 成功之前，Provider 返回错误及结果持久化失败均走 unknown，未发现生产调用后明确失败 Release 路径。成功结算已拒绝缺 hold。quota 的账户/hold/事件写入原因丢失已在后续切片修复并验证 HTTP 文案保持；账户初始化、锁定及读取错误转换仍待核实。
@@ -575,3 +577,22 @@ Graph 复用 tx.WithGorm 的嵌套保存点，仅包围可选交付调用：其�
 针对性恢复和缺失 Graph 消费回归 PASS 3.284 秒。最终当前 checkout Graph 整包 PASS 103.886 秒，受影响 Agent 确认/Goal 保持/用户控制状态/取消消费者回归 PASS 1.307 秒。Graph go vet -stdversion=false 通过；标准 vet 的既有 Go 版本声明问题仍未解决。日志保留 /tmp/pf-graph-projection-suite.log 与 /tmp/pf-graph-projection-agent.log。重投测试把既有信封置 sent 后调用真实 Consume，没有运行真实 dispatcher 或 SIGKILL；不据此宣称整套进程崩溃矩阵完成。
 
 完整 diff 自审确认四处调用均消费同步错误，旧吞错实现已删除；测试故障约束只存在于一次性数据库，测试进程已结束。相关文档与空白检查通过后按三个独占文件提交，不包含 eval 修改。
+
+
+## Graph 未知结果贯穿 Agent 确认单与 Task
+
+本切片由主代理独占 Agent task_graph.go、新增 graph_unknown_projection_test.go、Graph 既有投影恢复测试、schema 枚举及新增升级测试、Web 确认单类型/卡片/消费者测试、ARCHITECTURE 和本记录。已刷新并行 eval 任务范围及实际共享服务进程，未触碰 eval 宿主与评测文件，未重启共享服务。
+
+从 Graph 终态向上查 Agent 同步函数、确认单 GET/Confirm/Cancel、重试来源检查、数据库枚举、Node 工具请求及 Web 类型/卡片/轮询。原枚举只有 awaiting_confirmation/confirmed/succeeded/failed/cancelled；两处同步 switch 缺 unknown。Web 卡片以 confirmed + workflow_run_status unknown 推导警示，但 statusKey 仍为 confirmed，轮询条件也仍成立。Node 工具创建的是待确认请求，执行确认后由 Go 同步运行结果，没有另一份需修改的确认单终态枚举。
+
+原代码真实 PostgreSQL 三场景 FAIL 4.077 秒：商品与全局确认单均停在 confirmed，无原因与 finished_at；Task 写故障未触发，因为原函数没有未知分支。现有 SyncGraphRunToTasks 仍是唯一同步 owner：确认单保存 unknown、Graph 原因及结束时间；商品 Goal 保持 waiting_user/goal_loop、无失败终态时间；全局 Task 使用原有 unknown 状态、原因及结束时间。用户 succeeded/canceled/paused 继续受原保护。没有把未知当 failed，没有改 Graph、Task 或 Provider 重试策略。Web 删除 confirmed 组合推导，直接读请求 unknown，复用现有四语文案和警示呈现，终态轮询自然停止。
+
+数据库验证两种 Task 归属与三种用户拥有状态；确认单/Task 共用原投影事务，真实约束拒绝 Task waiting_user 时确认单更新回滚，解除故障后一起恢复。真实 HTTP GET 和重复 Confirm 返回原 run ID、两个 unknown 状态，信封数量不增加。Graph 执行级回归扩展到真实测试 Provider 返回未知：确认单投影故障保留 pending，解除后 consumed，未知图不重调 Provider、可用/预留额度不变。
+
+schema.Apply 通过 EnumDDL 支持新库，并用 ExtraDDL 的 ALTER TYPE ADD VALUE 更新已有类型；没有修改迁移事务框架。一次性 PostgreSQL 测试还原缺少 unknown 的原枚举，在既有类型保存 confirmed 行后重复 Apply，旧值保持、新值提交后可写入。该升级只作用于测试库；共享开发库及生产没有运行迁移。新版 API/worker 上线前必须完成迁移，不能把本地代码验收当运行环境已切换。
+
+首轮针对性 Agent/迁移/Graph 分别 PASS 4.278/2.846/4.045 秒。补 HTTP 确认重放后，Agent 新回归与失败用例单独组合 PASS 5.015 秒；schema 整包 PASS 27.148 秒。首轮 Agent 整包 FAIL 87.927 秒，TestConcurrentExpiredRecoverySkipLockedDoesNotDoubleTerminate 只将 3/4 个过期 Turn 收口；该链调用 recoverExpiredExecutions，不经过 Graph 投影。单独复验通过，未更改其代码或断言。扫描采用 projection SKIP LOCKED 后逐条锁 execution，首轮具体少一条的运行时原因未捕获，保留为未解释风险。
+
+Web 完整门通过：113 文件、775 测试；lint/设计 token 检查、just web-build 的类型检查/构建/bundle 预算通过。卡片静态渲染验证结果未知与原因、无确认/取消/运行 spinner；轮询消费者验证 unknown 返回 false。复用已有文案和布局，没有做浏览器截图或真实模型运行。Graph/Agent go vet -stdversion=false、schema 标准 vet 通过；前两包既有标准 vet 版本声明问题未解决。
+
+最终 Agent 整包 PASS 81.570 秒，包含新增 HTTP 重放回归；未放宽并发扫描断言。完整切片自审完成，Graph 测试只增加 unknown 组合，不改生产执行链。相关日志为 /tmp/pf-unknown-{focused,recheck,go-suite,agent-final,web-tests,web-lint,web-build,vet}.log；首轮红色证据 /tmp/pf-agent-unknown-red.log。just docs-check 与完整 diff 检查通过。测试进程已退出，只读 PostgreSQL 确认本切片的 pf_unknown_projection_/pf_unknown_rollback_/pf_request_enum_ 一次性库已清理；没有删除历史数据库。按独占文件选择性提交，其他任务修改保留。

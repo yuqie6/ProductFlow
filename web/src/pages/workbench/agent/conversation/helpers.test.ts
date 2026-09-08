@@ -178,6 +178,9 @@ describe("workflowRunRequestRefetchInterval", () => {
       status: "succeeded",
       workflow_run_status: "succeeded",
     })).toBe(false);
+    expect(workflowRunRequestRefetchInterval({
+      ...hint!, status: "unknown", workflow_run_status: "unknown",
+    })).toBe(false);
     expect(workflowRunRequestRefetchInterval(null)).toBe(false);
   });
 });

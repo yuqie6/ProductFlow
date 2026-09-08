@@ -1234,6 +1234,7 @@ export interface AgentTurn {
 }
 
 export type AgentWorkflowRunRequestStatus =
+  | "unknown"
   | "awaiting_confirmation"
   | "confirmed"
   | "succeeded"

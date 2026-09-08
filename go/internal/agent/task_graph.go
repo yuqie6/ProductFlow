@@ -19,7 +19,7 @@ var userOwnedTask = map[string]struct{}{
 // SyncGraphRunToTasks 把 GraphRun 状态投影到关联的 workflow request 和 Task。
 // 商品 Goal 保持 waiting_user / goal_loop；用户完成、取消、暂停不被跑图终态改写。
 //
-// runID 空或 GraphRun 缺失时静默成功。锁 Task / 更新 request 的数据库错误会返回。未知 run 状态跳过 Task 写入。
+// runID 空或 GraphRun 缺失时静默成功。锁 Task / 更新 request 的数据库错误会返回。未识别的 run 状态跳过 Task 写入。
 func SyncGraphRunToTasks(ctx context.Context, pgxTx *gorm.DB, runID string) error {
 	if runID == "" {
 		return nil
@@ -67,9 +67,9 @@ func syncRequestRowFromRun(ctx context.Context, pgxTx *gorm.DB, requestID, runSt
 			"finished_at": gorm.Expr("COALESCE(finished_at, ?)", finishedAt),
 			"updated_at":  now,
 		}).Error
-	case graph.RunStatusFailed:
+	case graph.RunStatusFailed, graph.RunStatusUnknown:
 		return q.Updates(map[string]any{
-			"status":         "failed",
+			"status":         runStatus,
 			"failure_reason": failure,
 			"finished_at":    gorm.Expr("COALESCE(finished_at, ?)", finishedAt),
 			"updated_at":     now,
@@ -92,7 +92,7 @@ func syncRequestRowFromRun(ctx context.Context, pgxTx *gorm.DB, requestID, runSt
 
 // applyGraphRunStatusToTask 把 GraphRun 终态投影到关联 Task。用户已 succeeded/canceled/paused 立刻返回，读路径不得覆盖。
 //
-// 商品工作流 keepGoal：succeeded/failed/cancelled 都停在 waiting_user / goal_loop，摘要说明跑图结果但 Goal 未结束。全局 Task 才随跑图终态结束。
+// 商品工作流 keepGoal：succeeded/failed/unknown/cancelled 都停在 waiting_user / goal_loop，摘要说明跑图结果但 Goal 未结束。全局 Task 才随跑图终态结束。
 //
 // SyncGraphRunToTasks 调用。禁区：不要在 GetTask 之外再写一套「跑图成功即完成 Goal」。
 func applyGraphRunStatusToTask(ctx context.Context, pgxTx *gorm.DB, taskID *string, runStatus string, failure *string, finished *time.Time) error {
@@ -160,6 +160,21 @@ func applyGraphRunStatusToTask(ctx context.Context, pgxTx *gorm.DB, taskID *stri
 			status = "failed"
 			failureOut = &reason
 			summary = boundedSummary("工作流运行失败：" + reason)
+			finishedOut = &finishedAt
+		}
+	case graph.RunStatusUnknown:
+		reason := "工作流执行结果无法确认"
+		if failure != nil && *failure != "" {
+			reason = *failure
+		}
+		if keepGoal {
+			status = "waiting_user"
+			waiting = "goal_loop"
+			summary = boundedSummary("工作流运行结果未知：" + reason + "。Goal 未结束")
+		} else {
+			status = "unknown"
+			failureOut = &reason
+			summary = boundedSummary("工作流运行结果未知：" + reason)
 			finishedOut = &finishedAt
 		}
 	case graph.RunStatusCancelled:

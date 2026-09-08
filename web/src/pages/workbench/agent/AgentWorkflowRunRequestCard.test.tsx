@@ -150,3 +150,15 @@ describe("AgentWorkflowRunRequestCard", () => {
     expect(markup).not.toContain("sm:mx-3");
   });
 });
+
+ it("renders unknown as unresolved without confirm or running controls", () => {
+  const markup = renderToStaticMarkup(createElement(AgentWorkflowRunRequestCard, {
+   request: { ...request("unknown"), workflow_run_status: "unknown", failure_reason: "调用结果无法确认" },
+   loading: false, busy: false, error: null, onConfirm: vi.fn(), onCancel: vi.fn(), onOpenRuns: vi.fn(),
+  }));
+  expect(markup).toContain("结果未知");
+  expect(markup).toContain("调用结果无法确认");
+  expect(markup).not.toContain("确认并执行");
+  expect(markup).not.toContain("取消请求");
+  expect(markup).not.toContain("animate-spin");
+ });

@@ -45,7 +45,7 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $enum$;`,
 	`DO $enum$ BEGIN
-CREATE TYPE agentworkflowrunrequeststatus AS ENUM ('awaiting_confirmation', 'confirmed', 'succeeded', 'failed', 'cancelled');
+CREATE TYPE agentworkflowrunrequeststatus AS ENUM ('awaiting_confirmation', 'confirmed', 'succeeded', 'failed', 'cancelled', 'unknown');
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $enum$;`,
@@ -143,6 +143,7 @@ END $enum$;`,
 
 // ExtraDDL 补上 CreateTable/AddColumn 不管的 CHECK/UNIQUE/FK 与索引。改约束只改这里，不要在模型 tag 里再写一份。
 var ExtraDDL = []string{
+	`ALTER TYPE agentworkflowrunrequeststatus ADD VALUE IF NOT EXISTS 'unknown';`,
 	`CREATE INDEX IF NOT EXISTS ix_operator_product_actions_merchant_created ON operator_product_actions (merchant_id, created_at DESC, id DESC);`,
 	`CREATE INDEX IF NOT EXISTS ix_operator_product_actions_product_created ON operator_product_actions (merchant_id, product_id, created_at DESC, id DESC);`,
 	`DO $c$ BEGIN

@@ -116,7 +116,7 @@ export function AgentWorkflowRunRequestCard({
   }
 
   const awaitingConfirmation = request.status === "awaiting_confirmation";
-  const unknown = request.status === "confirmed" && request.workflow_run_status === "unknown";
+  const unknown = request.status === "unknown";
   const active = request.status === "confirmed" && !unknown;
   const succeeded = request.status === "succeeded";
   const failed = request.status === "failed";
