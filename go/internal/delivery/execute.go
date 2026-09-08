@@ -195,8 +195,7 @@ func (e Executor) persist(ctx context.Context, claimed claim, rendered Rendered)
 		if res.RowsAffected != 1 {
 			return nil
 		}
-		_ = pgxTx.Model(&schema.Products{}).Where("id = ?", claimed.productID).Updates(map[string]any{"updated_at": now}).Error
-		return nil
+		return product.Touch(ctx, pgxTx, claimed.productID)
 	})
 	if err != nil {
 		compensation.Rollback()

@@ -49,6 +49,7 @@
 | 局部编辑调用前数据库读取故障被归为不可重试业务失败，队列收到 nil | Execute 区分输入错误、失效 attempt 和基础设施读取错误；ReadIO 保留 cause | 独立 PG 42P01 经 queue.Consume 返回、信封 pending、task claimed，恢复后执行成功；三类媒体 I/O 映射保留 cause | `5b6105a3` |
 | 局部编辑结果写入失败后使用非法 attempt phase，且原持久化原因被终态错误覆盖 | 复用合法 unknown phase；errors.Join 保留结果与终态错误，失效 attempt 停手 | 真实 PG 资产失败/终态同时失败两场景；恢复后额度待对账、重复信封 consumed、Provider 仅一次 | `6eb57645` |
 | 交付结果事务失败被 failed 终态的 nil 或第二个错误覆盖 | Execute 保留原结果错误并组合 failed 持久化错误，业务保持可重试 failed | PostgreSQL 双故障分支返回原因、零派生资产、信封 pending；Retry/过期恢复后重复执行只有一个结果资产 | `6aa9dac5` |
+| 交付自行更新商品排序时间且忽略语句错误，最终只见事务提交回滚提示 | 复用 product.Touch，商品模块维护写表细节，交付直接返回错误 | 真实 PG 原实现丢失 ConstraintName；修复后原因保留、结果事务回滚，Retry 后时间推进 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -320,3 +321,12 @@ Execute 现在只将输入 Validation/NotFound 转为既有业务失败，其他
 本轮实际运行 [问题回答联动恢复](../../go/internal/agent/question_resume_gopg_test.go) 两个场景（共 6.590 秒）：真实 Node Agent 经真实 Go HTTP 服务与 PostgreSQL，在一个或两个问题的 waiting_input 后终止 Node；回答写入 PG 后 HTTP 返回服务暂不可用，重启同 data root 后恢复新 attempt、提交成功终态，并核对本地测试 Provider 请求里的每个 function_call_output 对应正确 call_id 与回答。该证据支持这一具体 Node/Go/PG 链路，不再将全部联动恢复统称为未运行；尚未证明完整故障时点矩阵或真实 Provider 对账。
 
 五包 go vet -stdversion=false 通过；标准版本分析的既有缺口仍保留。本轮不改变业务代码。主代理检查测试结果、跳过项、独立 checkout 状态与清理，当前 docs-check 和文档 diff 自审通过。该组合门不是整个 Go 仓库、Node 默认整包、容量或真实模型质量门，仍未完成总目标。
+
+
+## 交付商品更新时间写入归属
+
+本切片由主代理负责，范围为 `delivery/execute.go` 与 [商品写入故障回归](../../go/internal/delivery/product_touch_test.go)。现有 product.Touch 已供图库资产事务使用，维护 products.updated_at 更新且返回数据库错误。交付 persist 在同一结果事务中重复该表更新，并以 `_ = ...Error` 忽略错误；真实 PostgreSQL 拒绝本测试商品写入后，原实现只返回 commit unexpectedly resulted in rollback（负例 FAIL，0.829 秒），原约束原因丢失。
+
+persist 现在直接调用并返回 product.Touch，不再在执行文件中写 Products 模型。商品时间写入仍与资产、job succeeded 共用原事务；没有新增 helper/API，也没有修改其他任务持有的 product 文件。该边界让交付执行器不再了解商品更新时间列与赋值方式。交付采用版本路径仍直接写商品 current_delivery_adoption_version_id，不属于本次已收敛范围。
+
+数据库回归用限定单个测试商品的 NOT VALID 约束拒绝后续商品更新，验证原 ConstraintName 保留、任务为可重试失败、结果 ID 为空、零派生资产且商品时间不变；移除故障并经现有 Service.Retry 再执行后，商品更新时间推进。成功/异常清理均移除测试约束，不修改开发库。最终 delivery 整包通过（7.370 秒），标准 go vet、完整 diff 自审、执行器 Products 写入零残留和 docs-check 通过；未运行真实模型或改动共享服务。
