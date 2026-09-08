@@ -4,11 +4,12 @@
 import sys
 import unittest
 from decimal import Decimal
+from datetime import datetime, timezone
 
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
-from run_contention import quota_report, reconcile_submissions, task_ids_for_label  # noqa: E402
+from run_contention import phase_metrics, quota_report, reconcile_submissions, task_ids_for_label  # noqa: E402
 
 
 class FakeDBProbe:
@@ -21,6 +22,21 @@ class FakeDBProbe:
 
 class ContentionEvidenceTests(unittest.TestCase):
     merchants = [{"image_session_id": "session-a"}]
+
+    def test_redispatch_timestamp_is_not_reported_as_first_dispatch(self):
+        result = phase_metrics(
+            ["task"],
+            {"task": {"prompt": "queued", "sent_at": datetime.fromtimestamp(120, timezone.utc), "dispatch_attempts": 4}},
+            {"request": {"prompt": "Current user request:\nqueued\n", "started_epoch": 122}},
+            {"task": {"accepted_at": 100}},
+        )[0]
+        self.assertEqual(result["dispatch_attempts"], 4)
+        self.assertEqual(result["accept_to_last_dispatch_ms"], 20000)
+        self.assertEqual(result["last_dispatch_to_provider_ms"], 2000)
+        self.assertEqual(result["accept_to_provider_ms"], 22000)
+        self.assertTrue(result["first_dispatch_observation"].startswith("unmeasured"))
+        self.assertNotIn("accept_to_dispatch_ms", result)
+        self.assertNotIn("dispatch_to_provider_ms", result)
 
     def test_quota_account_accepts_postgres_numeric_aggregates(self):
         account = {

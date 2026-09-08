@@ -34,7 +34,7 @@ class DBProbe:
                 SELECT t.id, t.status, t.prompt, t.created_at, t.started_at, t.finished_at,
                        t.session_id, s.merchant_id,
                        COALESCE(t.progress_updated_at, t.finished_at, t.started_at, s.updated_at, t.created_at) AS updated_at,
-                       d.sent_at
+                       d.sent_at, d.attempts AS dispatch_attempts
                 FROM image_session_generation_tasks t
                 JOIN image_sessions s ON s.id = t.session_id
                 LEFT JOIN async_dispatches d
@@ -528,12 +528,14 @@ def phase_metrics(
                 "accepted_at_epoch": accepted_at,
                 "accepted_at_observation": "submit_response" if accepted_at is not None else "missing_in_original_report",
                 "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
-                "sent_at": sent.isoformat() if sent else None,
+                "last_sent_at": sent.isoformat() if sent else None,
+                "dispatch_attempts": row.get("dispatch_attempts"),
+                "first_dispatch_observation": "unmeasured: sent_at is overwritten on redispatch",
                 "started_at": row.get("started_at").isoformat() if row.get("started_at") else None,
                 "finished_at": finished_db.isoformat() if finished_db else None,
                 "provider_request_id": event.get("request_id"),
-                "accept_to_dispatch_ms": ((sent.timestamp() - accepted_at) * 1000) if sent and accepted_at else None,
-                "dispatch_to_provider_ms": ((started - sent.timestamp()) * 1000) if started and sent else None,
+                "accept_to_last_dispatch_ms": ((sent.timestamp() - accepted_at) * 1000) if sent and accepted_at else None,
+                "last_dispatch_to_provider_ms": ((started - sent.timestamp()) * 1000) if started and sent else None,
                 "provider_to_persist_ms": ((finished_db.timestamp() - finished_provider) * 1000) if finished_db and finished_provider else None,
                 "accept_to_provider_ms": ((started - accepted_at) * 1000) if started and accepted_at else None,
                 "provider_event_matches": event_matches,
