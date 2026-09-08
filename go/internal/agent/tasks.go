@@ -491,7 +491,7 @@ func cancelTaskLocal(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskRe
 
 func loadTaskAfterGraphRunSync(ctx context.Context, pgxTx *gorm.DB, taskID string) (TaskResponse, error) {
 	var req schema.AgentWorkflowRunRequests
-	err := pgxTx.Where("task_id = ? AND graph_run_id IS NOT NULL", taskID).
+	err := pgxTx.Where("task_id = ?", taskID).
 		Order("created_at DESC, id DESC").
 		Take(&req).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {

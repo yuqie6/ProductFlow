@@ -274,7 +274,7 @@ func TestApplyGraphRunStatusLeavesUserOwnedTask(t *testing.T) {
 	as.decode(t, complete, &task)
 
 	err := tx.WithGorm(context.Background(), as.db, func(pgxTx *gorm.DB) error {
-		return applyGraphRunStatusToTask(context.Background(), pgxTx, &task.ID, "failed", ptr("boom"), nil)
+		return applyGraphRunStatusToTask(context.Background(), pgxTx, &task.ID, "user-owned-request", "failed", ptr("boom"), nil)
 	})
 	if err != nil {
 		t.Fatal(err)

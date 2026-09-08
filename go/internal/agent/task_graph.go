@@ -41,7 +41,7 @@ func SyncGraphRunToTasks(ctx context.Context, pgxTx *gorm.DB, runID string) erro
 		if err := syncRequestRowFromRun(ctx, pgxTx, ref.ID, run.Status, run.FailureReason, run.FinishedAt, now); err != nil {
 			return err
 		}
-		if err := applyGraphRunStatusToTask(ctx, pgxTx, ref.TaskID, run.Status, run.FailureReason, run.FinishedAt); err != nil {
+		if err := applyGraphRunStatusToTask(ctx, pgxTx, ref.TaskID, ref.ID, run.Status, run.FailureReason, run.FinishedAt); err != nil {
 			return err
 		}
 	}
@@ -90,12 +90,12 @@ func syncRequestRowFromRun(ctx context.Context, pgxTx *gorm.DB, requestID, runSt
 	}
 }
 
-// applyGraphRunStatusToTask 把 GraphRun 终态投影到关联 Task。用户已 succeeded/canceled/paused 立刻返回，读路径不得覆盖。
+// applyGraphRunStatusToTask 只允许 Task 最新确认单的 GraphRun 投影到 Task。用户已 succeeded/canceled/paused 立刻返回。
 //
 // 商品工作流 keepGoal：succeeded/failed/unknown/cancelled 都停在 waiting_user / goal_loop，摘要说明跑图结果但 Goal 未结束。全局 Task 才随跑图终态结束。
 //
 // SyncGraphRunToTasks 调用。禁区：不要在 GetTask 之外再写一套「跑图成功即完成 Goal」。
-func applyGraphRunStatusToTask(ctx context.Context, pgxTx *gorm.DB, taskID *string, runStatus string, failure *string, finished *time.Time) error {
+func applyGraphRunStatusToTask(ctx context.Context, pgxTx *gorm.DB, taskID *string, requestID, runStatus string, failure *string, finished *time.Time) error {
 	if taskID == nil || *taskID == "" || runStatus == "" {
 		return nil
 	}
@@ -104,6 +104,20 @@ func applyGraphRunStatusToTask(ctx context.Context, pgxTx *gorm.DB, taskID *stri
 		return err
 	}
 	if _, owned := userOwnedTask[task.Status]; owned {
+		return nil
+	}
+	// 请求创建会在同一事务持有 Task 锁并设置待确认；锁后读取最新请求，
+	// 保证旧运行迟到只更新自己的确认单，不能覆盖更新请求的 Task 状态。
+	var latest schema.AgentWorkflowRunRequests
+	err = pgxTx.WithContext(ctx).Select("id").Where("task_id = ?", task.ID).
+		Order("created_at DESC, id DESC").Take(&latest).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if latest.ID != requestID {
 		return nil
 	}
 	keepGoal := false
