@@ -27,7 +27,6 @@
 
 | 任务 | 业务组 | 类型 | 状态 | 认领者 | 认领于 |
 |---|---|---|---|---|---|
-| [generation-merchant-fairness.md](generation-merchant-fairness.md) | 平台可靠性 | 实现 | 认领 | image_live_review | 2026-09-09T01:51:50+08:00 |
 | [saas-multimerchant-capacity-baseline.md](saas-multimerchant-capacity-baseline.md) | 平台可靠性 | 证据 | 认领 | root | 2026-09-09T01:44:07+08:00 |
 | [image-quality-subject-preserve-live-smoke.md](image-quality-subject-preserve-live-smoke.md) | 图片质量 | 证据 | 认领 | sub-iq/image-quality-subject-preserve-live-smoke | 2026-09-07T19:35:00+08:00 |
 | [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 认领 | capacity_baseline | 2026-09-09T00:50:10+08:00 |

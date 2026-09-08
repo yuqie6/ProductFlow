@@ -142,3 +142,5 @@ root 已核对生产 SSE 关闭合同：服务发出 `has_active_generation_task
 6a418d8f 的首轮独立争用缺少此前完整 campaign 隐含提供的 A/B 基图，实际仅 A1/B1 受理；该轮保留为无效准备，不能评价公平。重建新 v2 独立库后先通过真实 API 生成两张基图，分母外单列 base-preparation.json；随后的 A100/B20 与 4 个长任务均成功，连同准备共 126 个 succeeded。汇总器在所有其它条件通过后访问不存在的 target_b_pass，实际字段为 target_b_p95_pass，导致退出而未写完整报告；HTTP 受理时刻没有持久化，不能事后伪造。原 DB/provider snapshot 与错误日志保留。
 
 root 修正 run/repair 两处共享最终判据，使用实际 p95 字段并要求完整 A100/B20 绑定与 A100 成功；新增全满足和 p95/分母不足回归，32 项离线测试通过。启动前检查 A/B 均有真实生成基图，缺少时在发送争用请求前拒绝。旧运行不改写；该测量工具修复需要新固定工具身份后再采样，不能按现有完成状态补算原 HTTP 时刻。
+
+修正后的 ca1a3cac 独立完整争用已通过，详见[公平性归档](archive/generation-merchant-fairness.md)：A100/B20 与长任务4个全部成功，B短任务等待p95=3.5961s，quota一致，provider各一次，在途峰值3。两张基图准备单列且不进正式分母；原始6a失败准备与汇总错误不覆盖。新报告/root独立复核均落盘，专属资源已清理。本容量任务仍未关闭：本轮未重复六轮混合负载、完整故障恢复或commit-to-SSE测量。

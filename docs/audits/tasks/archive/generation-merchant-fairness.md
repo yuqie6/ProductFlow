@@ -1,6 +1,6 @@
 # 任务：避免单个商家的批量任务占满生成队列
 
-状态：认领
+状态：完成
 类型：实现
 认领者：image_live_review
 认领于：2026-09-09T01:51:50+08:00
@@ -8,7 +8,7 @@
 父账本：performance-governance.md
 完成后可拆：新候选的固定争用验证
 
-遵循[任务协议](README.md)。
+遵循[任务协议](../README.md)。
 
 ## 问题来源
 
@@ -59,3 +59,19 @@ max=3 Graph/ImageSession 目前只有 admission 边界单测，实际混合执�
 完整 Go 命令已结束：除 auth 外全部包通过，其中 Graph 108.470s、ImageSession 55.511s、queue 16.150s、generation 1.203s。auth 原持久测试库在测试业务执行前被旧 memberships 数据迁移不变量拒绝；保留原库，在独立 pf_fair_root_gate_0909 新库重跑 auth 整包通过（17.759s），专用两个数据库已清理。新库日志 root-review/auth-fresh.log，原全量失败日志不覆盖。该组合证据覆盖本次后端改动；opt-in 真实模型/容量门未执行。
 
 root 最终自审修复两个测试收集回调的并发 slice append，未改生产行为；全部 generation fairness 定向 race 回归通过（15.059s），日志 root-review/queue-race.log。
+
+## 固定候选复验窗口
+
+root 已提交候选 6a418d8f，独立干净 worktree /tmp/productflow-fairness-6a418d8f。新产物 storage-dev/fairness-6a418d8f-0909，沿用空闲 pf-capacity-0908 专属容器/网络与 30182–30190 端口；启动前核无同名容器、端口空闲，可用内存约 8.7GiB。只使用 mock provider。root 负责构建、fixture 和 A100/B20 原合同争用复验，不重跑无关正式六轮或故障窗口。构建阶段允许独立 fixture 测试；正式计时须先通知其他执行者暂停 CPU/PG 测试。image_live_review 的 Graph/ImageSession 混合脚本准备就绪后串行分配同一专属栈，不并发采样。证据不覆盖旧 e190。
+
+固定 6a 的 v2 混合诊断已完成：A 在 B 受理前真实 running=2、queued=3，最终 8/8 节点 terminal、8 applied effects；B 使用本会话真实基图，经 HTTP 202 后约 3.1868s 调用 provider，最终 succeeded、dispatch consumed、effect applied。原报告错误要求同步 Images API 的业务 response ID；固定 image.go 在 ModeChat 明确清空该字段。主代理核对源码与既有 TestImagesChatDoesNotPersistResponseID，接受以 task/merchant/session/base asset/effect.request_json 和唯一完整 mock 请求生命周期归因的只读派生判读。原报告保留（SHA 28ffd6dc75f6bc73adad25f2477046ab577df7f6bf8d3b72fd2eba8cf483e3b5），同 run 派生报告 SHA 12fc7b6735695e30b41ed871244c6ef81190edf18193b7b422bdce3e21eb221f；没有新增请求。两份位于 v2/root-review/graph-image-mixed-preflight-20260908T204635Z*.json。这是一次实际混合执行验证，不代表全面容量门通过。
+
+6a 的争用复验分别遇到缺基图前置与汇总器 KeyError，详见容量任务原始记录。生产公平源码不变，测量器修复 ca1a3cac 后以新干净 /tmp/productflow-fairness-ca1a3cac、新 storage-dev/fairness-ca1a3cac-0909 重建同规格独立栈；通过真实 API 在分母外生成 A/B 两张基图后复验完整 A100/B20 与独立长任务场景。6a 专属栈已清理，原全部磁盘证据保留。
+
+## 最终验收
+
+固定 ca1a3cac（生产公平实现与 6a418d8f 相同，仅修正测量器），4 核/8GiB 专属栈，10 商家、10000 商品、50000 素材、100000 额度事件、3 生成槽。A/B 基图准备单列；正式短任务 A100/B20 全部受理、成功、provider 各一次，B 等待 p50=2.1075s、p95=3.5961s、max=3.6144s，满足本单 10s 目标。原 e190 p95=74.629s 的失败证据保持不变。另 4 个长任务全部成功，非抢占场景 B 等待约 16.394s，不套短任务阈值。124 个正式任务额度核对通过，无重复事件。
+
+主代理直接读取实际数据库 124 个任务并独立对照唯一 prompt/provider 生命周期，重算 B 等待与 HTTP 在途峰值（3），复核全部成功、商家身份和源 hash。原报告 SHA 543603feebb525afec29cb7d46a3d98dc9ae15b504cc40c2cfce67a9f474aa06，provider snapshot SHA cb1ae291aae017e02f53c446c41390427196029df3ba20fe745ccb8e2c536dd3。证据根 /tmp/productflow-fairness-ca1a3cac/storage-dev/fairness-ca1a3cac-0909；contention.json 与 root-independent-check.json 为本次判读入口。运行结束身份复核通过；专属容器、网络、端口已清理，原图片/数据库文件/日志保留，共享开发服务未改。
+
+审核者 root：完整 diff、确定性/真实混合执行与固定争用证据已核对，本实现任务完成，随本次归档提交交付。该结论限同步 Graph/ImageSession、当前固定 mock 条件下的商家公平性；不承诺并发 enqueue 后执行 FIFO，不代表真实模型性能、首次 SENT 分段测量、90分钟故障恢复或 commit-to-SSE 门已通过。完整容量任务继续保留其未验证项。

@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [generation-merchant-fairness.md](generation-merchant-fairness.md) | 完成 | 有限生成预取与Graph轮转；真实混合执行通过，固定A100/B20等待p95 3.596s、全部完成及额度一致 |
 | [agent-archived-asset-selection.md](agent-archived-asset-selection.md) | 完成 | 全局管理选择不再误装为模型附件；假模型真实启动恢复到待确认，商品附件及PG权限回归通过 |
 | [category-generation-improvement.md](category-generation-improvement.md) | 完成 | 两样本12张真实图与18次v2评委未证实稳定提升；移除候选指令及专属测试，保留失败与图片证据 |
 | [eval-persisted-operation-observation.md](eval-persisted-operation-observation.md) | 完成 | 持久化操作与全局种子修复；188路径映射实际case，真实GoHost 26项通过，旧批次不回填 |

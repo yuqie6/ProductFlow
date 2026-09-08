@@ -391,3 +391,5 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 [容量任务](tasks/saas-multimerchant-capacity-baseline.md) 已在固定 e190e250、4 核/8 GiB 限额、10 商家与本地 1px mock 输出下执行 L1/L2 各三轮、争用和故障实验。sample 阶段 18000 次读取无失败，最大路由 p95 140.005ms、p99 217.289ms；2220 个生成任务成功，provider 归因完整，最大并发 3。实际 RSS 峰值约 0.2163 GiB、PG 峰值 39/100；这些结果不覆盖真实大图内存或生产 SLA。
 
 整体未通过：A100/B20 争用中 B 等待 p95 为 74.629s，超过 10s；故障短窗口内未恢复，但没有覆盖 90 分钟 stale 阈值。L2 SSE 标记受 EOF 后状态读取竞态影响，commit-to-SSE 缺真实提交时间；两项不能冒充有效通过或确证生产根因。root 对预热统计和 Decimal 账户聚合做了绑定原始 hash 的独立重算，原始 FAIL 未覆盖；10 商家账本快照算术一致，争用等待 FAIL 保留。后续应处理实际公平性/恢复问题并补测量缺口，不能仅增加 worker 或放宽阈值。
+
+[商家生成公平性](tasks/archive/generation-merchant-fairness.md) 已在 6a418d8f 实现并用 ca1a3cac 修正测量器复验：dispatcher 按商家服务历史选择有限 generation 预取，Graph 在其他商家等待时停止续取、自然完成在途节点后释放消费轮；单商家仍可用满全局槽。固定同规格 A100/B20 全部成功、provider 各一次、额度一致，B 等待 p95=3.5961s（e190 为 74.629s）、max=3.6144s，HTTP 在途峰值 3；独立真实 Graph/ImageSession 混合场景也完成。长任务非抢占等待单列，未改短任务阈值。实现与本次争用验收完成；整体容量仍缺故障完整恢复窗口、修订后正式 SSE 采样及 commit-to-SSE 时间，不能升级为生产 SLA。
