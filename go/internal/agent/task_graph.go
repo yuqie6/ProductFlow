@@ -118,17 +118,9 @@ func applyGraphRunStatusToTask(ctx context.Context, pgxTx *gorm.DB, taskID *stri
 	}
 	// 请求创建会在同一事务持有 Task 锁并设置待确认；锁后读取最新请求，
 	// 保证旧运行迟到只更新自己的确认单，不能覆盖更新请求的 Task 状态。
-	var latest schema.AgentWorkflowRunRequests
-	err = pgxTx.WithContext(ctx).Select("id").Where("task_id = ?", task.ID).
-		Order("created_at DESC, id DESC").Take(&latest).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
-	}
-	if err != nil {
+	current, err := isLatestTaskWorkflowRequest(ctx, pgxTx, task.ID, requestID)
+	if err != nil || !current {
 		return err
-	}
-	if latest.ID != requestID {
-		return nil
 	}
 	keepGoal := false
 	if task.ConversationID != nil {
@@ -263,6 +255,7 @@ func markTurnSucceededForRequest(ctx context.Context, pgxTx *gorm.DB, requestID,
 	}).Error
 }
 
+// markTurnCanceledForRequest 取消关联 Turn；只有会话最新确认单可同步会话状态。
 func markTurnCanceledForRequest(ctx context.Context, pgxTx *gorm.DB, requestID, conversationID string) error {
 	now := time.Now().UTC()
 	if err := pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).Where("workflow_run_request_id = ?", requestID).Updates(map[string]any{
@@ -271,6 +264,17 @@ func markTurnCanceledForRequest(ctx context.Context, pgxTx *gorm.DB, requestID, 
 		"updated_at":  now,
 	}).Error; err != nil {
 		return err
+	}
+	if _, err := lockConversation(ctx, pgxTx, conversationID); err != nil {
+		return err
+	}
+	var latest schema.AgentWorkflowRunRequests
+	if err := pgxTx.WithContext(ctx).Select("id").Where("conversation_id = ?", conversationID).
+		Order("created_at DESC, id DESC").Take(&latest).Error; err != nil {
+		return err
+	}
+	if latest.ID != requestID {
+		return nil
 	}
 	return pgxTx.WithContext(ctx).Model(&schema.AgentConversations{}).Where("id = ?", conversationID).Updates(map[string]any{
 		"status":     "canceled",
@@ -399,8 +403,8 @@ func completeOrganizationDraftTask(ctx context.Context, pgxTx *gorm.DB, draft li
 
 // parkTaskAfterCancelledRunRequest 在用户取消尚未提交 GraphRun 的确认单后安置 Task：商品工作流停在 goal_loop，全局 Task 标 canceled。
 //
-// 用户已拥有的终态/暂停不覆盖。写 agent_tasks。
-func parkTaskAfterCancelledRunRequest(ctx context.Context, pgxTx *gorm.DB, taskID *string) error {
+// 只处理 Task 最新确认单；用户已拥有的终态/暂停不覆盖。写 agent_tasks。
+func parkTaskAfterCancelledRunRequest(ctx context.Context, pgxTx *gorm.DB, taskID *string, requestID string) error {
 	if taskID == nil || *taskID == "" {
 		return nil
 	}
@@ -411,10 +415,16 @@ func parkTaskAfterCancelledRunRequest(ctx context.Context, pgxTx *gorm.DB, taskI
 	if _, owned := userOwnedTask[task.Status]; owned {
 		return nil
 	}
+	current, err := isLatestTaskWorkflowRequest(ctx, pgxTx, task.ID, requestID)
+	if err != nil || !current {
+		return err
+	}
 	keepGoal := false
 	if task.ConversationID != nil {
 		var conv schema.AgentConversations
-		_ = pgxTx.Select("scope_type").Where("id = ?", *task.ConversationID).Take(&conv).Error
+		if err := pgxTx.Select("scope_type").Where("id = ?", *task.ConversationID).Take(&conv).Error; err != nil {
+			return err
+		}
 		keepGoal = conv.ScopeType == "product_workflow"
 	}
 	now := time.Now().UTC()
@@ -440,4 +450,19 @@ func parkTaskAfterCancelledRunRequest(ctx context.Context, pgxTx *gorm.DB, taskI
 		return err
 	}
 	return refreshSessionSummary(ctx, pgxTx, task.SessionID)
+}
+
+// isLatestTaskWorkflowRequest 统一 Graph 同步与未提交请求取消的 Task 投影权。
+// 调用者须已持有 Task 行锁；请求创建在同一锁下更新 Task。
+func isLatestTaskWorkflowRequest(ctx context.Context, pgxTx *gorm.DB, taskID, requestID string) (bool, error) {
+	var latest schema.AgentWorkflowRunRequests
+	err := pgxTx.WithContext(ctx).Select("id").Where("task_id = ?", taskID).
+		Order("created_at DESC, id DESC").Take(&latest).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return latest.ID == requestID, nil
 }

@@ -217,7 +217,7 @@ func cancelWorkflowRunRequest(ctx context.Context, pgxTx *gorm.DB, s Service, pr
 		if err := markTurnCanceledForRequest(ctx, pgxTx, requestID, conversationID); err != nil {
 			return WorkflowRunRequestResponse{}, err
 		}
-		if err := parkTaskAfterCancelledRunRequest(ctx, pgxTx, item.TaskID); err != nil {
+		if err := parkTaskAfterCancelledRunRequest(ctx, pgxTx, item.TaskID, requestID); err != nil {
 			return WorkflowRunRequestResponse{}, err
 		}
 	}
