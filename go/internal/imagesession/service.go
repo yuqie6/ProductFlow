@@ -464,6 +464,7 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 		}
 		now := time.Now().UTC()
 		if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).Where("id = ?", taskID).Updates(map[string]any{
+			"billing_seq":              billingSeq,
 			"status":                   "queued",
 			"active_attempt_id":        nil,
 			"failure_reason":           nil,

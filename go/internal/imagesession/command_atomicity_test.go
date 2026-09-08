@@ -90,11 +90,12 @@ func TestGenerationCommandsRollBackQuotaWithDispatch(t *testing.T) {
 			}
 			if retry {
 				var status string
-				if err := ss.pool.QueryRow(ctx, "SELECT status FROM image_session_generation_tasks WHERE id=$1", taskID).Scan(&status); err != nil {
+				var billingSeq int
+				if err := ss.pool.QueryRow(ctx, "SELECT status,billing_seq FROM image_session_generation_tasks WHERE id=$1", taskID).Scan(&status, &billingSeq); err != nil {
 					t.Fatal(err)
 				}
-				if status != "failed" {
-					t.Fatalf("partial retry status=%s", status)
+				if status != "failed" || billingSeq != 0 {
+					t.Fatalf("partial retry status=%s billing=%d", status, billingSeq)
 				}
 			}
 			if _, err := ss.pool.Exec(ctx, "ALTER TABLE async_dispatches DROP CONSTRAINT "+constraint); err != nil {
@@ -104,6 +105,10 @@ func TestGenerationCommandsRollBackQuotaWithDispatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			if retry {
+				var billingSeq int
+				if err := ss.pool.QueryRow(ctx, "SELECT billing_seq FROM image_session_generation_tasks WHERE id=$1", taskID).Scan(&billingSeq); err != nil || billingSeq != 1 {
+					t.Fatalf("committed retry billing=%d err=%v", billingSeq, err)
+				}
 				if hold := loadQuotaHold(t, ss.db, merchantID, generationQuotaKey(taskID, 1)); hold.Status != quota.StatusReserved {
 					t.Fatalf("retry hold=%s", hold.Status)
 				}

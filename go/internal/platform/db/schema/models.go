@@ -400,6 +400,7 @@ func (ImageSessionAssets) TableName() string { return "image_session_assets" }
 // ImageSessionGenerationTasks 对应表 image_session_generation_tasks。
 // 一轮连续生图任务及其进度。
 type ImageSessionGenerationTasks struct {
+	BillingSeq                int        `gorm:"column:billing_seq;type:integer;not null;default:0"`
 	ID                        string     `gorm:"column:id;type:varchar(36);primaryKey"`
 	SessionID                 string     `gorm:"column:session_id;type:varchar(36);not null"`
 	Status                    string     `gorm:"column:status;type:jobstatus;not null"`
@@ -431,6 +432,7 @@ func (ImageSessionGenerationTasks) TableName() string { return "image_session_ge
 // ImageSessionProviderEffects 对应表 image_session_provider_effects。
 // 连续生图的 provider 调用对账。
 type ImageSessionProviderEffects struct {
+	BillingSeq          int       `gorm:"column:billing_seq;type:integer;not null;default:0"`
 	ID                  string    `gorm:"column:id;type:varchar(36);primaryKey"`
 	GenerationTaskID    string    `gorm:"column:generation_task_id;type:varchar(36);not null"`
 	CandidateStartIndex int       `gorm:"column:candidate_start_index;type:integer;not null"`

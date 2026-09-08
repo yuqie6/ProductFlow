@@ -469,7 +469,7 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 		now := time.Now().UTC()
 		reqStr := string(raw)
 		row := schema.ImageSessionProviderEffects{
-			ID: clockid.New(), GenerationTaskID: taskID, CandidateStartIndex: start, CandidateCount: count,
+			ID: clockid.New(), GenerationTaskID: taskID, BillingSeq: task.BillingSeq, CandidateStartIndex: start, CandidateCount: count,
 			OperationKey: opKey, EffectKind: effectKind, RequestHash: hash, ProviderName: provider,
 			AttemptID: attemptID, EffectResult: "pending", ReconciliationState: "not_requested",
 			RequestJSON: &reqStr, CreatedAt: now, UpdatedAt: now,
@@ -477,6 +477,7 @@ func (e Executor) ensureEffect(ctx context.Context, taskID, attemptID string, st
 		write := pgxTx.Clauses(clause.OnConflict{
 			Columns: []clause.Column{{Name: "generation_task_id"}, {Name: "candidate_start_index"}},
 			DoUpdates: clause.Assignments(map[string]any{
+				"billing_seq":          task.BillingSeq,
 				"attempt_id":           attemptID,
 				"candidate_count":      count,
 				"operation_key":        opKey,

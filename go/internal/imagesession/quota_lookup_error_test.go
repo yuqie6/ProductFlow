@@ -18,7 +18,8 @@ func TestQuotaFinalizersPreserveLookupFailure(t *testing.T) {
 	pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_quotaread_%d", time.Now().UnixNano()))
 	ctx := context.Background()
 	merchantID := auth.MustDevMerchantID(t, db)
-	taskID := clockid.New()
+	ss := newSessionServerWithDatabase(t, pool, db)
+	_, taskID := createQueuedGeneration(t, ss, map[string]any{"prompt": "quota lookup failure", "size": "1024x1024"})
 	if _, err := (&quota.Service{DB: db}).Adjust(ctx, merchantID, clockid.New(), 10, "lookup fixture", ""); err != nil {
 		t.Fatal(err)
 	}

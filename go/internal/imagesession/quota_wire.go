@@ -84,19 +84,19 @@ func finalizeQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) 
 func activeQuotaKey(ctx context.Context, db *gorm.DB, merchantID, taskID string) (string, bool, error) {
 	merchantID = strings.TrimSpace(merchantID)
 	taskID = strings.TrimSpace(taskID)
-	if merchantID == "" || taskID == "" {
-		return generationQuotaKey(taskID, 0), false, nil
+	var task schema.ImageSessionGenerationTasks
+	if err := db.WithContext(ctx).Select("billing_seq").Where("id = ?", taskID).Take(&task).Error; err != nil {
+		return "", false, err
 	}
-	prefix := "image-session-generation:" + taskID
+	key := generationQuotaKey(taskID, task.BillingSeq)
 	var row schema.MerchantQuotaHolds
 	err := db.WithContext(ctx).
-		Where("merchant_id = ? AND idempotency_key LIKE ? AND status IN ?", merchantID, prefix+"%", []string{
+		Where("merchant_id = ? AND idempotency_key = ? AND status IN ?", merchantID, key, []string{
 			quota.StatusReserved, quota.StatusPendingReconciliation,
 		}).
-		Order("created_at DESC").
 		Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return generationQuotaKey(taskID, 0), false, nil
+		return key, false, nil
 	}
 	if err != nil {
 		return "", false, fmt.Errorf("读取额度预留失败: %w", err)
@@ -121,7 +121,7 @@ func sessionMerchantID(ctx context.Context, db *gorm.DB, sessionID string) (stri
 func (e Executor) providerLedgerExists(ctx context.Context, taskID string) (bool, error) {
 	var n int64
 	err := e.DB.WithContext(ctx).Model(&schema.ImageSessionProviderEffects{}).
-		Where("generation_task_id = ?", taskID).Count(&n).Error
+		Where("generation_task_id = ? AND billing_seq = (?)", taskID, e.DB.Model(&schema.ImageSessionGenerationTasks{}).Select("billing_seq").Where("id = ?", taskID)).Count(&n).Error
 	if err != nil {
 		return false, err
 	}
