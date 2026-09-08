@@ -43,7 +43,7 @@ func TestEvalUserSimHost(t *testing.T) {
 	if task.ID == "" {
 		t.Fatal("unknown eval host task")
 	}
-	as := newEvalLibraryServer(t)
+	as := newEvalHostServer(t)
 	seeded := seedEvalWorld(t, as, task, worlds[task.World])
 	var mu sync.Mutex
 	closed := make(chan struct{})
@@ -88,10 +88,7 @@ func TestEvalUserSimHost(t *testing.T) {
 		raw = []byte(text)
 		var p map[string]any
 		_ = json.Unmarshal(raw, &p)
-		key := strings.TrimSpace(request.IdempotencyKey)
-		if key == "" {
-			key = clockid.New()
-		}
+		key := request.IdempotencyKey
 		var out any
 		var callErr error
 		switch request.Method {
@@ -134,7 +131,7 @@ func TestEvalUserSimHost(t *testing.T) {
 				IDs       []string        `json:"reference_asset_ids"`
 			}
 			_ = json.Unmarshal(raw, &input)
-			out, callErr = as.svc.FinalizeProductIntake(ctx, seeded.ConvID, clockid.New(), input.Selection, input.IDs)
+			out, callErr = as.svc.FinalizeProductIntake(ctx, seeded.ConvID, key, input.Selection, input.IDs)
 		case "draft":
 			callErr = as.svc.ValidateGlobalDraft(ctx, seeded.ConvID, raw)
 			if callErr == nil {

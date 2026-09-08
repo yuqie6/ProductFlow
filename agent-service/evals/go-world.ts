@@ -8,7 +8,7 @@ export interface DecisionEvidence { id: string; action: string; observed: boolea
 
 export interface GoEvalHostOptions {
   layer?: string;
-  overlay?: "full" | "graph";
+  overlay?: "full" | "graph" | "intake";
 }
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -25,10 +25,19 @@ export async function openGoEvalHost(task: EvalTask, stub: StubWorld, options: G
   if (!process.env.DATABASE_URL) throw new Error("Go observation requires DATABASE_URL (isolated testdb only)");
   const layer = options.layer ?? "l3";
   const overlay = options.overlay ?? "full";
-  if (overlay === "graph" || layer === "l1") await ensureEvalObservationFixtures();
+  if (overlay === "graph" || (overlay === "full" && layer === "l1")) await ensureEvalObservationFixtures();
+  const childEnv = {
+    ...process.env,
+    PRODUCTFLOW_EVAL_HOST_TASK: task.id,
+    PRODUCTFLOW_EVAL_HOST_LAYER: layer,
+  };
+  if (overlay === "intake") {
+    childEnv.PRODUCTFLOW_EVAL_HOST_DB_PREFIX = process.env.PRODUCTFLOW_EVAL_HOST_DB_PREFIX?.trim() || "eval_intake";
+  }
+  else delete childEnv.PRODUCTFLOW_EVAL_HOST_DB_PREFIX;
   const child = spawn("go", ["test", "-C", "go", "./internal/agent", "-run", "^TestEvalUserSimHost$", "-count=1", "-v", "-timeout", "30m"], {
     cwd: repoRoot,
-    env: { ...process.env, PRODUCTFLOW_EVAL_HOST_TASK: task.id, PRODUCTFLOW_EVAL_HOST_LAYER: layer },
+    env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
@@ -74,6 +83,20 @@ export async function openGoEvalHost(task: EvalTask, stub: StubWorld, options: G
     });
     const snapshot = await invoke("context", { response_format: "concise" }) as { live_graph?: { revision?: number } };
     if (typeof snapshot.live_graph?.revision === "number") stub.syncGraphRevision(snapshot.live_graph.revision);
+  } else if (overlay === "intake") {
+    Object.assign(stub.client, {
+      productContext: async (_c: string, _signal: AbortSignal | undefined, format: string) => {
+        const result = await invoke("context", { response_format: format || "detailed" }, "get_product_workflow_context_v1");
+        if (typeof result?.live_graph?.revision === "number") stub.syncGraphRevision(result.live_graph.revision);
+        return result;
+      },
+      getNodeDetail: (_c: string, node_id: string) => invoke("node", { node_id }, "get_node_detail_v1"),
+      finalizeProductIntake: async (_c: string, params: unknown, key: string) => {
+        const result = await invoke("intake", params, "finalize_product_intake_v1", key);
+        if (typeof result?.revision === "number") stub.syncGraphRevision(result.revision);
+        return result;
+      },
+    });
   } else {
     Object.assign(stub.client, {
       listGlobalMediaAssets: (_c: string, query: string, cursor: string, limit: number, _signal?: AbortSignal,
@@ -86,7 +109,8 @@ export async function openGoEvalHost(task: EvalTask, stub: StubWorld, options: G
       proposeGraphChangeSet: (_c: string, params: unknown, key?: string) => invoke("propose", params, "propose_graph_change_set_v1", key),
       discardGraphProposal: (_c: string, proposalID: string | null, key?: string) =>
         invoke("discard", proposalID ? { proposal_id: proposalID } : {}, "discard_workflow_proposal_v1", key),
-      finalizeProductIntake: (_c: string, params: unknown) => invoke("intake", params, "finalize_product_intake_v1"),
+      finalizeProductIntake: (_c: string, params: unknown, key: string) =>
+        invoke("intake", params, "finalize_product_intake_v1", key),
       validateGlobalDraft: (_c: string, params: unknown) => invoke("draft", params, "propose_global_draft"),
       prepareWorkflowRunRequest: (_c: string, params: unknown) => invoke("prepare", params),
       executeWorkflowRunRequest: (_c: string, prepared: Record<string, unknown>) => invoke("run", {

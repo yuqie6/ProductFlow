@@ -147,11 +147,14 @@ async function runTrial(
   let tokenCount: number | null = null;
   let errors: string[] = [];
   let events: Awaited<ReturnType<TurnStore["events"]>> = [];
-  let graphHost: Awaited<ReturnType<typeof openGoEvalHost>> | undefined;
+  let observationHost: Awaited<ReturnType<typeof openGoEvalHost>> | undefined;
   try {
     if (task.observability_blocker) throw new Error(`unobservable eval input: ${task.observability_blocker}`);
-    if (layer === "l1" && task.skill === "graph-editing" && !process.env.VITEST) {
-      graphHost = await openGoEvalHost(task, stub, { layer: "l1", overlay: "graph" });
+    if (layer === "l1" && !process.env.VITEST && (task.skill === "graph-editing" || task.skill === "product-intake")) {
+      observationHost = await openGoEvalHost(task, stub, {
+        layer: "l1",
+        overlay: task.skill === "product-intake" ? "intake" : "graph",
+      });
     }
     const started = await manager.start({
       lookup: { conversationID },
@@ -170,7 +173,7 @@ async function runTrial(
   } catch (error) {
     errors = [errorMessage(error)];
   } finally {
-    await graphHost?.close().catch(() => undefined);
+    await observationHost?.close().catch(() => undefined);
     await manager.close().catch(() => undefined);
   }
 

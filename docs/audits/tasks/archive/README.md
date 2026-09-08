@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [eval-intake-observation.md](eval-intake-observation.md) | 完成 | 创建确认走真实Go反馈与写后状态，保留4xx拒绝和幂等冲突；无付费重采 |
 | [saas-account-team.md](saas-account-team.md) | 完成 | 本人资料、密码/会话、SMTP恢复与防重放；真实隔离PG/API及邮件验证 |
 | [saas-account-interface.md](saas-account-interface.md) | 完成 | 四语账户与恢复页面；35项浏览器mock及真实Go接线验证 |
 | [category-annotation-rubric.md](category-annotation-rubric.md) | 完成 | 评委适用性与量表修正；47/48有效、比较一致6/8、错商品负控3/3，保留剩余误判 |

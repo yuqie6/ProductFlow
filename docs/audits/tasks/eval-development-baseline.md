@@ -95,3 +95,13 @@
 ## 最初发布依据
 
 2026-09-05：主代理-agent-0905-0458 核对现有开放任务。L2 state、L3 user-sim、L6 production mine 与图片池均不承担本单的冻结 L1 开发输入，无重复采证单。仅发布为阻塞，不记为采证完成。
+
+## 第四次固定开发窗口（当前）
+
+主代理根据完整目标授权恢复本单。既有图观察交付已消除实现前置，当前阻塞解除仅限本次独立开发采证；不追认旧暂停批次，不更改其数据。认领者eval_baseline，冻结提交 a12e10ee41fc21388f80e230db0754c923938446，checkout /tmp/productflow-eval-development-0908-r4；STORAGE_ROOT=/home/cot/ProductFlow/storage-dev/eval-development-0908-r4。Go/Agent与题集/Skill只读；schema/测试库使用独立pf_eval_development_0908前缀，先跑TestEvalObservationFixtures及必需输入合同，确认当前图操作实际可观察后再执行完整L1三次。公开题保持development用途，按现有集合/导出合同生成真实完整开发包；不创建虚假隐藏集或人工标签。
+
+用户已授权必要真实模型开发验证，模型gpt-5.6-luna，沿当前L1冻结请求/并发/时限合同，配置只读注入，不打印凭据。不改共享DB/provider/服务，独立安装依赖与Go观察宿主；当前主工作树其他auth/graph/web修改不进入该固定checkout。执行者报告开工门与最终完整包，失败/不可测照实保留，不能擅自修改grader或被测Skill补成通过。运行后释放自己明确创建的临时数据库与进程；证据原始目录保留。主代理持有活文档/Git/最终审核，执行者不push/reset/revert/提交。
+
+## 第四批暂停证据
+
+固定a12e10ee与全部输入/Skill/harness/lock前后未变；run `20260907T215536Z-e24d4e7f` 完成39/75任务、117/225 trial，其中7个unobservable。`finalize_product_intake_v1` 对真实模型选择返回 `eval_unobservable: no Go observation fixture for this intake selection`，按合同停止。96条passed、21条failed仅为诊断计数，measurementEligible=false，未输出summary/history/latest或development包。原始117份转录与assessment保留于 `storage-dev/eval-development-0908-r4/agent-evals/`；主代理核对报告与子代理清理结果，宿主进程与pf_eval_development_0908前缀DB已释放。等待 [创建确认观察修复](archive/eval-intake-observation.md)；不得续接本run或把117作为新分母。
