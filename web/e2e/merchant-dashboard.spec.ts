@@ -302,3 +302,35 @@ test("product actions require confirmation before deleting", async ({page}) => {
   await expect(page.getByText("alice product", {exact:true})).toHaveCount(0);
   expect(deletes).toBe(1);
 });
+
+test("overview source counts filter records without changing the global summary", async ({page}) => {
+  await mockDashboard(page);
+  await page.goto("/products?view=overview&work_page=2");
+  const overview = page.locator('section[aria-labelledby="merchant-overview-title"]');
+  await overview.getByRole("button", {name:"Agent goals · Waiting for a reply or confirmation · 1", exact:true}).click();
+  await expect(overview.getByText("alice: Work old-waiting", {exact:false})).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("work_kind")).toBe("agent_task");
+  expect(new URL(page.url()).searchParams.get("work_state")).toBe("waiting");
+  expect(new URL(page.url()).searchParams.has("work_page")).toBe(false);
+  await expect(overview.locator("dl").first()).toContainText("24");
+  await expect(overview.locator("dl").first()).toContainText("8");
+  await overview.getByText(overviewMessage("en-US", "scopeDetails"), {exact:true}).click();
+  await expect(overview.getByText(overviewMessage("en-US", "currentNote"), {exact:false})).toBeVisible();
+});
+
+test("overview loading and zero-data surfaces remain usable on mobile", async ({page}, info) => {
+  await page.setViewportSize({width:390,height:844});
+  await mockDashboard(page, "en-US", "dark");
+  let release = () => {};
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/v2/products/overview?*", async route => { await gate; await route.fulfill({json:emptyMerchantOverview()}); });
+  await page.goto("/products?view=overview");
+  const overview = page.locator('section[aria-labelledby="merchant-overview-title"]');
+  await expect(overview.getByRole("status", {name:translate("en-US", "app.loading")})).toBeVisible();
+  await page.screenshot({path:info.outputPath("loading.png"),fullPage:true});
+  release();
+  await expect(overview.getByText(overviewMessage("en-US", "empty"))).toBeVisible();
+  await expect(overview.locator("dl").first().locator("dd")).toHaveText(["0","0"]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({path:info.outputPath("empty.png"),fullPage:true});
+});

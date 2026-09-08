@@ -2,6 +2,8 @@ import type { Locale } from "../../lib/i18n";
 
 const messages = {
   "zh-CN": {
+    "productProgress": "商品交付概况",
+    "scopeDetails": "统计口径",
     "title": "商家工作概览",
     "subtitle": "从当前商品和工作记录继续制作。",
     "totalProducts": "全部商品",
@@ -44,6 +46,8 @@ const messages = {
     "loadError": "工作概览暂时无法加载。"
   },
   "en-US": {
+    "productProgress": "Product delivery",
+    "scopeDetails": "About these counts",
     "title": "Merchant work overview",
     "subtitle": "Continue from your products and recorded work.",
     "totalProducts": "All products",
@@ -86,6 +90,8 @@ const messages = {
     "loadError": "The work overview could not be loaded."
   },
   "ja-JP": {
+    "productProgress": "商品の納品状況",
+    "scopeDetails": "集計について",
     "title": "事業者の作業概要",
     "subtitle": "商品と作業記録から制作を続けます。",
     "totalProducts": "すべての商品",
@@ -128,6 +134,8 @@ const messages = {
     "loadError": "作業概要を読み込めませんでした。"
   },
   "vi-VN": {
+    "productProgress": "Bàn giao sản phẩm",
+    "scopeDetails": "Phạm vi thống kê",
     "title": "Tổng quan công việc cửa hàng",
     "subtitle": "Tiếp tục từ sản phẩm và các công việc đã ghi nhận.",
     "totalProducts": "Tất cả sản phẩm",
