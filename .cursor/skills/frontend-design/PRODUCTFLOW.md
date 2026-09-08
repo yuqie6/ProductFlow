@@ -2,7 +2,7 @@
 
 Use this skill when the user requests a new visual direction. Read this overlay before applying [SKILL.md](SKILL.md) to ProductFlow; routine UI work uses the existing system and relevant project rules.
 
-The upstream skill is for distinctive new visual identities. ProductFlow already has one: Inter + 中文回退, a muted sage accent, semantic surfaces in `web/src/index.css`, workbench chrome in `web/src/pages/workbench/chrome/`.
+The upstream skill is for distinctive new visual identities. ProductFlow already has one: Inter + 中文回退, the existing indigo/violet accent, semantic surfaces in `web/src/index.css`, workbench chrome in `web/src/pages/workbench/chrome/`.
 
 Keep from upstream:
 

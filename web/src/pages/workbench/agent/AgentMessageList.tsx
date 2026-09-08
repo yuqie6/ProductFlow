@@ -326,7 +326,7 @@ function UserTurnBubble({
           ))}
         </div>
       ) : null}
-      <div className="rounded-surface bg-surface-subtle px-4 py-3 text-sm leading-6 text-text-primary">
+      <div className="rounded-[20px] bg-accent-soft px-4 py-3 text-sm leading-6 text-text-primary">
         <div className="whitespace-pre-wrap break-words">{text}</div>
       </div>
       <div className="mt-1 flex min-h-6 items-center justify-end gap-0.5 text-[11px] text-text-muted">

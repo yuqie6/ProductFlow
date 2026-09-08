@@ -135,7 +135,7 @@ export interface AgentBindingDraft {
 
 const INPUT_CLASS = cn(CONTROL_CLASS, "h-11 px-4 text-sm");
 const TEXTAREA_CLASS = cn(CONTROL_CLASS, "px-4 py-3 text-sm");
-const PANEL_CLASS = "border-t border-border-l1 py-6";
+const PANEL_CLASS = "rounded-xl border border-border-l1 bg-surface-raised p-6 shadow-elev-1";
 const SETTINGS_MAIN_ACTION_CLASS = cn(
   buttonVariants({ variant: "primary", size: "lg" }),
   "h-11 px-5 text-sm lg:h-11",

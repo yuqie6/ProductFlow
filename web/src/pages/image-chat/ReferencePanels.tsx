@@ -33,7 +33,7 @@ export function SessionReferencePanel({
   t,
 }: SessionReferencePanelProps) {
   return (
-    <div className="border-t border-border-l1 pt-4">
+    <div className="rounded-2xl border border-border-l1 bg-surface-raised p-4">
       <div className="mb-2 text-sm font-semibold text-text-primary dark:text-white">{t("chat.sessionReferences")}</div>
       <ImageDropZone
         ariaLabel={t("chat.uploadSessionReference")}
@@ -127,7 +127,7 @@ export function ProductAssociationPanel({
   const saveDisabled = attachBusy || !selectedRound || !targetProductId;
 
   return (
-    <div className="border-t border-border-l1 pt-4">
+    <div className="rounded-2xl border border-border-l1 bg-surface-raised p-4">
       <div className="mb-3 text-sm font-semibold text-text-primary dark:text-white">{t("chat.saveToProduct")}</div>
       <label className="block">
         <span className="mb-1.5 block text-xs font-semibold text-text-secondary dark:text-text-primary">{t("chat.targetProduct")}</span>

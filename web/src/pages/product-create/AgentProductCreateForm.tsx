@@ -144,8 +144,16 @@ function familyHintKey(family: ImageTypeFamily): "agentCreate.family.photography
 }
 
 const stepClass =
-  "flex h-6 w-6 shrink-0 items-center justify-center rounded-control bg-surface-subtle text-[11px] font-semibold text-text-secondary";
+  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-accent-strong text-[11px] font-bold text-white shadow-elev-1";
 
+function cardShellClass(isActive: boolean): string {
+  const base =
+    "relative rounded-2xl border bg-surface-raised p-5 shadow-sm transition-[border-color,box-shadow] duration-200 sm:p-6";
+  if (isActive) {
+    return `${base} border-accent/40 shadow-elev-2 ring-1 ring-accent/15`;
+  }
+  return `${base} border-border-l1 hover:border-border-l3`;
+}
 
 function formatFileSize(bytes: number, locale: string): string {
   const value = bytes >= 1024 * 1024 ? bytes / (1024 * 1024) : bytes / 1024;
@@ -291,8 +299,8 @@ export function AgentProductCreateForm({
   const stageCard = (stage: 1 | 2 | 3 | 4 | 5, meta: string, isActive: boolean, body: ReactNode) => {
     const Icon = STAGE_ICONS[stage - 1];
     return (
-      <section aria-labelledby={`agent-stage-${stage}-title`} className="grid gap-5 border-t border-border-l1 py-6 md:grid-cols-[160px_minmax(0,1fr)] md:gap-8">
-        <div className="flex items-start gap-3">
+      <section aria-labelledby={`agent-stage-${stage}-title`} className={cardShellClass(isActive)}>
+        <div className="mb-4 flex items-start gap-3 border-b border-border-l2 pb-4">
           <span className={stepClass} aria-hidden="true">
             {stage}
           </span>
@@ -304,10 +312,10 @@ export function AgentProductCreateForm({
               <Icon size={16} className="text-accent" aria-hidden="true" />
               {stageTitle(stage)}
             </h2>
-            {stage === 2 || stage === 4 ? <p className="mt-1 text-xs leading-5 text-text-muted">{meta}</p> : null}
+            {stage === 2 || stage === 4 ? <p className="mt-0.5 text-xs leading-4 text-text-muted">{meta}</p> : null}
           </div>
           {isActive ? (
-            <span className="mt-0.5 hidden shrink-0 items-center gap-1 rounded-full px-1 py-1 text-[11px] font-semibold text-accent-strong sm:flex">
+            <span className="mt-0.5 hidden shrink-0 items-center gap-1 rounded-full border border-accent/30 bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent-strong sm:flex">
               <Check size={12} aria-hidden="true" />
               {t("agentCreate.stageReady")}
             </span>

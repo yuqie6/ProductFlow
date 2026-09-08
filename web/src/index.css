@@ -6,78 +6,73 @@
    `@theme` 只在默认（亮）值上声明 token 名并生成 utility；
    深色下覆盖同名变量，`.dark` 内的 utility 自动取新值。 */
 .dark {
-  --color-surface-panel: #212523;
-  --color-surface-base: #191c1b;
-  --color-surface-raised: #2a2f2c;
-  --color-surface-subtle: #303632;
-  --color-surface-inverse: #e5e9e5;
-  --color-surface-inverse-fg: #191c1b;
-  --color-media-backdrop: #141715;
+  --color-surface-panel: var(--color-surface-raised);
+  --color-surface-inverse-fg: var(--color-surface-base);
+  --color-surface-base: rgb(2 6 23);
+  --color-surface-raised: rgb(15 23 42);
+  --color-surface-subtle: rgb(30 41 59);
+  --color-surface-inverse: rgb(248 250 252);
+  --color-media-backdrop: rgb(2 6 23);
 
-  --color-border-l1: #424c45;
-  --color-border-l2: #343d36;
-  --color-border-l3: #68786c;
+  --color-border-l1: rgb(51 65 85);
+  --color-border-l2: rgb(30 41 59);
+  --color-border-l3: rgb(71 85 105);
 
-  --color-text-primary: #e5e9e5;
-  --color-text-secondary: #bbc5bd;
-  --color-text-muted: #a2ada5;
-  --color-text-tertiary: #a2ada5;
+  --color-text-primary: rgb(226 232 240);
+  --color-text-secondary: rgb(148 163 184);
+  --color-text-muted: rgb(100 116 139);
+  --color-text-tertiary: rgb(100 116 139);
 
-  --color-accent: #a8bdb0;
-  --color-accent-strong: #c0d0c5;
-  --color-accent-soft: #303d34;
-  --color-accent-fg: #1b2820;
+  --color-accent: rgb(139 92 246);
+  --color-accent-strong: rgb(167 139 250);
+  --color-accent-soft: rgb(30 27 75);
+  --color-accent-fg: rgb(255 255 255);
 
-  --color-overlay: rgb(8 14 10 / 0.66);
-  --color-focus-ring: rgb(168 189 176 / 0.65);
+  --color-overlay: rgb(2 6 23 / 0.64);
+  --color-focus-ring: rgb(167 139 250 / 0.55);
 
-  --color-state-success: #a0c4ac;
-  --color-state-success-fg: #192a1e;
-  --color-state-warning: #d3b880;
-  --color-state-error: #e6a39a;
-  --color-state-error-fg: #301b17;
-  --color-state-success-soft: #29382e;
-  --color-state-warning-soft: #3b3427;
-  --color-state-error-soft: #422e2b;
-  --color-state-frozen: #a2ada5;
-  --color-state-frozen-soft: #303632;
+  --color-state-success-soft: rgb(16 185 129 / 0.16);
+  --color-state-warning-soft: rgb(245 158 11 / 0.16);
+  --color-state-error-soft: rgb(239 68 68 / 0.16);
+  --color-state-frozen: rgb(148 163 184);
+  --color-state-frozen-soft: rgb(148 163 184 / 0.16);
 
-  --color-kind-product: #adbea8;
-  --color-kind-product-soft: #303932;
-  --color-kind-product-border: #424c45;
-  --color-kind-asset: #a4bbc1;
-  --color-kind-asset-soft: #303932;
-  --color-kind-asset-border: #424c45;
-  --color-kind-brief: #c4af9b;
-  --color-kind-brief-soft: #303932;
-  --color-kind-brief-border: #424c45;
-  --color-kind-visual: #bcbba0;
-  --color-kind-visual-soft: #303932;
-  --color-kind-visual-border: #424c45;
-  --color-kind-prompt: #c3b991;
-  --color-kind-prompt-soft: #303932;
-  --color-kind-prompt-border: #424c45;
-  --color-kind-image: #a1bfb0;
-  --color-kind-image-soft: #303932;
-  --color-kind-image-border: #424c45;
+  --color-kind-product: rgb(216 180 254);
+  --color-kind-product-soft: rgb(88 28 135 / 0.35);
+  --color-kind-product-border: rgb(168 85 247 / 0.4);
+  --color-kind-asset: rgb(165 180 252);
+  --color-kind-asset-soft: rgb(49 46 129 / 0.45);
+  --color-kind-asset-border: rgb(99 102 241 / 0.42);
+  --color-kind-brief: rgb(253 164 175);
+  --color-kind-brief-soft: rgb(136 19 55 / 0.38);
+  --color-kind-brief-border: rgb(244 63 94 / 0.4);
+  --color-kind-visual: rgb(196 181 253);
+  --color-kind-visual-soft: rgb(76 29 149 / 0.4);
+  --color-kind-visual-border: rgb(139 92 246 / 0.42);
+  --color-kind-prompt: rgb(252 211 77);
+  --color-kind-prompt-soft: rgb(120 53 15 / 0.38);
+  --color-kind-prompt-border: rgb(245 158 11 / 0.42);
+  --color-kind-image: rgb(103 232 249);
+  --color-kind-image-soft: rgb(22 78 99 / 0.42);
+  --color-kind-image-border: rgb(6 182 212 / 0.42);
 
-  --color-port-source: #d7e2da;
-  --color-port-target: #a2ada5;
-  --color-port-ring: #2a2f2c;
-  --color-port-valid: #a0c4ac;
-  --color-port-valid-soft: #293d30;
-  --color-port-invalid: #e6a39a;
-  --color-port-invalid-soft: #422e2b;
+  --color-port-source: rgb(226 232 240);
+  --color-port-target: rgb(148 163 184);
+  --color-port-ring: rgb(15 23 42);
+  --color-port-valid: rgb(52 211 153);
+  --color-port-valid-soft: rgb(6 78 59 / 0.7);
+  --color-port-invalid: rgb(248 113 113);
+  --color-port-invalid-soft: rgb(127 29 29 / 0.55);
 
-  --color-edge-default: #7b8b80;
-  --color-edge-active: #bbc5bd;
-  --color-edge-selected: #d7e2da;
-  --color-edge-receded: rgb(162 173 165 / 0.28);
-  --color-edge-proposal: #a8bdb0;
+  --color-edge-default: rgb(100 116 139);
+  --color-edge-active: rgb(148 163 184);
+  --color-edge-selected: rgb(226 232 240);
+  --color-edge-receded: rgb(148 163 184 / 0.28);
+  --color-edge-proposal: rgb(139 92 246);
 
-  --color-canvas-dot: rgb(162 173 165 / 0.2);
-  --color-canvas-minimap-node: #91a697;
-  --color-canvas-minimap-group: #67776b;
+  --color-canvas-dot: rgb(148 163 184 / 0.35);
+  --color-canvas-minimap-node: rgb(167 139 250);
+  --color-canvas-minimap-group: rgb(148 163 184);
 
   --shadow-elev-1: 0 1px 2px rgb(0 0 0 / 0.28);
   --shadow-elev-2: 0 8px 20px rgb(0 0 0 / 0.28);
@@ -85,92 +80,92 @@
 }
 
 @theme {
+  --color-surface-panel: var(--color-surface-raised);
+  --color-surface-inverse-fg: var(--color-surface-base);
+  --color-state-success-fg: #fff;
+  --color-state-error-fg: #fff;
   --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 
   /* ── 语义表面（surface）── */
-  --color-surface-panel: #fafbf9;
-  --color-surface-base: #f4f5f3;
-  --color-surface-raised: #ffffff;
-  --color-surface-subtle: #e9ece8;
-  --color-surface-inverse: #242b27;
-  --color-surface-inverse-fg: #ffffff;
-  --color-media-backdrop: #191c1b;
+  --color-surface-base: rgb(248 250 252);
+  --color-surface-raised: rgb(255 255 255);
+  --color-surface-subtle: rgb(241 245 249);
+  --color-surface-inverse: rgb(15 23 42);
+  --color-media-backdrop: rgb(2 6 23);
 
   /* ── 边框层级 ── */
-  --color-border-l1: #d7ded7;
-  --color-border-l2: #e4e8e3;
-  --color-border-l3: #aeb9b0;
+  --color-border-l1: rgb(226 232 240);
+  --color-border-l2: rgb(228 228 231);
+  --color-border-l3: rgb(203 213 225);
 
   /* ── 文本层级 ── */
-  --color-text-primary: #242b27;
-  --color-text-secondary: #515e55;
-  --color-text-muted: #626d65;
-  --color-text-tertiary: #626d65;
+  --color-text-primary: rgb(15 23 42);
+  --color-text-secondary: rgb(71 85 105);
+  --color-text-muted: rgb(100 116 139);
+  --color-text-tertiary: rgb(100 116 139);
 
-  /* ── accent（低饱和灰绿）── */
-  --color-accent: #465e51;
-  --color-accent-strong: #344a3d;
-  --color-accent-soft: #e5ece7;
-  --color-accent-fg: #ffffff;
+  /* ── accent（indigo → violet）── */
+  --color-accent: rgb(99 102 241);
+  --color-accent-strong: rgb(79 70 229);
+  --color-accent-soft: rgb(238 242 255);
+  --color-accent-fg: rgb(255 255 255);
 
   /* ── 状态色 ── */
-  --color-state-success: #416b52;
-  --color-state-success-fg: #ffffff;
-  --color-state-warning: #886021;
-  --color-state-error: #a34439;
-  --color-state-error-fg: #ffffff;
-  --color-state-success-soft: #e5ede7;
-  --color-state-warning-soft: #f3ecdd;
-  --color-state-error-soft: #f5e5e2;
-  --color-state-frozen: #626d65;
-  --color-state-frozen-soft: #e9ece8;
+  --color-state-success: rgb(16 185 129);
+  --color-state-warning: rgb(245 158 11);
+  --color-state-error: rgb(239 68 68);
+  --color-state-success-soft: rgb(16 185 129 / 0.12);
+  --color-state-warning-soft: rgb(245 158 11 / 0.14);
+  --color-state-error-soft: rgb(239 68 68 / 0.12);
+  --color-state-frozen: rgb(71 85 105);
+  --color-state-frozen-soft: rgb(71 85 105 / 0.14);
 
-  --color-overlay: rgb(20 28 23 / 0.5);
-  --color-focus-ring: rgb(70 94 81 / 0.55);
+  --color-overlay: rgb(15 23 42 / 0.5);
+  --color-focus-ring: rgb(99 102 241 / 0.45);
 
   /* ── 节点类型色（扫读，不是第二套 accent）── */
-  --color-kind-product: #526851;
-  --color-kind-product-soft: #eef0eb;
-  --color-kind-product-border: #d7ded7;
-  --color-kind-asset: #516b72;
-  --color-kind-asset-soft: #eef0eb;
-  --color-kind-asset-border: #d7ded7;
-  --color-kind-brief: #7e624d;
-  --color-kind-brief-soft: #eef0eb;
-  --color-kind-brief-border: #d7ded7;
-  --color-kind-visual: #68644e;
-  --color-kind-visual-soft: #eef0eb;
-  --color-kind-visual-border: #d7ded7;
-  --color-kind-prompt: #746c48;
-  --color-kind-prompt-soft: #eef0eb;
-  --color-kind-prompt-border: #d7ded7;
-  --color-kind-image: #4e7063;
-  --color-kind-image-soft: #eef0eb;
-  --color-kind-image-border: #d7ded7;
+  --color-kind-product: rgb(126 34 206);
+  --color-kind-product-soft: rgb(250 245 255);
+  --color-kind-product-border: rgb(233 213 255);
+  --color-kind-asset: rgb(67 56 202);
+  --color-kind-asset-soft: rgb(238 242 255);
+  --color-kind-asset-border: rgb(199 210 254);
+  --color-kind-brief: rgb(190 18 60);
+  --color-kind-brief-soft: rgb(255 241 242);
+  --color-kind-brief-border: rgb(254 205 211);
+  --color-kind-visual: rgb(109 40 217);
+  --color-kind-visual-soft: rgb(245 243 255);
+  --color-kind-visual-border: rgb(221 214 254);
+  --color-kind-prompt: rgb(180 83 9);
+  --color-kind-prompt-soft: rgb(255 251 235);
+  --color-kind-prompt-border: rgb(253 230 138);
+  --color-kind-image: rgb(14 116 144);
+  --color-kind-image-soft: rgb(236 254 255);
+  --color-kind-image-border: rgb(165 243 252);
 
   /* ── 端口 / 边 / 小地图 ── */
-  --color-port-source: #515e55;
-  --color-port-target: #829087;
-  --color-port-ring: #ffffff;
-  --color-port-valid: #416b52;
-  --color-port-valid-soft: #e2ebe5;
-  --color-port-invalid: #a34439;
-  --color-port-invalid-soft: #f5e5e2;
+  --color-port-source: rgb(51 65 85);
+  --color-port-target: rgb(100 116 139);
+  --color-port-ring: rgb(255 255 255);
+  --color-port-valid: rgb(4 120 87);
+  --color-port-valid-soft: rgb(209 250 229);
+  --color-port-invalid: rgb(220 38 38);
+  --color-port-invalid-soft: rgb(254 226 226);
 
-  --color-edge-default: #829087;
-  --color-edge-active: #515e55;
-  --color-edge-selected: #344a3d;
-  --color-edge-receded: rgb(98 109 101 / 0.28);
-  --color-edge-proposal: #465e51;
+  --color-edge-default: rgb(100 116 139);
+  --color-edge-active: rgb(71 85 105);
+  --color-edge-selected: rgb(51 65 85);
+  --color-edge-receded: rgb(148 163 184 / 0.28);
+  --color-edge-proposal: rgb(99 102 241);
 
-  --color-canvas-dot: rgb(98 109 101 / 0.26);
-  --color-canvas-minimap-node: #8c9e91;
-  --color-canvas-minimap-group: #b9c2bb;
+  --color-canvas-dot: rgb(148 163 184);
+  --color-canvas-minimap-node: rgb(165 180 252);
+  --color-canvas-minimap-group: rgb(148 163 184);
 
   /* ── 圆角档 ── */
   --radius-control: 0.5rem;
-  --radius-panel: 0.625rem;
-  --radius-surface: 0.75rem;
+  --radius-panel: 0.75rem;
+  --radius-surface: 1rem;
 
   /* ── 阴影档 ── */
   --shadow-elev-1: 0 1px 2px rgb(15 23 42 / 0.06);
@@ -579,9 +574,10 @@ textarea {
 
 .glass-inspector {
   color: var(--color-text-primary);
-  background-color: var(--color-surface-panel);
+  background-color: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-border-l1) 88%, transparent);
-
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
 }
 
 .config-bubble {
@@ -604,26 +600,28 @@ textarea {
 
 .copy-editor-card {
   position: relative;
-  background-color: var(--color-surface-panel);
-  border-top: 1px solid var(--color-border-l1);
-}
-
-.copy-editor-item {
-  border-left: 2px solid var(--color-border-l1);
-  padding-left: 0.75rem;
-}
-
-.copy-add-field {
-  color: var(--color-text-secondary);
   background-color: var(--color-surface-raised);
   border: 1px solid var(--color-border-l1);
-  transition: border-color var(--duration-fast), background-color var(--duration-fast), color var(--duration-fast);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 14px;
+  box-shadow: var(--shadow-elev-1);
 }
-
+.copy-editor-item {
+  border-left: 2px solid var(--color-accent);
+  padding-left: 0.75rem;
+}
+.copy-add-field {
+  color: var(--color-accent-strong);
+  background-color: var(--color-accent-soft);
+  border: 1px solid var(--color-border-l1);
+  box-shadow: var(--shadow-elev-1);
+  transition: transform 0.2s ease, border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+}
 .copy-add-field:hover {
-  color: var(--color-text-primary);
-  background-color: var(--color-surface-subtle);
-  border-color: var(--color-border-l3);
+  color: var(--color-accent);
+  background-color: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  transform: translateY(-1px);
 }
 
 /* Assistant transcript typography: quiet prose, explicit code surfaces, and

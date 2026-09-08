@@ -62,7 +62,7 @@ export function CreateSourceNoteEditor({
   };
 
   return (
-    <div data-create-source-note-editor className="space-y-0 overflow-hidden rounded-control border border-border-l1 bg-surface-subtle p-0 focus-within:border-accent focus-within:ring-2 focus-within:ring-focus-ring">
+    <div data-create-source-note-editor className="space-y-0 overflow-hidden rounded-control border border-border-l1 bg-surface-raised p-0 focus-within:border-accent focus-within:ring-2 focus-within:ring-focus-ring">
       <label htmlFor="agent-product-brief" className="block px-3 py-3">
         <span className="sr-only">{t("agentCreate.brief")}</span>
         <textarea

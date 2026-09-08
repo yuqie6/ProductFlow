@@ -36,7 +36,7 @@ export function ImageChatMainStage({
   t,
 }: ImageChatMainStageProps) {
   return (
-    <div className="relative flex min-h-[18rem] flex-1 items-center justify-center overflow-hidden rounded-surface border border-border-l1 bg-surface-panel sm:min-h-[22rem] lg:min-h-[360px]">
+    <div className="relative flex min-h-[18rem] flex-1 items-center justify-center overflow-hidden rounded-3xl border border-border-l1 bg-surface-raised shadow-elev-1 sm:min-h-[22rem] lg:min-h-[360px]">
       <div className="absolute inset-0 bg-[radial-gradient(var(--color-canvas-dot)_1px,transparent_1px)] [background-size:20px_20px]" />
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-3 px-5 py-4">
         {selectedRound ? (
@@ -71,7 +71,7 @@ export function ImageChatMainStage({
               src={api.toApiUrl(selectedRound.generated_asset.preview_url)}
               alt={t("chat.currentResultAlt")}
               decoding="async"
-              className="max-h-full max-w-full object-contain"
+              className="max-h-full max-w-full object-contain drop-shadow-2xl"
             />
           </button>
         </div>

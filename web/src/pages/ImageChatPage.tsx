@@ -1190,7 +1190,7 @@ function ImageChatWorkspace({ routeStateScope, route, allowAutoCreate }: { route
         onPointerDown={handleMobileEdgeSwipeStart}
       >
         <aside
-          className="relative hidden w-full shrink-0 flex-col border-b border-border-l1 bg-surface-panel lg:flex lg:w-[var(--image-chat-left-panel-width)] lg:border-b-0 lg:border-r"
+          className="relative hidden w-full shrink-0 flex-col border-b border-border-l1 bg-surface-raised/95 dark:shadow-elev-2 dark:backdrop-blur-xl lg:flex lg:w-[var(--image-chat-left-panel-width)] lg:border-b-0 lg:border-r"
           style={leftPanelStyle}
         >
           <button
@@ -1423,7 +1423,7 @@ function ImageChatWorkspace({ routeStateScope, route, allowAutoCreate }: { route
         </section>
 
         <aside
-          className="relative hidden w-full shrink-0 flex-col border-t border-border-l1 bg-surface-panel lg:flex lg:w-[var(--image-chat-right-panel-width)] lg:border-l lg:border-t-0"
+          className="relative hidden w-full shrink-0 flex-col border-t border-border-l1 bg-surface-raised dark:shadow-elev-2 dark:backdrop-blur-xl lg:flex lg:w-[var(--image-chat-right-panel-width)] lg:border-l lg:border-t-0"
           style={rightPanelStyle}
         >
           <button

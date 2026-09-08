@@ -189,7 +189,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
 
   return (
     <>
-      <nav className="z-50 flex flex-col gap-3 overflow-visible border-b border-border-l1 bg-surface-panel px-3 py-3 dark:border-border-l2 dark:bg-surface-base/92 sm:px-4 lg:grid lg:min-h-14 lg:grid-cols-[minmax(180px,1fr)_auto_minmax(180px,1fr)] lg:items-center lg:gap-4 lg:px-6">
+      <nav className="z-50 flex flex-col gap-3 overflow-visible border-b border-border-l1 bg-surface-raised/95 px-3 py-3 shadow-elev-1 backdrop-blur dark:border-border-l2 dark:bg-surface-base/92 sm:px-4 lg:grid lg:min-h-14 lg:grid-cols-[minmax(180px,1fr)_auto_minmax(180px,1fr)] lg:items-center lg:gap-4 lg:px-6">
         <div className="flex min-w-0 items-center justify-between gap-2 text-sm">
           <div className="flex min-w-0 max-w-[calc(100%-10.75rem)] items-center space-x-2 overflow-hidden lg:max-w-none">
             <button

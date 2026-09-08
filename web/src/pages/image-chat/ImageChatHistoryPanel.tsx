@@ -130,7 +130,7 @@ export function ImageChatHistoryPanel({
 
   return (
     <div
-      className="relative hidden shrink-0 flex-col border-t border-border-l1 bg-surface-panel px-2.5 py-2 dark:border-border-l1/80 dark:bg-surface-panel lg:flex lg:h-[var(--image-chat-history-panel-height)] lg:px-3 lg:py-2.5"
+      className="relative hidden shrink-0 flex-col border-t border-border-l1 bg-surface-raised/95 px-2.5 py-2 shadow-elev-1 dark:border-border-l1/80 dark:bg-surface-panel lg:flex lg:h-[var(--image-chat-history-panel-height)] lg:px-3 lg:py-2.5"
       style={style}
     >
       {onResizeStart ? (
