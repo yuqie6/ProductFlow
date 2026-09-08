@@ -561,6 +561,20 @@ def summarize_wait(items: list[dict[str, Any]], expected_count: int) -> dict[str
     }
 
 
+def contention_pass(output: dict[str, Any]) -> bool:
+    short = output["short"]
+    return bool(
+        output["quota_coverage"]["pass"]
+        and not output["duplicate_quota_events"]
+        and output["submission_reconciliation"]["unresolved"] == 0
+        and short["a_accepted_by_http"] == short["a_reconciled_task_ids"] == 100
+        and short["a_terminal_count"] == short["a_throughput_succeeded"] == 100
+        and short["b_accepted_by_http"] == short["b_reconciled_task_ids"] == 20
+        and short["target_b_p95_pass"]
+        and output["provider_attribution_pass"]
+    )
+
+
 def repair_existing(args: argparse.Namespace) -> dict[str, Any]:
     """Repair an earlier report without issuing another generation request."""
     identity = verify_identity(Path(__file__).resolve().parents[2], Path(args.identity))
@@ -666,15 +680,7 @@ def repair_existing(args: argparse.Namespace) -> dict[str, Any]:
     output["provider_attribution_pass"] = bool(short_items + long_items) and all(
         item.get("provider_event_matches") == 1 for item in short_items + long_items
     )
-    output["pass"] = (
-        quota["pass"]
-        and not duplicates
-        and reconciliation["unresolved"] == 0
-        and len(a_tasks) == a_accepted
-        and len(b_tasks) == b_accepted
-        and output["short"]["target_b_pass"]
-        and output["provider_attribution_pass"]
-    )
+    output["pass"] = contention_pass(output)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(output, indent=2, default=str) + "\n", encoding="utf-8")
@@ -703,6 +709,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     async with aiohttp.ClientSession(timeout=timeout, connector=connector, headers={"Origin": BROWSER_ORIGIN}) as client:
         cookies = [await login(client, args.base_url, merchant) for merchant in merchants]
         base_assets = latest_generated_assets(args.db_url, [merchant["image_session_id"] for merchant in merchants])
+        if any(merchant["image_session_id"] not in base_assets for merchant in merchants[:2]):
+            raise RuntimeError("contention requires an existing generated base image for both A and B; prepare these outside the measured workload")
         submissions: list[dict[str, Any]] = []
 
         async def send(label: str, index: int, merchant_index: int, long: bool = False) -> None:
@@ -846,17 +854,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     output["provider_attribution_pass"] = bool(short_items + long_items) and all(
         item.get("provider_event_matches") == 1 for item in short_items + long_items
     )
-    output["pass"] = (
-        quota["pass"]
-        and not duplicates
-        and reconciliation["unresolved"] == 0
-        and a_accepted == 100
-        and b_accepted == 20
-        and len(a_tasks) == a_accepted
-        and len(b_tasks) == b_accepted
-        and output["short"]["target_b_pass"]
-        and output["provider_attribution_pass"]
-    )
+    output["pass"] = contention_pass(output)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(output, indent=2, default=str) + "\n", encoding="utf-8")

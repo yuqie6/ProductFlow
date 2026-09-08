@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
-from run_contention import phase_metrics, quota_report, reconcile_submissions, task_ids_for_label  # noqa: E402
+from run_contention import contention_pass, phase_metrics, quota_report, reconcile_submissions, task_ids_for_label  # noqa: E402
 
 
 class FakeDBProbe:
@@ -22,6 +22,29 @@ class FakeDBProbe:
 
 class ContentionEvidenceTests(unittest.TestCase):
     merchants = [{"image_session_id": "session-a"}]
+
+    def test_complete_contention_report_checks_p95_and_exact_denominators(self):
+        report = {
+            "quota_coverage": {"pass": True},
+            "duplicate_quota_events": [],
+            "submission_reconciliation": {"unresolved": 0},
+            "provider_attribution_pass": True,
+            "short": {
+                "a_accepted_by_http": 100, "a_reconciled_task_ids": 100,
+                "a_terminal_count": 100, "a_throughput_succeeded": 100,
+                "b_accepted_by_http": 20, "b_reconciled_task_ids": 20,
+                "target_b_p95_pass": True,
+            },
+        }
+        self.assertTrue(contention_pass(report))
+        report["short"]["target_b_p95_pass"] = False
+        self.assertFalse(contention_pass(report))
+        report["short"]["target_b_p95_pass"] = True
+        report["short"]["a_accepted_by_http"] = 99
+        report["short"]["a_reconciled_task_ids"] = 99
+        self.assertFalse(contention_pass(report))
+        report["short"]["a_accepted_by_http"] = 100
+        self.assertFalse(contention_pass(report))
 
     def test_redispatch_timestamp_is_not_reported_as_first_dispatch(self):
         result = phase_metrics(
