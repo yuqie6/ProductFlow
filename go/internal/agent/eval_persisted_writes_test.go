@@ -1185,6 +1185,91 @@ func TestEvalPersistedProposalAndLibraryContent(t *testing.T) {
 	}
 }
 
+func TestEvalPendingProposalSeedUsesScopedIdentity(t *testing.T) {
+	as := newEvalHostServer(t)
+	tasks, worlds, err := LoadEvalTasks(DefaultEvalRoot(), "l1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := evalTaskByID(t, tasks, "graph-editing-discard-pending-proposal")
+	world := worlds[task.World]
+	seeded := seedEvalWorld(t, as, task, world)
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
+
+	proposalID := seeded.ProposalIDs[world.PendingProposalID]
+	if proposalID == "" {
+		t.Fatalf("pending proposal fixture %q was not mapped", world.PendingProposalID)
+	}
+	live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.PendingProposal == nil || live.PendingProposal.ID != proposalID {
+		t.Fatalf("seeded pending proposal = %#v, want %s", live.PendingProposal, proposalID)
+	}
+	var row struct {
+		GraphID        string
+		ConversationID string
+		Status         string
+		BaseRevision   int
+	}
+	if err := as.pool.QueryRow(ctx, `
+		SELECT graph_id, conversation_id, status, base_graph_revision
+		FROM workflow_graph_proposals
+		WHERE id = $1
+	`, proposalID).Scan(&row.GraphID, &row.ConversationID, &row.Status, &row.BaseRevision); err != nil {
+		t.Fatal(err)
+	}
+	if row.GraphID != seeded.GraphID || row.ConversationID != seeded.ConvID || row.Status != "pending" || row.BaseRevision != live.Revision {
+		t.Fatalf("seeded proposal row = %#v, want graph=%s conversation=%s pending revision=%d", row, seeded.GraphID, seeded.ConvID, live.Revision)
+	}
+
+	noPendingTask := EvalTask{ID: "seed-no-pending", Scope: "product_workflow", World: "name-only-empty-intake"}
+	noPending := seedEvalWorld(t, as, noPendingTask, worlds[noPendingTask.World])
+	noPendingLive, err := as.svc.Graph.Get(ctx, noPending.ProductID, noPending.GraphID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noPendingLive.PendingProposal != nil {
+		t.Fatalf("world without pending proposal was seeded with %#v", noPendingLive.PendingProposal)
+	}
+	var pendingCount int
+	if err := as.pool.QueryRow(ctx, `SELECT COUNT(*) FROM workflow_graph_proposals WHERE graph_id = $1 AND status = 'pending'`, noPending.GraphID).Scan(&pendingCount); err != nil {
+		t.Fatal(err)
+	}
+	if pendingCount != 0 {
+		t.Fatalf("world without pending proposal has %d pending rows", pendingCount)
+	}
+
+	if _, err := as.svc.DiscardProposalTool(ctx, noPending.ConvID, proposalID, clockid.New()); err == nil {
+		t.Fatal("wrong product conversation discarded another graph proposal")
+	}
+	var status string
+	if err := as.pool.QueryRow(ctx, `SELECT status FROM workflow_graph_proposals WHERE id = $1`, proposalID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" {
+		t.Fatalf("wrong owner changed proposal status to %s", status)
+	}
+
+	if _, err := as.svc.DiscardProposalTool(ctx, seeded.ConvID, "", clockid.New()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PendingProposal != nil || after.Revision != live.Revision {
+		t.Fatalf("discarded graph = revision %d pending %#v, want revision %d and no pending", after.Revision, after.PendingProposal, live.Revision)
+	}
+	if err := as.pool.QueryRow(ctx, `SELECT status FROM workflow_graph_proposals WHERE id = $1`, proposalID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "discarded" {
+		t.Fatalf("owner discard status = %s, want discarded", status)
+	}
+}
+
 func TestEvalPersistedOperationL1GraphCoverage(t *testing.T) {
 	ids := []string{
 		"graph-editing-delete-one-node",
@@ -1221,17 +1306,6 @@ func TestEvalPersistedOperationL1GraphCoverage(t *testing.T) {
 				}
 			}
 			if task.Expect.Writes[0].Tool == "discard_workflow_proposal_v1" {
-				live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				proposal := map[string]any{"base_graph_revision": live.Revision, "summary": "待丢弃", "operations": []any{
-					map[string]any{"op": "rename_node", "node_ref": seeded.NodeIDs["node-prompt-1"], "title": "待丢弃"},
-				}}
-				raw, _ := json.Marshal(proposal)
-				if _, err := as.svc.ProposeGraphTool(ctx, seeded.ConvID, raw, clockid.New()); err != nil {
-					t.Fatal(err)
-				}
 				if _, err := as.svc.DiscardProposalTool(ctx, seeded.ConvID, "", clockid.New()); err != nil {
 					t.Fatal(err)
 				}

@@ -29,6 +29,7 @@ type seededEvalWorld struct {
 	NodeIDs          map[string]string
 	EdgeIDs          map[string]string
 	GroupIDs         map[string]string
+	ProposalIDs      map[string]string
 	WorkflowIDs      map[string]string
 	RunIDs           map[string]string
 	FailedRunID      string
@@ -113,6 +114,7 @@ func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld
 		NodeIDs:     map[string]string{},
 		EdgeIDs:     map[string]string{},
 		GroupIDs:    map[string]string{},
+		ProposalIDs: map[string]string{},
 		WorkflowIDs: map[string]string{},
 		RunIDs:      map[string]string{},
 	}
@@ -152,6 +154,9 @@ func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld
 	if needsExpandedGraph(world) {
 		expandEvalGraph(t, as, world, &out)
 	}
+	if strings.TrimSpace(world.PendingProposalID) != "" {
+		seedEvalPendingProposal(t, as, ctx, world, &out)
+	}
 	if len(selectedAssetIDs(task)) > 0 && task.Scope == "product_workflow" {
 		assets, err := as.svc.Product.AddImages(ctx, out.ProductID, []product.Upload{{
 			Content: evalPNG(t), Filename: "eval-ref.png", MIMEType: "image/png",
@@ -187,6 +192,59 @@ func seedEvalWorld(t *testing.T, as *agentServer, task EvalTask, world EvalWorld
 
 func needsExpandedGraph(world EvalWorld) bool {
 	return len(world.LiveGraph.Nodes) > 1
+}
+
+func seedEvalPendingProposal(t *testing.T, as *agentServer, ctx context.Context, world EvalWorld, seeded *seededEvalWorld) {
+	t.Helper()
+	fixtureID := strings.TrimSpace(world.PendingProposalID)
+	if fixtureID == "" {
+		return
+	}
+	nodeID := seeded.NodeIDs["node-prompt-1"]
+	if nodeID == "" {
+		t.Fatalf("pending proposal %s requires node-prompt-1", fixtureID)
+	}
+	live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{
+		"base_graph_revision": live.Revision,
+		"summary":             fmt.Sprintf("评测待丢弃提案 %s", fixtureID),
+		"operations": []map[string]any{{
+			"op": "rename_node", "node_ref": nodeID, "title": "待丢弃提案",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := as.svc.ProposeGraphTool(ctx, seeded.ConvID, raw, clockid.New())
+	if err != nil {
+		t.Fatalf("seed pending proposal %s: %v", fixtureID, err)
+	}
+	proposalID, ok := result["proposal_id"].(string)
+	if !ok || strings.TrimSpace(proposalID) == "" {
+		t.Fatalf("seed pending proposal %s returned invalid identity: %#v", fixtureID, result)
+	}
+	projected, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projected.PendingProposal == nil || projected.PendingProposal.ID != proposalID {
+		t.Fatalf("seed pending proposal %s not projected: %#v", fixtureID, projected.PendingProposal)
+	}
+	var conversationID string
+	if err := as.pool.QueryRow(ctx, `
+		SELECT conversation_id
+		FROM workflow_graph_proposals
+		WHERE id = $1 AND graph_id = $2 AND status = 'pending'
+	`, proposalID, seeded.GraphID).Scan(&conversationID); err != nil {
+		t.Fatalf("seed pending proposal %s readback: %v", fixtureID, err)
+	}
+	if conversationID != seeded.ConvID {
+		t.Fatalf("seed pending proposal %s conversation %s want %s", fixtureID, conversationID, seeded.ConvID)
+	}
+	seeded.ProposalIDs[fixtureID] = proposalID
 }
 
 func globalEvalTaskNeedsWorkflow(task EvalTask, world EvalWorld) bool {
@@ -660,6 +718,9 @@ func evalFixtureToActualIDs(seeded seededEvalWorld) map[string]string {
 	for fixture, actual := range seeded.WorkflowIDs {
 		mapping[fixture] = actual
 	}
+	for fixture, actual := range seeded.ProposalIDs {
+		mapping[fixture] = actual
+	}
 	for fixture, actual := range seeded.RunIDs {
 		mapping[fixture] = actual
 	}
@@ -677,6 +738,9 @@ func evalActualToFixtureIDs(seeded seededEvalWorld) map[string]string {
 		seeded.GraphID:   "33333333-3333-4333-8333-333333333333",
 	}
 	for fixture, actual := range seeded.WorkflowIDs {
+		mapping[actual] = fixture
+	}
+	for fixture, actual := range seeded.ProposalIDs {
 		mapping[actual] = fixture
 	}
 	for fixture, actual := range seeded.RunIDs {

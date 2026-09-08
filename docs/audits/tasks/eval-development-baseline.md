@@ -174,3 +174,13 @@ root 已确认 runtime wire 的 document_action 空值语义，准许 capacity_b
 空 action 观察修复已完成 root 自审：仅两个 run 工具实际 null 归一化为空串，其它比较不变；13 项 grader 回归、TypeScript 检查及生成契约检查通过。离线 v2 直接导入固定 f9 旧 grader 和当前 grader，对同一 225 条持久化调用执行，write 失败 54→20，34 条差异均为该空值边界；原 161/225 不覆盖，不外推新能力通过率。v2 报告 `storage-dev/eval-development-0909-r8/agent-evals/evidence/r8-offline-grader-diagnostic-v2.json` 绑定 raw tree hash 50a8fd58d7534ecc432ff23d9d5309dc24468c7d5186e0cc2879c277c4c1177f 与两版 grader hash。哨兵模拟 v1 只保留作历史，不作为审核依据。
 
 本次提交冻结必要的观察器修复；本单仍未取得正式完整开发包，不立即开启下一批模型采样。归档选择故障已定位为评测把页面管理选择误装成附件，已由[输入装配修复](archive/agent-archived-asset-selection.md)处理，生产权限不放宽。后续固定运行须在启动前核对真实 Git provenance 和完整初始化合同。
+
+## 待处理提案 fixture 缺口
+
+r8 discard 三次都实际调用工具且返回失败；两次最终文字为无待处理，一次无依据声称已丢弃。root 与执行者核对发现 world.PendingProposalID 从未进入真实 GoHost seed，实际图没有 pending proposal；已有持久化覆盖测试在测试体中额外创建提案，掩盖了实际 seed 缺口。不能把该三条解释为模型未调用，也不能用 terminal succeeded 覆盖失败。第三次虚假成功表述另保留为行为观察。
+
+capacity_baseline 获准修改当前开发树 `go/internal/agent/evalworld_test.go`、`eval_persisted_writes_test.go` 及必要的 `eval_observation_fixture_test.go` / `eval_user_sim_host_test.go` 回归。根据已有 world 字段物化真实 pending proposal，绑定实际 graph/product/conversation/revision；把覆盖测试里的额外造提案移入共用 seed，删除重复准备，验证真实 GoHost 路由直接 discard 成功并读回 discarded 状态。无 pending 的 world 仍保持无 pending，错误 graph/conversation 不被接受。固定 f9、原题/world/Expect、原225、生产工具/Skill都不改；无模型调用。测试用独立 pf_eval_seed_0909 前缀，避免其它Agent的Go agent测试库。
+
+共享 pending proposal seed 修复已通过主代理逐文件审核：读取既有 PendingProposalID，经现有 ProposeGraphTool 物化真实提案，维护 fixture/实际 ID 双向映射；删除 discard 覆盖测试里的额外造提案。新增真实 GoHost 跨语言回归位于 agent-service/evals/go-world.test.ts，属于本次初始化合同的必要验证。真实 PG 覆盖 pending/无 pending、错误 conversation 拒绝、正确 discard 后状态与 revision；Go fixture/持久化焦点回归、Node GoHost 1 项、TypeScript 与 diff 检查通过。证据为执行者终端结果，未创建持久化日志。
+
+本次为评测前置修复候选提交，完整开发基线仍未验收。capacity_baseline 继续只读检查其余 world 初始化字段及现有 provenance 启动检查，无模型采样；不能事后改写 r8 或重算完整能力结论。

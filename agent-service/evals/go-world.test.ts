@@ -27,6 +27,26 @@ describe.skipIf(process.env.PRODUCTFLOW_RUN_AGENT_EVALS_GOPG !== "1")("L3 Go dec
     } finally { await host.close(); }
   }, 180_000);
 
+  it("discards the pending proposal seeded by the world through the Go tool host", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "graph-editing-discard-pending-proposal")!;
+    const stub = createStubWorld(task, worlds.get(task.world)!, "conv-seeded-discard", "run-seeded-discard", {});
+    const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "full" });
+    try {
+      const before = await host.observeGraph() as { revision: number; pending_proposal: { id: string } | null };
+      expect(before.pending_proposal).toMatchObject({ id: "proposal-pending-1" });
+      await expect(stub.client.discardGraphProposal("conv-seeded-discard", null, "seeded-discard"))
+        .resolves.toMatchObject({ accepted: true, discarded: true });
+      const after = await host.observeGraph() as { revision: number; pending_proposal: { id: string } | null };
+      expect(after.revision).toBe(before.revision);
+      expect(after.pending_proposal).toBeNull();
+      const discard = stub.calls.filter((call) => call.name === "discard_workflow_proposal_v1").at(-1);
+      expect(discard?.params).toEqual({});
+      expect(discard?.outcome).toBe("succeeded");
+      await expect(host.observe()).resolves.toEqual([]);
+    } finally { await host.close(); }
+  }, 180_000);
+
   it.each([
     ["media-library-organization-sim-draft-confirm", "library_draft"],
     ["workflow-run-request-sim-confirm", "run_request"],
