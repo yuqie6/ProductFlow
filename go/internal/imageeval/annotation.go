@@ -526,7 +526,7 @@ func runAnnotationRecord(ctx context.Context, judge AnnotationClient, input Anno
 	}
 	record := result.toRecord(input)
 	if quality != nil {
-		record.Comparison = makeAnnotationComparison(record, result.QualityReferenceScores, quality.AssetID)
+		record.Comparison = makeAnnotationComparison(record, result.ComparisonBasis, result.QualityReferenceScores, quality.AssetID)
 	}
 	return record
 }
@@ -535,8 +535,29 @@ func validateAnnotationResultForInput(result AnnotationResult, input AnnotationI
 	if err := validateAnnotationShape(result); err != nil {
 		return err
 	}
-	if input.QualityReference == nil && result.QualityReferenceScores != nil {
-		return fmt.Errorf("reference annotation cannot contain quality reference scores")
+	if input.QualityReference == nil {
+		if result.QualityReferenceScores != nil {
+			return fmt.Errorf("reference annotation cannot contain quality reference scores")
+		}
+		if result.ComparisonBasis != nil {
+			return fmt.Errorf("reference annotation cannot contain comparison basis")
+		}
+	} else {
+		if result.ComparisonBasis == nil {
+			return fmt.Errorf("comparison annotation requires comparison basis")
+		}
+		switch result.ComparisonBasis.Status {
+		case AnnotationComparisonComparable:
+			if result.Status == AnnotationStatusComplete && result.QualityReferenceScores == nil {
+				return fmt.Errorf("comparable comparison requires quality reference scores")
+			}
+		case AnnotationComparisonDifferentPurpose, AnnotationComparisonInsufficientEvidence:
+			if result.QualityReferenceScores != nil {
+				return fmt.Errorf("non-comparable comparison cannot contain quality reference scores")
+			}
+		default:
+			return fmt.Errorf("comparison basis status %q is unsupported", result.ComparisonBasis.Status)
+		}
 	}
 	ids := map[string]struct{}{input.Target.AssetID: {}}
 	for _, asset := range input.IdentityReferences {
@@ -583,11 +604,47 @@ func validateAnnotationResultForInput(result AnnotationResult, input AnnotationI
 			return err
 		}
 	}
+	if input.QualityReference != nil {
+		if err := validateComparisonBasisEvidence(*result.ComparisonBasis, input.Target.AssetID, input.QualityReference.AssetID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func makeAnnotationComparison(record AnnotationRecord, referenceScores *Scores, referenceAssetID string) *AnnotationComparison {
+func validateComparisonBasisEvidence(basis AnnotationComparisonBasis, targetAssetID, referenceAssetID string) error {
+	if targetAssetID == "" || referenceAssetID == "" {
+		return fmt.Errorf("comparison basis requires target and quality reference asset ids")
+	}
+	if len(basis.EvidenceAssetIDs) != 2 {
+		return fmt.Errorf("comparison basis must cite target and quality reference assets")
+	}
+	seen := map[string]struct{}{}
+	for _, id := range basis.EvidenceAssetIDs {
+		seen[id] = struct{}{}
+	}
+	if len(seen) != 2 {
+		return fmt.Errorf("comparison basis must cite two distinct assets")
+	}
+	if _, ok := seen[targetAssetID]; !ok {
+		return fmt.Errorf("comparison basis must cite target asset %q", targetAssetID)
+	}
+	if _, ok := seen[referenceAssetID]; !ok {
+		return fmt.Errorf("comparison basis must cite quality reference asset %q", referenceAssetID)
+	}
+	return nil
+}
+
+func makeAnnotationComparison(record AnnotationRecord, basis *AnnotationComparisonBasis, referenceScores *Scores, referenceAssetID string) *AnnotationComparison {
 	comparison := unavailableAnnotationComparison(referenceAssetID)
+	if basis == nil {
+		return comparison
+	}
+	if basis.Status != AnnotationComparisonComparable {
+		comparison.Status = basis.Status
+		comparison.Verdict = ""
+		return comparison
+	}
 	if record.Status != AnnotationStatusComplete || record.Scores == nil || referenceScores == nil {
 		return comparison
 	}
@@ -771,7 +828,7 @@ func annotationCaseStatus(records []AnnotationRecord) string {
 		} else {
 			allComplete = false
 		}
-		if record.Comparison != nil && record.Comparison.Verdict == "indeterminate" {
+		if record.Comparison != nil && (record.Comparison.Status != AnnotationComparisonComparable || record.Comparison.Verdict == "indeterminate") {
 			anyIndeterminate = true
 		}
 	}

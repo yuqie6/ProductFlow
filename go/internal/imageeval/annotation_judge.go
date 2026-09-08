@@ -12,18 +12,18 @@ import (
 // AnnotationSystemPrompt is versioned separately from the historical slot
 // judge prompt. It asks for evidence-bearing observations instead of a gate.
 const AnnotationSystemPrompt = `你是分类电商图片质量评审员。只能依据当前请求中的图片和文字标准作判断，不得补写图片中看不见的品牌、参数、材质、功能或商品事实。
-身份参考图仅用于核对商品身份，不能充当质量评分对照。reference 模式只给待标注图 scores，quality_reference_scores 必须为 null；comparison 模式仅对明确标注的质量对照图填写 quality_reference_scores。
+身份参考图仅用于核对商品身份，不能充当质量评分对照。reference 模式只给待标注图 scores，quality_reference_scores 必须为 null，也不要输出 comparison_basis；comparison 模式必须提供 comparison_basis，并且仅对明确标注的质量对照图填写 quality_reference_scores。
 请按给定类目和图种职责，评估待标注图。先检查身份一致性，再判断图种职责、商业可用性和视觉完成度。quality_reference_scores 只在请求中存在质量对照图时填写，表示你对该质量对照图的同一套评分。
 适用性与证据规则：
 1. 类目展示重点是可检查项的集合。根据图种和本图可观察的展示目的，选择适用项；只把妨碍本图目的的缺失写成缺点。局部结构图可以聚焦一个部件，无需同时呈现容量、完整控制面板、包装、品牌文字或整件商品；这些信息适合在其他图位出现。没有展示不等于画错，无法核实的事实放入 uncertainties。
 2. 身份判断区分品牌、具体型号、系列名、营销名和销售变体。不同层级的名称可以同时成立；只有可见结构、同一事实字段或明确变体出现可证明的不兼容，才判 mismatch。仅有不同字符串或缺少身份外观时，说明证据不足并保留 unknown；不要补写两者的关联，也不要因画面好看而忽略明确错误。
-3. 比较前在观察中说明两图各自展示目的与可比较部分。同属一个图种也可能呈现不同部件或信息；内部结构说明与外部局部摄影的差异本身不是缺陷。四维分数依据各自明确目的和共同适用要求，缺少足够共同依据时将 quality_reference_scores 留为 null，并在 uncertainties 说明无法形成可靠对照。
+3. 比较前必须在 comparison_basis 中说明两图各自展示目的、共同适用要求、判定理由和两张对应图片的 asset_id。status 只能是 comparable、different_purpose 或 insufficient_evidence。同属一个图种也可能呈现不同部件或信息；内部结构说明与外部局部摄影的差异本身不是缺陷。四维分数依据各自明确目的和共同适用要求；只有 status=comparable 且有足够共同依据时填写 quality_reference_scores，否则保持 null，并在 uncertainties 说明无法形成可靠对照。共同要求需覆盖两图主要展示职责；不能只凭清晰、好看等通用审美进行整体胜负，但营销文字或背景差异本身也不能取消相同主体主视觉的共同依据。
 4. 每条优缺点说明可见区域或具体文字、可观察现象以及它对本图目的的影响。裁切、遮挡、密度属于现象，是否影响关键展示另作判断；主观偏好和待核实推测不得升级为事实错误。
 四维量表统一使用以下锚点：fidelity 评可见身份/结构的一致性，fit 评图种与本图目的完成度，utility 评该图所需信息的准确清楚与实际可用性，aesthetics 评构图、层次与视觉完成度。1=明显错误或无法使用，2=主要目标受阻，3=目标部分完成且存在实质缺陷，4=目标清楚完成但有局部问题，5=适用目标完成且未见实质缺陷。缺乏证据时说明不确定，不用偏好或其他图位的职责制造一分差距。
 status 只能是 complete 或 unknown。complete 必须填写四个 1 到 5 的 scores；unknown 不得用 0 代替无法判断，并应在 uncertainties 说明原因。每条 identity claim、strength、weakness、critical_error 和 recommendation 都必须引用请求中真实存在的 evidence_asset_ids；certainty 只能是 observed、likely 或 unknown；severity 只能是 info、minor、major 或 critical。
 critical_error 用于严重的商品身份或事实错误；不要因为平均分高而省略它。recommendation 必须写出需要后续验证的 validation。没有质量对照图时不要填写或猜测对照分数。
 只输出一个 JSON 对象，不要 Markdown、解释文字或额外字段：
-{"status":"complete|unknown","scores":{"fidelity":1,"fit":1,"utility":1,"aesthetics":1},"quality_reference_scores":null或同样对象,"identity":{"status":"match|mismatch|unknown","claims":[{"text":"…","evidence_asset_ids":["…"],"severity":"info|minor|major|critical","certainty":"observed|likely|unknown"}]},"strengths":[{"text":"…","evidence_asset_ids":["…"],"severity":"info|minor|major|critical","certainty":"observed|likely|unknown"}],"weaknesses":[{"text":"…","evidence_asset_ids":["…"],"severity":"info|minor|major|critical","certainty":"observed|likely|unknown"}],"uncertainties":[{"text":"…","reason":"…","next_check":"…","evidence_asset_ids":["…"]}],"recommendations":[{"text":"…","rationale":"…","evidence_asset_ids":["…"],"validation":"…"}],"critical_errors":[{"text":"…","evidence_asset_ids":["…"],"severity":"critical","certainty":"observed|likely|unknown"}]}`
+{"status":"complete|unknown","scores":{"fidelity":1,"fit":1,"utility":1,"aesthetics":1},"quality_reference_scores":null或同样对象,"comparison_basis":{"status":"comparable|different_purpose|insufficient_evidence","target_purpose":"…","reference_purpose":"…","shared_requirements":["…"],"reason":"…","evidence_asset_ids":["target_asset_id","quality_reference_asset_id"]},"identity":{"status":"match|mismatch|unknown","claims":[{"text":"…","evidence_asset_ids":["…"],"severity":"info|minor|major|critical","certainty":"observed|likely|unknown"}]},"strengths":[{"text":"…","evidence_asset_ids":["…"],"severity":"info|minor|major|critical","certainty":"observed|likely|unknown"}],"weaknesses":[{"text":"…","evidence_asset_ids":["…"],"severity":"info|minor|major|critical","certainty":"observed|likely|unknown"}],"uncertainties":[{"text":"…","reason":"…","next_check":"…","evidence_asset_ids":["…"]}],"recommendations":[{"text":"…","rationale":"…","evidence_asset_ids":["…"],"validation":"…"}],"critical_errors":[{"text":"…","evidence_asset_ids":["…"],"severity":"critical","certainty":"observed|likely|unknown"}]}`
 
 type annotationEndpointError struct {
 	endpoint string
@@ -110,9 +110,9 @@ func (v VisionJudge) Annotate(ctx context.Context, in AnnotationInput) (Annotati
 		"type": "input_text",
 		"text": fmt.Sprintf("类目：%s\n商品标题：%s\n图种：%s\nvariant：%s\n%s\n请求模式：%s", in.Category, in.Title, in.ImageType, firstNonEmptyString(in.Variant, "reference"), firstNonEmptyString(in.Criteria, AnnotationCriteria(in.Category, in.ImageType)), annotationRequestMode(in)),
 	}}
-	roleContract := fmt.Sprintf("评分目标 asset_id=%s；本请求没有质量对照图，quality_reference_scores 必须为 null。身份参考图仅核对身份。", in.Target.AssetID)
+	roleContract := fmt.Sprintf("评分目标 asset_id=%s；本请求没有质量对照图，quality_reference_scores 必须为 null，comparison_basis 不得输出。身份参考图仅核对身份。", in.Target.AssetID)
 	if in.QualityReference != nil {
-		roleContract = fmt.Sprintf("评分目标 asset_id=%s；唯一质量对照 asset_id=%s。quality_reference_scores 对应唯一质量对照，身份参考图仅核对身份。", in.Target.AssetID, in.QualityReference.AssetID)
+		roleContract = fmt.Sprintf("评分目标 asset_id=%s；唯一质量对照 asset_id=%s。必须输出 comparison_basis 并引用这两个 asset_id；只有 comparison_basis.status=comparable 时填写 quality_reference_scores，否则必须为 null。身份参考图仅核对身份。", in.Target.AssetID, in.QualityReference.AssetID)
 	}
 	parts = append(parts, map[string]any{"type": "input_text", "text": roleContract})
 	attach := func(label string, asset AnnotationAsset) error {
@@ -279,6 +279,21 @@ func validateAnnotationShape(result AnnotationResult) error {
 			return fmt.Errorf("quality reference scores: %w", err)
 		}
 	}
+	if result.ComparisonBasis != nil {
+		if err := validateComparisonBasisShape(*result.ComparisonBasis); err != nil {
+			return err
+		}
+		switch result.ComparisonBasis.Status {
+		case AnnotationComparisonComparable:
+			if result.Status == AnnotationStatusComplete && result.QualityReferenceScores == nil {
+				return fmt.Errorf("comparable comparison requires quality reference scores")
+			}
+		case AnnotationComparisonDifferentPurpose, AnnotationComparisonInsufficientEvidence:
+			if result.QualityReferenceScores != nil {
+				return fmt.Errorf("non-comparable comparison cannot contain quality reference scores")
+			}
+		}
+	}
 	switch result.Identity.Status {
 	case "match", "mismatch", "unknown":
 	default:
@@ -327,6 +342,36 @@ func validateAnnotationShape(result AnnotationResult) error {
 		}
 	}
 	return nil
+}
+
+func validateComparisonBasisShape(basis AnnotationComparisonBasis) error {
+	switch basis.Status {
+	case AnnotationComparisonComparable, AnnotationComparisonDifferentPurpose, AnnotationComparisonInsufficientEvidence:
+	default:
+		return fmt.Errorf("comparison basis status %q is unsupported", basis.Status)
+	}
+	if strings.TrimSpace(basis.TargetPurpose) == "" {
+		return fmt.Errorf("comparison basis target_purpose is required")
+	}
+	if strings.TrimSpace(basis.ReferencePurpose) == "" {
+		return fmt.Errorf("comparison basis reference_purpose is required")
+	}
+	if basis.SharedRequirements == nil {
+		return fmt.Errorf("comparison basis shared_requirements is required")
+	}
+	for _, requirement := range basis.SharedRequirements {
+		requirement = strings.TrimSpace(requirement)
+		if requirement == "" {
+			return fmt.Errorf("comparison basis shared_requirements contains empty item")
+		}
+	}
+	if basis.Status == AnnotationComparisonComparable && len(basis.SharedRequirements) == 0 {
+		return fmt.Errorf("comparable comparison basis requires shared_requirements")
+	}
+	if strings.TrimSpace(basis.Reason) == "" {
+		return fmt.Errorf("comparison basis reason is required")
+	}
+	return validateEvidenceIDs(basis.EvidenceAssetIDs, "comparison basis")
 }
 
 func validateObservation(item AnnotationObservation, label string) error {

@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [category-annotation-comparison-basis.md](category-annotation-comparison-basis.md) | 完成 | v2显式展示目的与可比依据；27/27有效，非可比不计算分差，保留判读波动 |
 | [eval-intake-graph-observation.md](eval-intake-graph-observation.md) | 完成 | 创建场景跨工具真实Go观察、多工作流种子与可逆身份；12项跨语言回归通过 |
 | [saas-merchant-dashboard.md](saas-merchant-dashboard.md) | 完成 | 自有商品与四来源工作概览、继续业务和ImageChat身份隔离；真实API/浏览器验收 |
 | [saas-preferences-settings.md](saas-preferences-settings.md) | 完成 | 本人偏好跨会话保存、自有商家改名、账号切换及停用期间个人安全可用；真实 API/浏览器验证 |

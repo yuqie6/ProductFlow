@@ -390,7 +390,7 @@ func runAnnotate(args []string) int {
 			case imageeval.AnnotationStatusUncomparable:
 				assessmentUncomparable++
 			}
-			if record.Comparison != nil && record.Comparison.Status == imageeval.AnnotationComparisonUncomparable {
+			if record.Comparison != nil && record.Comparison.Status != imageeval.AnnotationComparisonComparable {
 				comparisonUncomparable++
 			}
 		}

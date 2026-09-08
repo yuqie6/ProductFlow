@@ -237,3 +237,5 @@ PRODUCTFLOW_RUN_IMAGE_EVALS=1 just image-evals-run 2 1 /absolute/path/product-in
 同日 [评委适用性校准](tasks/archive/category-annotation-rubric.md) 明确展示目的、名称层级与四维量表，原16图位×3有效47/48（1项invalid_output未补跑），候选比较一致6/8；跨商品负控3/3判mismatch/critical。家电detail均保留indeterminate，但是否填写对照分数仍波动，部分不适用检查项仍误入缺点。该局部修正未证明标注准确率或生成质量提升；继续完善图位目的与无效响应诊断，不用当前胜负自动修改生成链。
 
 分类标注的无效文本诊断已补充：保留 JSON/结构与输入证据校验原因和模型原文，失败仍排除有效评分与比较。HTTP 错误体及凭据不进入报告，旧47/48记录中的丢失原文无法追补。本次由主代理直接实现并自审；`TestAnnotationRejectedOutputKeepsDiagnostic` 覆盖语法、缺分数、错误证据ID、正常结果和上游错误，imageeval 全包通过（本机证据 `.debug/annotation-diagnostics-20260908/tests.log`）。未重新调用模型或改变评委提示词，不构成质量提升结论。
+
+2026-09-08：[显式可比依据](tasks/archive/category-annotation-comparison-basis.md) 升级标注输出/合同v2，比较前记录两图展示目的、共同要求、理由和对应资产证据。不同目的/证据不足保留单图标注，不产生对照分差或胜负；身份未知/严重错误仍阻止胜负。原8候选×3加3次错商品负控共27/27有效，可比判定一致7/8、身份一致7/8、胜负一致5/8，负控3/3。家电detail不再产生不合适的分差，主图仍可比；3c场景判定和部分家电胜负仍波动，非必需信息误入缺点也未消除。旧合同胜负一致6/8，不能将新合同字段的稳定性写成整体质量提升；后续生成改进须依赖具体可核实问题。

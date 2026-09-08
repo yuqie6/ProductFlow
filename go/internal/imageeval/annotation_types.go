@@ -9,17 +9,19 @@ import (
 )
 
 const (
-	AnnotationSelectionSchemaVersion = "image-annotation-selection.v1"
-	AnnotationSchemaVersion          = "image-annotation.v1"
-	AnnotationContractVersion        = "category-image-annotation.v1"
-	AnnotationModeReference          = "reference"
-	AnnotationModeComparison         = "comparison"
-	AnnotationStatusComplete         = "complete"
-	AnnotationStatusUnknown          = "unknown"
-	AnnotationStatusFailed           = "failed"
-	AnnotationStatusUncomparable     = "uncomparable"
-	AnnotationComparisonComparable   = "comparable"
-	AnnotationComparisonUncomparable = "uncomparable"
+	AnnotationSelectionSchemaVersion         = "image-annotation-selection.v1"
+	AnnotationSchemaVersion                  = "image-annotation.v2"
+	AnnotationContractVersion                = "category-image-annotation.v2"
+	AnnotationModeReference                  = "reference"
+	AnnotationModeComparison                 = "comparison"
+	AnnotationStatusComplete                 = "complete"
+	AnnotationStatusUnknown                  = "unknown"
+	AnnotationStatusFailed                   = "failed"
+	AnnotationStatusUncomparable             = "uncomparable"
+	AnnotationComparisonComparable           = "comparable"
+	AnnotationComparisonDifferentPurpose     = "different_purpose"
+	AnnotationComparisonInsufficientEvidence = "insufficient_evidence"
+	AnnotationComparisonUncomparable         = "uncomparable"
 )
 
 // AnnotationSelection is an immutable input snapshot for one annotation run.
@@ -105,6 +107,7 @@ type AnnotationResult struct {
 	Status                 string                     `json:"status"`
 	Scores                 *Scores                    `json:"scores"`
 	QualityReferenceScores *Scores                    `json:"quality_reference_scores,omitempty"`
+	ComparisonBasis        *AnnotationComparisonBasis `json:"comparison_basis,omitempty"`
 	Identity               AnnotationIdentity         `json:"identity"`
 	Strengths              []AnnotationObservation    `json:"strengths"`
 	Weaknesses             []AnnotationObservation    `json:"weaknesses"`
@@ -158,6 +161,7 @@ type AnnotationRecord struct {
 	CriticalErrorCount int                        `json:"critical_error_count"`
 	FailureCode        string                     `json:"failure_code,omitempty"`
 	Diagnostic         *AnnotationDiagnostic      `json:"diagnostic,omitempty"`
+	ComparisonBasis    *AnnotationComparisonBasis `json:"comparison_basis,omitempty"`
 	Comparison         *AnnotationComparison      `json:"comparison,omitempty"`
 }
 
@@ -167,6 +171,18 @@ type AnnotationDiagnostic struct {
 	Stage      string `json:"stage"`
 	Reason     string `json:"reason"`
 	OutputText string `json:"output_text,omitempty"`
+}
+
+// AnnotationComparisonBasis records the model's evidence for treating a
+// candidate and its quality reference as comparable. The runner validates the
+// structure here and binds the cited assets to the current request.
+type AnnotationComparisonBasis struct {
+	Status             string   `json:"status"`
+	TargetPurpose      string   `json:"target_purpose"`
+	ReferencePurpose   string   `json:"reference_purpose"`
+	SharedRequirements []string `json:"shared_requirements"`
+	Reason             string   `json:"reason"`
+	EvidenceAssetIDs   []string `json:"evidence_asset_ids"`
 }
 
 type AnnotationComparison struct {
@@ -296,6 +312,7 @@ func (r AnnotationResult) toRecord(in AnnotationInput) AnnotationRecord {
 		Recommendations:    r.Recommendations,
 		CriticalErrors:     r.CriticalErrors,
 		CriticalErrorCount: r.criticalErrorCount(),
+		ComparisonBasis:    r.ComparisonBasis,
 	}
 }
 

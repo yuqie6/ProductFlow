@@ -100,15 +100,35 @@ func validAnnotationResult(in AnnotationInput) AnnotationResult {
 	}
 	if in.QualityReference != nil {
 		result.QualityReferenceScores = &Scores{Fidelity: 3, Fit: 3, Utility: 3, Aesthetics: 3}
+		result.ComparisonBasis = &AnnotationComparisonBasis{
+			Status:             AnnotationComparisonComparable,
+			TargetPurpose:      "清楚展示候选商品主体与细节",
+			ReferencePurpose:   "清楚展示真实商品主体与细节",
+			SharedRequirements: []string{"主体身份和关键结构清楚可核验"},
+			Reason:             "两图承担相同的商品展示职责，具备共同评分依据",
+			EvidenceAssetIDs:   []string{in.Target.AssetID, in.QualityReference.AssetID},
+		}
 		result.Strengths[0].EvidenceAssetIDs = []string{in.Target.AssetID, in.QualityReference.AssetID}
 	}
 	return result
+}
+
+func comparisonAnnotationInput() AnnotationInput {
+	quality := AnnotationAsset{AssetID: "quality", ImageType: "detail", Role: "quality_reference"}
+	return AnnotationInput{
+		Category: "home", ImageType: "detail", Variant: "workbench",
+		Target:           AnnotationAsset{AssetID: "target", ImageType: "detail", Variant: "workbench", Role: "evaluated_result"},
+		QualityReference: &quality,
+	}
 }
 
 func TestPrepareAnnotationSelectionWritesExplicitSHAAndDoesNotOverwrite(t *testing.T) {
 	selection, path, _ := annotationSelectionFixture(t)
 	if selection.Mode != AnnotationModeReference || selection.N != 1 || len(selection.Cases) != 1 {
 		t.Fatalf("selection metadata: %+v", selection)
+	}
+	if AnnotationSelectionSchemaVersion != "image-annotation-selection.v1" || AnnotationContractVersion != "category-image-annotation.v2" || selection.SchemaVersion != AnnotationSelectionSchemaVersion || selection.ContractVersion != AnnotationContractVersion {
+		t.Fatalf("selection contract was not kept at v1 shape with v2 contract: %+v", selection)
 	}
 	item := selection.Cases[0]
 	if len(item.IdentityReferences) != 1 || len(item.QualityReferences) != 2 || len(item.Candidates) != 0 {
@@ -307,6 +327,112 @@ func TestRunAnnotationsComparisonRequiresExplicitCandidatesAndShowsFourDeltas(t 
 		if group.Comparable != 1 || group.MeanDelta == nil || group.MeanReferenceScores == nil {
 			t.Fatalf("group comparison aggregation: %+v", group)
 		}
+	}
+}
+
+func TestComparisonBasisControlsDeltaAndVerdict(t *testing.T) {
+	in := comparisonAnnotationInput()
+	for _, status := range []string{AnnotationComparisonDifferentPurpose, AnnotationComparisonInsufficientEvidence} {
+		t.Run(status, func(t *testing.T) {
+			result := validAnnotationResult(in)
+			result.ComparisonBasis.Status = status
+			result.ComparisonBasis.SharedRequirements = []string{}
+			result.QualityReferenceScores = nil
+			record := runAnnotationRecord(context.Background(), AnnotationClientFunc(func(context.Context, AnnotationInput) (AnnotationResult, error) {
+				return result, nil
+			}), in, in.QualityReference)
+			if record.Status != AnnotationStatusComplete || record.Scores == nil || record.ComparisonBasis == nil {
+				t.Fatalf("non-comparable assessment lost target evidence: %+v", record)
+			}
+			if record.Comparison == nil || record.Comparison.Status != status || record.Comparison.QualityReferenceScores != nil || record.Comparison.Delta != nil || record.Comparison.Verdict != "" {
+				t.Fatalf("non-comparable comparison produced a result: %+v", record.Comparison)
+			}
+			group := AggregateAnnotationGroups([]AnnotationCaseReport{{Category: in.Category, Records: []AnnotationRecord{record}}})[0]
+			if group.Comparable != 0 || group.Uncomparable != 1 || group.MeanReferenceScores != nil || group.MeanDelta != nil || len(group.VerdictCounts) != 0 || group.Status != "partial" {
+				t.Fatalf("non-comparable evidence entered aggregate comparison: %+v", group)
+			}
+			if got := annotationCaseStatus([]AnnotationRecord{record}); got != "partial" {
+				t.Fatalf("non-comparable case was marked complete: %s", got)
+			}
+			markdown := RenderAnnotationMarkdown(AnnotationReport{Cases: []AnnotationCaseReport{{Category: in.Category, Records: []AnnotationRecord{record}}}})
+			if !strings.Contains(markdown, "Comparison basis:") || !strings.Contains(markdown, "no reference scores, delta, or verdict") || !strings.Contains(markdown, record.ComparisonBasis.Reason) {
+				t.Fatalf("comparison basis was not rendered without score claims: %s", markdown)
+			}
+		})
+	}
+	unknown := validAnnotationResult(in)
+	unknown.Status = AnnotationStatusUnknown
+	unknown.Scores = nil
+	unknown.QualityReferenceScores = nil
+	unknown.Uncertainties = []AnnotationUncertainty{{Text: "无法判断", Reason: "目标图证据不足", NextCheck: "人工复核", EvidenceAssetIDs: []string{"target"}}}
+	record := runAnnotationRecord(context.Background(), AnnotationClientFunc(func(context.Context, AnnotationInput) (AnnotationResult, error) {
+		return unknown, nil
+	}), in, in.QualityReference)
+	if record.Status != AnnotationStatusUnknown || record.Comparison == nil || record.Comparison.Status != AnnotationComparisonUncomparable || record.Comparison.Delta != nil || record.Comparison.Verdict != "indeterminate" {
+		t.Fatalf("unknown assessment became comparable: record_status=%s comparison=%+v", record.Status, record.Comparison)
+	}
+	group := AggregateAnnotationGroups([]AnnotationCaseReport{{Category: in.Category, Records: []AnnotationRecord{record}}})[0]
+	if group.Comparable != 0 || group.Uncomparable != 1 || group.MeanScores != nil || group.MeanDelta != nil || group.Status != "partial" {
+		t.Fatalf("unknown comparison aggregation: %+v", group)
+	}
+}
+
+func TestComparisonBasisValidationRejectsMissingContradictoryAndWrongEvidence(t *testing.T) {
+	in := comparisonAnnotationInput()
+	cases := []struct {
+		name   string
+		mutate func(*AnnotationResult)
+		want   string
+	}{
+		{name: "missing", mutate: func(result *AnnotationResult) { result.ComparisonBasis = nil }, want: "requires comparison basis"},
+		{name: "comparable without reference scores", mutate: func(result *AnnotationResult) { result.QualityReferenceScores = nil }, want: "requires quality reference scores"},
+		{name: "different purpose with reference scores", mutate: func(result *AnnotationResult) {
+			result.ComparisonBasis.Status = AnnotationComparisonDifferentPurpose
+		}, want: "cannot contain quality reference scores"},
+		{name: "wrong evidence", mutate: func(result *AnnotationResult) {
+			result.ComparisonBasis.EvidenceAssetIDs = []string{"target", "other"}
+		}, want: "quality reference asset"},
+		{name: "empty shared requirement", mutate: func(result *AnnotationResult) {
+			result.ComparisonBasis.SharedRequirements = nil
+		}, want: "shared_requirements"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := validAnnotationResult(in)
+			tc.mutate(&result)
+			record := runAnnotationRecord(context.Background(), AnnotationClientFunc(func(context.Context, AnnotationInput) (AnnotationResult, error) {
+				return result, nil
+			}), in, in.QualityReference)
+			if record.Status != AnnotationStatusFailed || record.FailureCode != "invalid_output" || record.Scores != nil || record.ComparisonBasis != nil {
+				t.Fatalf("invalid output was persisted as usable evidence: %+v", record)
+			}
+			if record.Diagnostic == nil || !strings.Contains(record.Diagnostic.Reason, tc.want) {
+				t.Fatalf("missing validation diagnostic: %+v", record.Diagnostic)
+			}
+			if record.Comparison == nil || record.Comparison.Status != AnnotationComparisonUncomparable || record.Comparison.Delta != nil || record.Comparison.Verdict != "indeterminate" {
+				t.Fatalf("invalid comparison metadata: %+v", record.Comparison)
+			}
+		})
+	}
+
+	reference := validAnnotationResult(AnnotationInput{Target: in.Target})
+	reference.ComparisonBasis = &AnnotationComparisonBasis{
+		Status:             AnnotationComparisonDifferentPurpose,
+		TargetPurpose:      "候选展示",
+		ReferencePurpose:   "真实展示",
+		SharedRequirements: []string{},
+		Reason:             "有共同依据",
+		EvidenceAssetIDs:   []string{"target", "quality"},
+	}
+	record := runAnnotationRecord(context.Background(), AnnotationClientFunc(func(context.Context, AnnotationInput) (AnnotationResult, error) {
+		return reference, nil
+	}), AnnotationInput{Target: in.Target}, in.QualityReference)
+	if record.Status != AnnotationStatusFailed || record.FailureCode != "invalid_output" || record.Diagnostic == nil || !strings.Contains(record.Diagnostic.Reason, "reference annotation") {
+		reason := ""
+		if record.Diagnostic != nil {
+			reason = record.Diagnostic.Reason
+		}
+		t.Fatalf("reference comparison basis was accepted: status=%s code=%s reason=%s", record.Status, record.FailureCode, reason)
 	}
 }
 

@@ -84,14 +84,36 @@ func RenderAnnotationMarkdown(report AnnotationReport) string {
 				}
 				out.WriteString("\n")
 			}
+			if record.ComparisonBasis != nil {
+				basis := record.ComparisonBasis
+				requirements := make([]string, 0, len(basis.SharedRequirements))
+				for _, requirement := range basis.SharedRequirements {
+					requirements = append(requirements, markdownText(requirement))
+				}
+				fmt.Fprintf(&out, "Comparison basis: `%s`; target purpose: %s; reference purpose: %s; shared requirements: %s; reason: %s; evidence: %s\n\n",
+					markdownText(basis.Status), markdownText(basis.TargetPurpose), markdownText(basis.ReferencePurpose),
+					formatList(requirements), markdownText(basis.Reason), formatEvidence(basis.EvidenceAssetIDs))
+			}
 			if record.Comparison != nil {
-				fmt.Fprintf(&out, "Comparison: `%s` against `%s`; reference scores: %s; delta: %s; verdict: **%s**\n\n",
-					record.Comparison.Status, markdownText(record.Comparison.QualityReferenceAssetID),
-					formatScores(record.Comparison.QualityReferenceScores), formatDelta(record.Comparison.Delta), markdownText(record.Comparison.Verdict))
+				if record.Comparison.Status == AnnotationComparisonDifferentPurpose || record.Comparison.Status == AnnotationComparisonInsufficientEvidence {
+					fmt.Fprintf(&out, "Comparison: `%s` against `%s`; no reference scores, delta, or verdict.\n\n",
+						record.Comparison.Status, markdownText(record.Comparison.QualityReferenceAssetID))
+				} else {
+					fmt.Fprintf(&out, "Comparison: `%s` against `%s`; reference scores: %s; delta: %s; verdict: **%s**\n\n",
+						record.Comparison.Status, markdownText(record.Comparison.QualityReferenceAssetID),
+						formatScores(record.Comparison.QualityReferenceScores), formatDelta(record.Comparison.Delta), markdownText(record.Comparison.Verdict))
+				}
 			}
 		}
 	}
 	return out.String()
+}
+
+func formatList(items []string) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	return "`" + strings.Join(items, "`, `") + "`"
 }
 
 func flattenCaseAssets(item AnnotationCaseReport) []AnnotationAsset {
