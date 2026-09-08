@@ -2,7 +2,7 @@
 
 ## 1. 系统边界
 
-ProductFlow 当前开发基线从一个管理员和一个 bootstrap 开发商家开始，公开注册可创建普通 User 及其自有 Merchant；普通账号直接使用自有商家，管理员使用显式目标商家授权；本人资料、密码恢复和会话管理已实现，管理员跨商商品页面与操作记录已实现，个人偏好持久化仍待交付。系统由七个运行单元组成：
+ProductFlow 当前开发基线从一个管理员和一个 bootstrap 开发商家开始，公开注册可创建普通 User 及其自有 Merchant；普通账号直接使用自有商家，管理员使用显式目标商家授权；本人资料、密码恢复和会话管理已实现，管理员跨商商品页面与操作记录已实现，个人偏好已按账号持久化。系统由七个运行单元组成：
 
 1. React/Vite Web。
 2. Go 业务 API。
@@ -25,6 +25,8 @@ ProductFlow 当前开发基线从一个管理员和一个 bootstrap 开发商家
 本人账户与恢复由 `go/internal/auth` 统一处理：GET `/api/account` 返回本人资料和自有商家，PATCH只更新显示名；`/api/account/sessions` 有界游标分页并按归属撤销。登录、改密和恢复统一先锁User；改密/恢复在同事务消费旧恢复码并撤销全部会话。独立 `password_recovery_challenges` 存储验证码hash、失败次数、有效期和消费状态；错误尝试提交计数。恢复request统一202，重复请求ID行为保持一致，ID由SESSION_SECRET派生且无固定密钥回退；confirm的无效凭据统一400 `invalid_recovery_code`。发送失败使用有界独立上下文按本次code_hash失效，不误伤后来重发的码。退出仅在会话撤销成功后清cookie；失败可重试。新表随 `productflow-migrate` 创建。真实SMTP/IMAP和隔离API/浏览器验收见 [账户交付](audits/tasks/archive/saas-account-team.md)。
 
 账号的直接归属保存在 `users.merchant_id`；普通账号必须有值，普通账号之间唯一。Operator 是独立权限，商家归属可以为空；其开发商家不授予跨商操作权。会话返回 `merchant:{id,name,status}|null`，不再返回成员数组。浏览器请求不读取商家切换头；交互式商品入口必须有已认证账号及自有商家。管理员商品管理接口显式加载路径目标商家并复用既有商品用例，不挂载生成接口。后台任务继续从持久化对象固定商家。迁移在单个事务中预检旧归属，歧义时失败；删除旧成员表和默认首商家填充触发器，无归属业务数据不得自动猜测。
+
+账号偏好保存在 `users.locale/theme`，创建与迁移提供默认值，数据库约束与账户用例验证枚举。已认证 session 与本人账户投影返回偏好；PATCH `/api/account/preferences` 只改提交字段，PATCH `/api/account/merchant` 在 User→Merchant 锁下更新自有名称并检查停用状态。前端 PreferencesProvider 统一保存，账号数据不写匿名 localStorage；账户迟到回调核对用户与身份世代。个人账户路由不受商家写入停用门影响，商家改名仍由用例拒绝。
 
 管理员页面沿显式目标商家路由查询商品、资料、图库和删除。`go/internal/product` 将图库与封面投影为授权 Ops 下载地址，普通媒体路由继续核对自有商家。任务记录读取 Agent Task、图运行、连续生图和局部编辑的原状态，不暴露供应商原始载荷。商品修改在处理前写入 `operator_product_actions` 尝试记录，资料/删除原事务同时确认成功；公开4xx拒绝单独记录，无法确认的结果保留 unknown。删除保留操作人与商品名称快照，文件清理仍在商品事务提交后执行。额度页面读取 `merchant_quota_events`，调账重试核对数量、原因和操作人。新表与路由生效需要执行迁移并重启 API。
 

@@ -11,6 +11,8 @@ type Users struct {
 	IsOperator   bool      `gorm:"column:is_operator;type:boolean;not null;default:false"`
 	MerchantID   *string   `gorm:"column:merchant_id;type:varchar(36)"`
 	Status       string    `gorm:"column:status;type:varchar(32);not null"`
+	Locale       string    `gorm:"column:locale;type:varchar(16);not null;default:'zh-CN'"`
+	Theme        string    `gorm:"column:theme;type:varchar(16);not null;default:'system'"`
 	CreatedAt    time.Time `gorm:"column:created_at;type:timestamptz;not null"`
 	UpdatedAt    time.Time `gorm:"column:updated_at;type:timestamptz;not null"`
 }

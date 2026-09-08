@@ -23,7 +23,7 @@ for (const locale of LOCALES) for (const width of [390, 1440]) for (const theme 
     await baseRoutes(page);
     const operator = theme === "dark";
     let authenticated = true;
-    let profile = { user: { ...user, is_operator: operator }, merchant: operator ? null : merchant };
+    let profile = { preferences: { locale, theme }, user: { ...user, is_operator: operator }, merchant: operator ? null : merchant };
     let saves = 0;
     let revoked = false;
     let revokes = 0;
@@ -54,10 +54,10 @@ for (const locale of LOCALES) for (const width of [390, 1440]) for (const theme 
     await expect(page.getByLabel(t("login.email"), { exact: true })).toHaveAttribute("readonly", "");
     await expect(page.getByText(t("account.operator"), { exact: true })).toHaveCount(operator ? 1 : 0);
     await page.getByLabel(t("account.displayName"), { exact: true }).fill("Updated name");
-    await page.getByRole("button", { name: t("account.save"), exact: true }).click();
+    await page.locator("form").filter({ has: page.getByLabel(t("account.displayName"), { exact: true }) }).getByRole("button", { name: t("account.save"), exact: true }).click();
     await expect(page.getByRole("alert")).toHaveText("Save unavailable");
     await expect(page.getByLabel(t("account.displayName"), { exact: true })).toHaveValue("Updated name");
-    await page.getByRole("button", { name: t("account.save"), exact: true }).click();
+    await page.locator("form").filter({ has: page.getByLabel(t("account.displayName"), { exact: true }) }).getByRole("button", { name: t("account.save"), exact: true }).click();
     await expect(page.getByRole("status")).toContainText(t("account.saved"));
     await checkWidth(page, width);
     await page.screenshot({ path: testInfo.outputPath("account.png"), fullPage: true });
@@ -127,8 +127,8 @@ test("password validation, rejected current password, and successful sign-out", 
   await baseRoutes(page);
   let authenticated = true;
   let changes = 0;
-  await page.route("**/api/auth/session", (route) => route.fulfill({ json: authenticated ? { authenticated, access_required: true, user, merchant } : { authenticated, access_required: true } }));
-  await page.route("**/api/account", (route) => route.fulfill({ json: { user, merchant } }));
+  await page.route("**/api/auth/session", (route) => route.fulfill({ json: authenticated ? { authenticated, preferences: { locale: "zh-CN", theme: "system" }, access_required: true, user, merchant } : { authenticated, access_required: true } }));
+  await page.route("**/api/account", (route) => route.fulfill({ json: { user, merchant, preferences: { locale: "zh-CN", theme: "system" } } }));
   await page.route("**/api/account/sessions?*", (route) => route.fulfill({ json: { items: [current], next_cursor: null } }));
   await page.route("**/api/account/password", (route) => {
     changes++;
@@ -153,11 +153,11 @@ test("password validation, rejected current password, and successful sign-out", 
 
 test("recoverable loading and read errors, empty sessions, keyboard focus and expired code", async ({ page }) => {
   await baseRoutes(page);
-  await page.route("**/api/auth/session", (route) => route.fulfill({ json: { authenticated: true, access_required: true, user, merchant } }));
+  await page.route("**/api/auth/session", (route) => route.fulfill({ json: { authenticated: true, preferences: { locale: "zh-CN", theme: "system" }, access_required: true, user, merchant } }));
   let release: () => void = () => {};
   const wait = new Promise<void>((resolve) => { release = resolve; });
   let reads = 0;
-  await page.route("**/api/account", async (route) => { reads++; if (reads === 1) { await wait; return route.fulfill({ status: 503, json: { detail: "Profile unavailable" } }); } return route.fulfill({ json: { user, merchant } }); });
+  await page.route("**/api/account", async (route) => { reads++; if (reads === 1) { await wait; return route.fulfill({ status: 503, json: { detail: "Profile unavailable" } }); } return route.fulfill({ json: { user, merchant, preferences: { locale: "zh-CN", theme: "system" } } }); });
   let sessionReads = 0;
   await page.route("**/api/account/sessions?*", (route) => { sessionReads++; return route.fulfill(sessionReads === 1 ? { status: 503, json: { detail: "Sessions unavailable" } } : { json: { items: [], next_cursor: null } }); });
   await page.goto("/account");
@@ -198,9 +198,9 @@ test.describe("touch account navigation", () => {
         authenticated = false;
         return route.fulfill({ json: { ok: true } });
       }
-      return route.fulfill({ json: authenticated ? { authenticated, access_required: true, user, merchant } : { authenticated, access_required: true } });
+      return route.fulfill({ json: authenticated ? { authenticated, preferences: { locale: "zh-CN", theme: "system" }, access_required: true, user, merchant } : { authenticated, access_required: true } });
     });
-    await page.route("**/api/account", (route) => route.fulfill({ json: { user, merchant } }));
+    await page.route("**/api/account", (route) => route.fulfill({ json: { user, merchant, preferences: { locale: "zh-CN", theme: "system" } } }));
     await page.route("**/api/account/sessions?*", (route) => route.fulfill({ json: { items: [current], next_cursor: null } }));
     await page.goto("/help");
     await page.getByRole("link", { name: "个人账户", exact: true }).last().tap();

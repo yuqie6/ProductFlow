@@ -104,7 +104,7 @@ function AppRoutes() {
           <Route path="/ops" element={canOpenSettings ? <OpsPage /> : <Navigate to={authenticated ? "/account" : "/login"} replace />} />
           <Route path="/ops/merchants/:merchantId" element={canOpenSettings ? <OpsMerchantPage /> : <Navigate to={authenticated ? "/account" : "/login"} replace />} />
           <Route path="/ops/merchants/:merchantId/products/:productId" element={canOpenSettings ? <OpsProductPage /> : <Navigate to={authenticated ? "/account" : "/login"} replace />} />
-          <Route path="/account" element={authenticated ? <AccountPage /> : <Navigate to="/login" replace />} />
+          <Route path="/account" element={authenticated ? <AccountPage key={identity?.userId} /> : <Navigate to="/login" replace />} />
           <Route
             path="/home"
             element={authenticated ? <HomePage /> : <Navigate to="/login" replace />}

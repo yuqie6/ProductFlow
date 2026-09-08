@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -15,6 +17,15 @@ import (
 
 type accountUpdateRequest struct {
 	DisplayName string `json:"display_name"`
+}
+
+type accountPreferencesRequest struct {
+	Locale json.RawMessage `json:"locale"`
+	Theme  json.RawMessage `json:"theme"`
+}
+
+type accountMerchantUpdateRequest struct {
+	Name string `json:"name"`
 }
 
 type accountPasswordRequest struct {
@@ -73,6 +84,70 @@ func (h HTTP) updateAccount(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, view)
+}
+
+func decodeAccountPreferenceField(raw json.RawMessage) (*string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, errors.New("null preference")
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func (h HTTP) updatePreferences(c *gin.Context) {
+	principal, ok := accountPrincipal(c)
+	if !ok {
+		return
+	}
+	var payload accountPreferencesRequest
+	if err := bindJSONStrict(c, &payload); err != nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	locale, err := decodeAccountPreferenceField(payload.Locale)
+	if err != nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	theme, err := decodeAccountPreferenceField(payload.Theme)
+	if err != nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	if locale == nil && theme == nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, "账户偏好请求不能为空")
+		return
+	}
+	preferences, err := h.svc().UpdatePreferences(c.Request.Context(), principal.UserID, locale, theme)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, preferences)
+}
+
+func (h HTTP) updateMerchant(c *gin.Context) {
+	principal, ok := accountPrincipal(c)
+	if !ok {
+		return
+	}
+	var payload accountMerchantUpdateRequest
+	if err := bindJSONStrict(c, &payload); err != nil {
+		httpx.WriteDetail(c, http.StatusBadRequest, "请求体无效")
+		return
+	}
+	merchant, err := h.svc().UpdateOwnMerchantName(c.Request.Context(), principal.UserID, payload.Name)
+	if err != nil {
+		httpx.AbortErr(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, merchant)
 }
 
 func (h HTTP) changePassword(c *gin.Context) {

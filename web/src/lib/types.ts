@@ -1,3 +1,11 @@
+import type { Locale } from "./i18n";
+import type { ThemePreference } from "./theme";
+
+export interface AccountPreferences {
+  locale: Locale;
+  theme: ThemePreference;
+}
+
 export type ProductListSort = "updated_desc" | "created_desc" | "name_asc";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown";
 export type DeliveryRenditionStatus = Exclude<JobStatus, "cancelled" | "unknown">;
@@ -69,6 +77,7 @@ export interface AuthenticatedSessionState {
   registration_available?: boolean;
   user: SessionUser;
   merchant: SessionMerchant | null;
+  preferences: AccountPreferences;
 }
 
 export type SessionState = AnonymousSessionState | AuthenticatedSessionState;
@@ -76,6 +85,7 @@ export type SessionState = AnonymousSessionState | AuthenticatedSessionState;
 export interface AccountProfile {
   user: SessionUser;
   merchant: SessionMerchant | null;
+  preferences: AccountPreferences;
 }
 
 export interface AccountSession {

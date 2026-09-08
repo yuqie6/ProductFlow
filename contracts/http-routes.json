@@ -50,6 +50,16 @@
     "name": "update_account"
   },
   {
+    "method": "PATCH",
+    "path": "/api/account/preferences",
+    "name": "update_account_preferences"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/account/merchant",
+    "name": "update_account_merchant"
+  },
+  {
     "method": "POST",
     "path": "/api/account/password",
     "name": "change_account_password"

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PreferencesProvider } from "../../lib/preferences";
+
 import { OpsStatus } from "./OpsShared";
 
 describe("native operations status projection", () => {
@@ -10,7 +10,7 @@ describe("native operations status projection", () => {
     ["canceled", "已取消"], ["cancelled", "已取消"], ["awaiting_confirmation", "等待确认"],
     ["future_status", "future_status"],
   ])("retains the meaning of %s", (status, label) => {
-    const html = renderToStaticMarkup(<PreferencesProvider><OpsStatus status={status} /></PreferencesProvider>);
+    const html = renderToStaticMarkup(<OpsStatus status={status} />);
     expect(html).toContain(label);
   });
 });

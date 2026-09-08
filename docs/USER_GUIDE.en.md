@@ -35,7 +35,9 @@ Changing a password requires the current password. The new password needs at lea
 
 Choose Reset password on the login page to open `/password-recovery`. Request a six-digit code through the account email, then enter it with a new password. An accepted request does not disclose account existence or promise mail delivery; check the inbox and spam folder and use the resend countdown. Recovery uses the existing SMTP configuration, a ten-minute validity window, a 60-second send interval and at most five failed attempts. Success consumes the code and revokes every existing session. A new send replaces the old code; a request during the send interval retains the code and refreshes its validity window. Unconfigured email service is reported as unavailable. No additional administrator unlock is required.
 
-Account-persisted language/theme preferences and merchant renaming remain under development.
+Language and theme controls in the account page and navigation save to the same account preferences. Changes apply after a successful save; failed saves retain the previous setting and offer retry. Login restores the account settings, while logout restores anonymous browser settings. Another account does not inherit these choices. Interface language does not change product output language.
+
+Edit the owned merchant name under Merchant profile and save it; names contain 1–160 characters. Operators without a merchant do not see this form. A suspended merchant cannot be renamed, but personal profile, preferences, password changes and session revocation remain available.
 
 ### 1.3 Administrator product management
 

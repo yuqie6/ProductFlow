@@ -70,6 +70,8 @@ func (h HTTP) Register(engine *gin.Engine) {
 	account := engine.Group("/api/account")
 	account.GET("", h.account)
 	account.PATCH("", h.updateAccount)
+	account.PATCH("/preferences", h.updatePreferences)
+	account.PATCH("/merchant", h.updateMerchant)
 	account.POST("/password", h.changePassword)
 	account.GET("/sessions", h.listAccountSessions)
 	account.DELETE("/sessions/:id", h.revokeAccountSession)
@@ -260,6 +262,7 @@ func (h HTTP) state(c *gin.Context) {
 			return
 		}
 		body["merchant"] = merchant
+		body["preferences"] = AccountPreferences{Locale: principal.Locale, Theme: principal.Theme}
 	}
 	c.JSON(http.StatusOK, body)
 }

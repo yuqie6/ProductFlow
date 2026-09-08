@@ -17,10 +17,22 @@ import (
 )
 
 const (
-	accountDisplayNameMaxRunes = 160
-	accountSessionDefaultLimit = 20
-	accountSessionMaxLimit     = 100
+	accountDisplayNameMaxRunes  = 160
+	accountMerchantNameMaxRunes = 160
+	accountSessionDefaultLimit  = 20
+	accountSessionMaxLimit      = 100
 )
+
+const (
+	defaultAccountLocale = "zh-CN"
+	defaultAccountTheme  = "system"
+)
+
+// AccountPreferences 是当前账号跨会话保存的界面偏好。
+type AccountPreferences struct {
+	Locale string `json:"locale"`
+	Theme  string `json:"theme"`
+}
 
 // AccountUserView 是本人账户页允许读取的用户字段。
 type AccountUserView struct {
@@ -32,13 +44,32 @@ type AccountUserView struct {
 
 // AccountView 是 GET/PATCH /api/account 的稳定投影。
 type AccountView struct {
-	User     AccountUserView `json:"user"`
-	Merchant *MerchantView   `json:"merchant"`
+	User        AccountUserView    `json:"user"`
+	Merchant    *MerchantView      `json:"merchant"`
+	Preferences AccountPreferences `json:"preferences"`
 }
 
 func accountUserView(user schema.Users) AccountUserView {
 	return AccountUserView{
 		ID: user.ID, Email: user.Email, DisplayName: user.DisplayName, IsOperator: user.IsOperator,
+	}
+}
+
+func isAccountLocale(value string) bool {
+	switch value {
+	case "zh-CN", "en-US", "ja-JP", "vi-VN":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAccountTheme(value string) bool {
+	switch value {
+	case "light", "dark", "system":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -52,7 +83,7 @@ func (s Service) Account(ctx context.Context, userID string) (AccountView, error
 		return AccountView{}, apperr.Error{Status: 401, Detail: "请先登录"}
 	}
 	var user schema.Users
-	err := s.DB.WithContext(ctx).Select("id", "email", "display_name", "is_operator", "merchant_id", "status").
+	err := s.DB.WithContext(ctx).Select("id", "email", "display_name", "is_operator", "merchant_id", "status", "locale", "theme").
 		Where("id = ?", userID).Take(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return AccountView{}, apperr.Error{Status: 401, Detail: "请先登录"}
@@ -67,7 +98,11 @@ func (s Service) Account(ctx context.Context, userID string) (AccountView, error
 	if err != nil {
 		return AccountView{}, err
 	}
-	return AccountView{User: accountUserView(user), Merchant: merchant}, nil
+	return AccountView{
+		User:        accountUserView(user),
+		Merchant:    merchant,
+		Preferences: AccountPreferences{Locale: user.Locale, Theme: user.Theme},
+	}, nil
 }
 
 func validateDisplayName(displayName string) (string, error) {
@@ -119,6 +154,144 @@ func (s Service) UpdateDisplayName(ctx context.Context, userID, displayName stri
 		return AccountView{}, err
 	}
 	return s.Account(ctx, userID)
+}
+
+func validateAccountLocale(locale string) (string, error) {
+	if !isAccountLocale(locale) {
+		return "", apperr.Validation("语言偏好无效")
+	}
+	return locale, nil
+}
+
+func validateAccountTheme(theme string) (string, error) {
+	if !isAccountTheme(theme) {
+		return "", apperr.Validation("主题偏好无效")
+	}
+	return theme, nil
+}
+
+// UpdatePreferences updates only supplied fields while holding the User row
+// lock, so concurrent preference writes and authentication observe one order.
+func (s Service) UpdatePreferences(ctx context.Context, userID string, locale, theme *string) (AccountPreferences, error) {
+	if err := s.requireDB(); err != nil {
+		return AccountPreferences{}, err
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return AccountPreferences{}, apperr.Error{Status: 401, Detail: "请先登录"}
+	}
+	if locale == nil && theme == nil {
+		return AccountPreferences{}, apperr.Validation("至少提供一个账户偏好")
+	}
+	if locale != nil {
+		if _, err := validateAccountLocale(*locale); err != nil {
+			return AccountPreferences{}, err
+		}
+	}
+	if theme != nil {
+		if _, err := validateAccountTheme(*theme); err != nil {
+			return AccountPreferences{}, err
+		}
+	}
+
+	now := s.now()
+	var preferences AccountPreferences
+	err := tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
+		var user schema.Users
+		if err := gdb.Clauses(pfdb.ForUpdate()).Where("id = ?", userID).Take(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperr.Error{Status: 401, Detail: "请先登录"}
+			}
+			return err
+		}
+		if user.Status != UserStatusActive {
+			return apperr.Error{Status: 401, Detail: "请先登录"}
+		}
+		updates := map[string]any{"updated_at": now}
+		if locale != nil {
+			updates["locale"] = *locale
+			user.Locale = *locale
+		}
+		if theme != nil {
+			updates["theme"] = *theme
+			user.Theme = *theme
+		}
+		if err := gdb.Model(&schema.Users{}).Where("id = ?", userID).Updates(updates).Error; err != nil {
+			return err
+		}
+		preferences = AccountPreferences{Locale: user.Locale, Theme: user.Theme}
+		return nil
+	})
+	if err != nil {
+		return AccountPreferences{}, err
+	}
+	return preferences, nil
+}
+
+func validateAccountMerchantName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", apperr.Validation("商家名称不能为空")
+	}
+	if utf8.RuneCountInString(name) > accountMerchantNameMaxRunes {
+		return "", apperr.Validation("商家名称不能超过 160 个字符")
+	}
+	return name, nil
+}
+
+// UpdateOwnMerchantName updates the merchant directly owned by the account.
+// The User -> Merchant lock order keeps ownership and status checks atomic.
+func (s Service) UpdateOwnMerchantName(ctx context.Context, userID, name string) (MerchantView, error) {
+	if err := s.requireDB(); err != nil {
+		return MerchantView{}, err
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return MerchantView{}, apperr.Error{Status: 401, Detail: "请先登录"}
+	}
+	name, err := validateAccountMerchantName(name)
+	if err != nil {
+		return MerchantView{}, err
+	}
+	now := s.now()
+	var view MerchantView
+	err = tx.WithGorm(ctx, s.DB, func(gdb *gorm.DB) error {
+		var user schema.Users
+		if err := gdb.Clauses(pfdb.ForUpdate()).Where("id = ?", userID).Take(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperr.Error{Status: 401, Detail: "请先登录"}
+			}
+			return err
+		}
+		if user.Status != UserStatusActive {
+			return apperr.Error{Status: 401, Detail: "请先登录"}
+		}
+		if user.MerchantID == nil || strings.TrimSpace(*user.MerchantID) == "" {
+			return apperr.Forbidden("当前用户不属于任何商家")
+		}
+		merchantID := strings.TrimSpace(*user.MerchantID)
+		var merchant schema.Merchants
+		if err := gdb.Clauses(pfdb.ForUpdate()).Where("id = ?", merchantID).Take(&merchant).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return NotFoundCrossMerchant()
+			}
+			return err
+		}
+		if merchant.Status == MerchantStatusSuspended {
+			return apperr.Forbidden("商家已停用，无法写入")
+		}
+		if err := gdb.Model(&schema.Merchants{}).Where("id = ?", merchantID).Updates(map[string]any{
+			"name": name, "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		view = MerchantView{ID: merchant.ID, Name: name, Status: merchant.Status}
+		return nil
+	})
+	if err != nil {
+		return MerchantView{}, err
+	}
+	return view, nil
 }
 
 // ChangePassword verifies the current password and revokes every existing

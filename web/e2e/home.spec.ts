@@ -20,7 +20,7 @@ for (const viewport of viewports) {
         }, { locale, theme });
         // The homepage has no business data dependency; isolate only the login gate.
         await page.route("**/api/auth/session", (route) => route.fulfill({
-          json: { authenticated: true, access_required: false },
+          json: { authenticated: true, user: { id: "home-user", email: "home@example.com", display_name: "Home", is_operator: false }, merchant: { id: "home-merchant", name: "Home merchant", status: "active" }, preferences: { locale, theme }, access_required: false },
         }));
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
@@ -123,7 +123,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.route("**/api/auth/session", (route) => route.fulfill({
-      json: { authenticated: true, access_required: false },
+      json: { authenticated: true, user: { id: "home-user", email: "home@example.com", display_name: "Home", is_operator: false }, merchant: { id: "home-merchant", name: "Home merchant", status: "active" }, preferences: { locale: "zh-CN", theme: "system" }, access_required: false },
     }));
     await page.goto("/home");
     await page.locator(".studio-play").click();
@@ -150,7 +150,7 @@ for (const width of [1440, 390]) {
 for (const width of [1440, 390]) {
   test(`home actual scenes and camera guide ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    await page.route("**/api/auth/session", route => route.fulfill({ json: { authenticated: true, access_required: false } }));
+    await page.route("**/api/auth/session", route => route.fulfill({ json: { authenticated: true, user: { id: "home-user", email: "home@example.com", display_name: "Home", is_operator: false }, merchant: { id: "home-merchant", name: "Home merchant", status: "active" }, preferences: { locale: "zh-CN", theme: "system" }, access_required: false } }));
     const writes: string[] = [];
     page.on("request", request => { if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method())) writes.push(request.url()); });
     await page.goto("/home");
@@ -211,7 +211,7 @@ for (const width of [1440, 390]) {
 }
 
 test("home tutorial completes four interactive levels", async ({ page }) => {
-  await page.route("**/api/auth/session", route => route.fulfill({ json: { authenticated: true, access_required: false } }));
+  await page.route("**/api/auth/session", route => route.fulfill({ json: { authenticated: true, user: { id: "home-user", email: "home@example.com", display_name: "Home", is_operator: false }, merchant: { id: "home-merchant", name: "Home merchant", status: "active" }, preferences: { locale: "zh-CN", theme: "system" }, access_required: false } }));
   await page.goto("/home");
   await page.locator(".home-guide-launch").click();
   const guide = page.locator(".home-guide");

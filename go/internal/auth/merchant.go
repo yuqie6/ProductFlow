@@ -170,6 +170,10 @@ func skipSuspendedWriteGate(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/settings"):
 		return true
+	// Personal account security stays available when business writes are suspended.
+	// The own-merchant command checks merchant status again under its row lock.
+	case path == "/api/account" || strings.HasPrefix(path, "/api/account/"):
+		return true
 	case path == "/api/generation-queue":
 		return true
 	case strings.HasPrefix(path, "/api/ops/"):

@@ -37,7 +37,7 @@ const QUALITY_LABELS: Record<Locale, string> = {
 };
 
 const SESSION: SessionState = {
-  authenticated: true,
+  authenticated: true, preferences: { locale: "zh-CN", theme: "system" },
   access_required: false,
   needs_bootstrap: false,
   user: {
@@ -295,6 +295,7 @@ async function installPolicyMock(page: Page): Promise<PolicyMockState> {
 }
 
 async function openResults(page: Page, productId: string, locale: Locale, theme: Theme, width: number): Promise<void> {
+  await page.route("**/api/auth/session", (route) => route.fulfill({ json: { ...SESSION, preferences: { locale, theme } } }));
   await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
   await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
   await page.addInitScript(({ nextLocale, nextTheme }: { nextLocale: Locale; nextTheme: Theme }) => {

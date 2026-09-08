@@ -1,4 +1,5 @@
 import type {
+  AccountPreferences,
   OpsPage,
   OpsTask,
   OpsAction,
@@ -238,6 +239,12 @@ export const api = {
   },
   updateAccount(input: { display_name: string }): Promise<AccountProfile> {
     return request("/api/account", { method: "PATCH", body: JSON.stringify(input) });
+  },
+  updateAccountPreferences(input: Partial<AccountPreferences>): Promise<AccountPreferences> {
+    return request("/api/account/preferences", { method: "PATCH", body: JSON.stringify(input) });
+  },
+  updateAccountMerchant(input: { name: string }): Promise<SessionMerchant> {
+    return request("/api/account/merchant", { method: "PATCH", body: JSON.stringify(input) });
   },
   changePassword(input: { current_password: string; new_password: string }): Promise<{ ok: boolean }> {
     return request("/api/account/password", { method: "POST", body: JSON.stringify(input) });

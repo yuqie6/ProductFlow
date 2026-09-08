@@ -51,6 +51,8 @@ type Principal struct {
 	DisplayName string
 	IsOperator  bool
 	MerchantID  *string
+	Locale      string
+	Theme       string
 }
 
 // MerchantView 是会话与直接商家归属的稳定投影。
@@ -81,6 +83,8 @@ type principalRow struct {
 	DisplayName string
 	IsOperator  bool
 	MerchantID  sql.NullString
+	Locale      string
+	Theme       string
 	UserStatus  string
 	ExpiresAt   time.Time
 	RevokedAt   *time.Time
@@ -94,6 +98,8 @@ type userRow struct {
 	IsOperator   bool
 	MerchantID   sql.NullString
 	Status       string
+	Locale       string
+	Theme        string
 }
 
 func nullableID(value sql.NullString) *string {
@@ -116,6 +122,8 @@ func createUser(gdb *gorm.DB, id, email, passwordHash, displayName string, opera
 		"is_operator":   operator,
 		"status":        status,
 		"merchant_id":   merchantID,
+		"locale":        defaultAccountLocale,
+		"theme":         defaultAccountTheme,
 		"created_at":    now,
 		"updated_at":    now,
 	}).Error
@@ -142,7 +150,7 @@ func (s Service) LoadPrincipal(ctx context.Context, sessionID string) (*Principa
 	var row principalRow
 	err := s.DB.WithContext(ctx).Raw(`
 		SELECT s.id AS session_id, u.id AS user_id, u.email, u.display_name, u.is_operator,
-		       u.merchant_id, u.status AS user_status, s.expires_at, s.revoked_at
+		       u.merchant_id, u.locale, u.theme, u.status AS user_status, s.expires_at, s.revoked_at
 		FROM auth_sessions s
 		JOIN users u ON u.id = s.user_id
 		WHERE s.id = ?
@@ -163,6 +171,8 @@ func (s Service) LoadPrincipal(ctx context.Context, sessionID string) (*Principa
 		DisplayName: row.DisplayName,
 		IsOperator:  row.IsOperator,
 		MerchantID:  nullableID(row.MerchantID),
+		Locale:      row.Locale,
+		Theme:       row.Theme,
 	}, nil
 }
 
@@ -231,6 +241,7 @@ func (s Service) Bootstrap(ctx context.Context, adminKey, expectedAdminKey, emai
 		principal = &Principal{
 			UserID: userID, SessionID: sessionID, Email: emailNorm,
 			DisplayName: displayName, IsOperator: true, MerchantID: &merchantID,
+			Locale: defaultAccountLocale, Theme: defaultAccountTheme,
 		}
 		return nil
 	})
@@ -279,6 +290,7 @@ func (s Service) Login(ctx context.Context, email, password string) (*Principal,
 			UserID: user.ID, SessionID: sessionID, Email: user.Email,
 			DisplayName: user.DisplayName, IsOperator: user.IsOperator,
 			MerchantID: nullableID(user.MerchantID),
+			Locale:     user.Locale, Theme: user.Theme,
 		}
 		return nil
 	})

@@ -24,6 +24,7 @@ import { api } from "../lib/api";
 import { ownMerchantId } from "../lib/accountBoundary";
 import { LOCALES, LOCALE_LABEL_KEYS, type Locale } from "../lib/i18n";
 import { canAccessOpsSettings } from "../lib/opsAccess";
+import { preferenceSaveMessage } from "../lib/preferenceSaveMessages";
 import { usePreferences } from "../lib/preferences";
 import { THEME_PREFERENCES, type ThemePreference } from "../lib/theme";
 
@@ -111,7 +112,7 @@ function closeDetailsOnBlur(event: FocusEvent<HTMLElement>) {
 }
 
 function LanguagePicker({ compact = false }: { compact?: boolean }) {
-  const { locale, setLocale, t } = usePreferences();
+  const { locale, setLocale, t, saving } = usePreferences();
   const selectedLabel = t(LOCALE_LABEL_KEYS[locale]);
   const selectLocale = (event: MouseEvent<HTMLButtonElement>, nextLocale: Locale) => {
     setLocale(nextLocale);
@@ -150,6 +151,7 @@ function LanguagePicker({ compact = false }: { compact?: boolean }) {
               key={item}
               type="button"
               onClick={(event) => selectLocale(event, item)}
+              disabled={saving}
               aria-current={active ? "true" : undefined}
               className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors ${
                 active
@@ -169,7 +171,7 @@ function LanguagePicker({ compact = false }: { compact?: boolean }) {
 
 export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
   const location = useLocation();
-  const { t, themePreference, setThemePreference } = usePreferences();
+  const { t, locale, themePreference, setThemePreference, saving, saveFailed, saved, retrySave } = usePreferences();
   const sessionQuery = useQuery({
     queryKey: ["session"],
     queryFn: api.getSessionState,
@@ -212,6 +214,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
             <button
               type="button"
               onClick={() => setThemePreference(nextThemePreference)}
+              disabled={saving}
               aria-label={`${t("nav.theme")}: ${t(`theme.${themePreference}`)}`}
               title={t(`theme.${themePreference}`)}
               className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-border-l1 bg-surface-raised text-text-secondary shadow-sm transition-colors active:scale-[0.98] hover:border-accent hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-secondary dark:hover:border-accent/55 dark:hover:text-accent"
@@ -249,6 +252,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
           <button
             type="button"
             onClick={() => setThemePreference(nextThemePreference)}
+              disabled={saving}
             aria-label={`${t("nav.theme")}: ${t(`theme.${themePreference}`)}`}
             title={t(`theme.${themePreference}`)}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border-l1 bg-surface-raised text-text-secondary transition-colors hover:border-accent hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent dark:border-border-l1 dark:bg-surface-base/80 dark:text-text-secondary dark:hover:border-accent/55 dark:hover:text-accent dark:focus-visible:ring-accent"
@@ -278,6 +282,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
                   key={item}
                   type="button"
                   onClick={() => setThemePreference(item)}
+                  disabled={saving}
                   aria-label={`${t("nav.theme")}: ${t(`theme.${item}`)}`}
                   title={t(`theme.${item}`)}
                   className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
@@ -304,6 +309,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
           ) : null}
         </div>
       </nav>
+      {saveFailed ? <div role="alert" className="sticky top-0 z-[60] flex flex-wrap items-center justify-center gap-3 border-b border-border-l1 bg-surface-raised px-4 py-2 text-sm text-state-error"><span>{preferenceSaveMessage(locale, "failed")}</span><button type="button" onClick={retrySave} className="min-h-11 rounded-control px-3 font-semibold underline focus-visible:ring-2 focus-visible:ring-accent">{t("account.retry")}</button></div> : saving || saved ? <p role="status" className="sr-only">{preferenceSaveMessage(locale, saving ? "saving" : "saved")}</p> : null}
 
       <div
         aria-label={t("nav.mobile")}
@@ -330,7 +336,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
                 }`}
               >
                 <Icon size={18} aria-hidden="true" />
-                <span className="mt-0.5 truncate">{label}</span>
+                <span className="mt-0.5 max-w-full truncate">{label}</span>
               </Link>
             );
           })}

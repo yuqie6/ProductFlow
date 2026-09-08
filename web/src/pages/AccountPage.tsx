@@ -1,16 +1,22 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, KeyRound, LogOut, ShieldCheck, UserRound } from "lucide-react";
+import { Check, KeyRound, LogOut, ShieldCheck, UserRound, Palette, Store } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+import { preferenceSaveMessage } from "../lib/preferenceSaveMessages";
+import { accountPreferencesMessage } from "../lib/accountPreferencesMessages";
 import { TopNav } from "../components/TopNav";
 import { Button } from "../components/ui/button";
+import { Select } from "../components/ui/select";
+import { LOCALES, LOCALE_LABEL_KEYS, isLocale } from "../lib/i18n";
+import { THEME_PREFERENCES, isThemePreference } from "../lib/theme";
+import { getAccountGeneration, isCurrentAccountGeneration } from "../lib/accountBoundary";
 import { Input } from "../components/ui/field";
 import { Dialog, DialogContent } from "../components/ui/dialog";
 import { api, ApiError } from "../lib/api";
 import { validateDisplayName, validateNewPassword } from "../lib/accountValidation";
-import { useI18n } from "../lib/preferences";
-import type { AccountProfile, AccountSession, SessionState } from "../lib/types";
+import { useI18n, usePreferences } from "../lib/preferences";
+import type { AccountProfile, AccountSession, SessionMerchant, SessionState } from "../lib/types";
 
 export function AccountPage() {
   const { t, locale } = useI18n();
@@ -27,16 +33,19 @@ export function AccountPage() {
   const [revokeTarget, setRevokeTarget] = useState<AccountSession | null>(null);
   const [sessionNotice, setSessionNotice] = useState("");
   const errorText = (error: Error | null) => error instanceof ApiError ? error.detail : t("account.error");
-  const finishSession = () => {
+  const currentAccount = useCurrentAccountWrite();
+  const finishSession = (generation: number) => {
+    if (!currentAccount(generation)) return;
     queryClient.setQueryData<SessionState>(["session"], { authenticated: false, access_required: true });
     navigate("/login", { replace: true });
   };
-  const logout = useMutation({ mutationFn: api.destroySession, onSuccess: finishSession });
+  const logout = useMutation<{ ok: boolean }, Error, number>({ mutationFn: api.destroySession, onSuccess: (_, generation) => finishSession(generation) });
   const revoke = useMutation({
-    mutationFn: (target: AccountSession) => api.revokeAccountSession(target.id),
-    onSuccess: async (_, target) => {
+    mutationFn: ({ target }: { target: AccountSession; generation: number }) => api.revokeAccountSession(target.id),
+    onSuccess: async (_, { target, generation }) => {
+      if (!currentAccount(generation)) return;
       setRevokeTarget(null);
-      if (target.current) { finishSession(); return; }
+      if (target.current) { finishSession(generation); return; }
       setSessionNotice(t("account.revoked"));
       await queryClient.invalidateQueries({ queryKey: ["account-sessions", userId] });
     },
@@ -48,16 +57,27 @@ export function AccountPage() {
     <main className="mx-auto w-full max-w-5xl px-5 pt-8 pb-40 sm:px-8 sm:pt-12 lg:pb-20">
       <header className="mb-10 flex flex-wrap items-start justify-between gap-4">
         <div><h1 className="text-2xl font-semibold tracking-tight">{t("account.title")}</h1><p className="mt-2 text-sm text-text-muted">{t("account.subtitle")}</p></div>
-        <Button busy={logout.isPending} onClick={() => logout.mutate()}><LogOut size={15} aria-hidden="true" />{t("nav.logout")}</Button>
+        <Button busy={logout.isPending} onClick={() => logout.mutate(getAccountGeneration())}><LogOut size={15} aria-hidden="true" />{t("nav.logout")}</Button>
       </header>
       {logout.isError ? <p role="alert" className="mb-5 text-sm text-state-error">{errorText(logout.error)}</p> : null}
       <section aria-labelledby="profile-heading" className="grid gap-6 border-t border-border-l1 py-8 md:grid-cols-[220px_minmax(0,1fr)]">
         <h2 id="profile-heading" className="flex items-start gap-2 font-semibold"><UserRound size={18} aria-hidden="true" />{t("account.profile")}</h2>
-        {profile.isPending ? <p role="status" className="text-sm text-text-muted">{t("app.loading")}</p> : profile.isError ? <div><p role="alert" className="mb-3 text-sm text-state-error">{errorText(profile.error)}</p><Button onClick={() => void profile.refetch()}>{t("account.retry")}</Button></div> : <ProfileForm profile={profile.data} onSaved={(next) => {
-          queryClient.setQueryData(profileKey, next);
-          queryClient.setQueryData<SessionState>(["session"], (current) => current?.authenticated ? { ...current, ...next } : current);
+        {profile.isPending ? <p role="status" className="text-sm text-text-muted">{t("app.loading")}</p> : profile.isError ? <div><p role="alert" className="mb-3 text-sm text-state-error">{errorText(profile.error)}</p><Button onClick={() => void profile.refetch()}>{t("account.retry")}</Button></div> : <ProfileForm key={userId} profile={profile.data} onSaved={(next) => {
+          queryClient.setQueryData<AccountProfile>(profileKey, (current) => current ? { ...current, user: next.user } : current);
+          queryClient.setQueryData<SessionState>(["session"], (current) => current?.authenticated ? { ...current, user: next.user } : current);
         }} />}
       </section>
+      <section aria-labelledby="preferences-heading" className="grid gap-6 border-t border-border-l1 py-8 md:grid-cols-[220px_minmax(0,1fr)]">
+        <div><h2 id="preferences-heading" className="flex items-center gap-2 font-semibold"><Palette size={18} aria-hidden="true" />{accountPreferencesMessage(locale, "title")}</h2><p className="mt-3 text-sm leading-6 text-text-muted">{accountPreferencesMessage(locale, "note")}</p></div>
+        <PreferenceControls />
+      </section>
+      {profile.data?.merchant ? <section aria-labelledby="merchant-heading" className="grid gap-6 border-t border-border-l1 py-8 md:grid-cols-[220px_minmax(0,1fr)]">
+        <div><h2 id="merchant-heading" className="flex items-center gap-2 font-semibold"><Store size={18} aria-hidden="true" />{accountPreferencesMessage(locale, "merchantTitle")}</h2><p className="mt-3 text-sm leading-6 text-text-muted">{accountPreferencesMessage(locale, "merchantNote")}</p></div>
+        <MerchantForm key={`${userId}:${profile.data.merchant.id}`} merchant={profile.data.merchant} onSaved={(merchant) => {
+          queryClient.setQueryData<AccountProfile>(profileKey, (current) => current ? { ...current, merchant } : current);
+          queryClient.setQueryData<SessionState>(["session"], (current) => current?.authenticated ? { ...current, merchant } : current);
+        }} />
+      </section> : null}
       <section aria-labelledby="password-heading" className="grid gap-6 border-t border-border-l1 py-8 md:grid-cols-[220px_minmax(0,1fr)]">
         <div><h2 id="password-heading" className="flex items-center gap-2 font-semibold"><KeyRound size={18} aria-hidden="true" />{t("account.security")}</h2><p className="mt-3 text-sm leading-6 text-text-muted">{t("account.passwordNote")}</p></div>
         <PasswordForm onSuccess={finishSession} />
@@ -79,7 +99,7 @@ export function AccountPage() {
       </section>
     </main>
     <Dialog open={Boolean(revokeTarget)} onOpenChange={(open) => { if (!open && !revoke.isPending) setRevokeTarget(null); }}>
-      <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); revokeButton.current?.focus(); }} title={t("account.revokeConfirm")} description={t(revokeTarget?.current ? "account.revokeCurrentConfirm" : "account.sessionsNote")} closeLabel={t("account.cancel")} onClose={() => { if (!revoke.isPending) setRevokeTarget(null); }} footer={<><Button disabled={revoke.isPending} onClick={() => setRevokeTarget(null)}>{t("account.cancel")}</Button><Button variant="danger" busy={revoke.isPending} onClick={() => { if (revokeTarget) revoke.mutate(revokeTarget); }}>{t(revokeTarget?.current ? "account.revokeCurrent" : "account.revoke")}</Button></>}>
+      <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); revokeButton.current?.focus(); }} title={t("account.revokeConfirm")} description={t(revokeTarget?.current ? "account.revokeCurrentConfirm" : "account.sessionsNote")} closeLabel={t("account.cancel")} onClose={() => { if (!revoke.isPending) setRevokeTarget(null); }} footer={<><Button disabled={revoke.isPending} onClick={() => setRevokeTarget(null)}>{t("account.cancel")}</Button><Button variant="danger" busy={revoke.isPending} onClick={() => { if (revokeTarget) revoke.mutate({ target: revokeTarget, generation: getAccountGeneration() }); }}>{t(revokeTarget?.current ? "account.revokeCurrent" : "account.revoke")}</Button></>}>
         {revoke.isError ? <p role="alert" className="text-sm text-state-error">{errorText(revoke.error)}</p> : null}
       </DialogContent>
     </Dialog>
@@ -91,30 +111,69 @@ function ProfileForm({ profile, onSaved }: { profile: AccountProfile; onSaved: (
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState("");
   const name = draft ?? profile.user.display_name;
-  const save = useMutation({ mutationFn: () => api.updateAccount({ display_name: name.trim() }), onSuccess: (next) => { onSaved(next); setDraft(null); }, onError: (error) => setError(error instanceof ApiError ? error.detail : t("account.error")) });
-  return <form className="max-w-lg space-y-5" onSubmit={(event) => { event.preventDefault(); if (save.isPending) return; const invalid = validateDisplayName(name); setError(invalid ? t(invalid) : ""); if (!invalid) save.mutate(); }}>
+  const currentAccount = useCurrentAccountWrite();
+  const save = useMutation<AccountProfile, Error, number>({ mutationFn: () => api.updateAccount({ display_name: name.trim() }), onSuccess: (next, generation) => { if (!currentAccount(generation)) return; onSaved(next); setDraft(null); }, onError: (error, generation) => { if (currentAccount(generation)) setError(error instanceof ApiError ? error.detail : t("account.error")); } });
+  return <form className="max-w-lg space-y-5" onSubmit={(event) => { event.preventDefault(); if (save.isPending) return; const invalid = validateDisplayName(name); setError(invalid ? t(invalid) : ""); if (!invalid) save.mutate(getAccountGeneration()); }}>
     <Input label={t("login.email")} type="email" value={profile.user.email} readOnly autoComplete="username" />
     <Input label={t("account.displayName")} value={name} onChange={(event) => { setDraft(event.target.value); setError(""); save.reset(); }} autoComplete="nickname" disabled={save.isPending} aria-invalid={Boolean(error)} />
-    {profile.merchant ? <div><p className="text-xs font-semibold text-text-muted">{t("account.merchant")}</p><p className="mt-1 break-words text-sm">{profile.merchant.name}</p></div> : null}
     {profile.user.is_operator ? <p className="text-xs font-medium text-text-muted">{t("account.operator")}</p> : null}
     {error ? <p role="alert" className="text-sm text-state-error">{error}</p> : null}
     <div className="flex flex-wrap items-center gap-3"><Button type="submit" variant="primary" busy={save.isPending} disabled={name.trim() === profile.user.display_name}>{t("account.save")}</Button>{save.isSuccess ? <p role="status" className="text-sm text-state-success">{t("account.saved")}</p> : null}</div>
   </form>;
 }
 
-function PasswordForm({ onSuccess }: { onSuccess: () => void }) {
+function PasswordForm({ onSuccess }: { onSuccess: (generation: number) => void }) {
   const { t } = useI18n();
   const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState("");
-  const mutation = useMutation({ mutationFn: () => api.changePassword({ current_password: current, new_password: password }), onSuccess, onError: (error) => setError(error instanceof ApiError ? error.detail : t("account.error")) });
-  return <form className="max-w-lg space-y-5" onSubmit={(event) => { event.preventDefault(); if (mutation.isPending) return; const invalid = validateNewPassword(password, confirmation); setError(invalid ? t(invalid) : ""); if (!invalid) mutation.mutate(); }}>
+  const currentAccount = useCurrentAccountWrite();
+  const mutation = useMutation<{ ok: boolean }, Error, number>({ mutationFn: () => api.changePassword({ current_password: current, new_password: password }), onSuccess: (_, generation) => onSuccess(generation), onError: (error, generation) => { if (currentAccount(generation)) setError(error instanceof ApiError ? error.detail : t("account.error")); } });
+  return <form className="max-w-lg space-y-5" onSubmit={(event) => { event.preventDefault(); if (mutation.isPending) return; const invalid = validateNewPassword(password, confirmation); setError(invalid ? t(invalid) : ""); if (!invalid) mutation.mutate(getAccountGeneration()); }}>
     <Input label={t("account.currentPassword")} type="password" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} required disabled={mutation.isPending} />
     <Input label={t("account.newPassword")} type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required disabled={mutation.isPending} aria-describedby="account-password-rule" />
     <p id="account-password-rule" className="text-xs text-text-muted">{t("account.passwordRule")}</p>
     <Input label={t("account.confirmPassword")} type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required disabled={mutation.isPending} />
     {error ? <p role="alert" className="text-sm text-state-error">{error}</p> : null}
     <Button type="submit" busy={mutation.isPending}>{t("account.changePassword")}</Button>
+  </form>;
+}
+
+function useCurrentAccountWrite() {
+  const queryClient = useQueryClient();
+  const userId = queryClient.getQueryData<SessionState>(["session"])?.user?.id;
+  return (generation: number) => isCurrentAccountGeneration(generation) && userId === queryClient.getQueryData<SessionState>(["session"])?.user?.id;
+}
+
+function PreferenceControls() {
+  const { t, locale, setLocale, themePreference, setThemePreference, saving, saved } = usePreferences();
+  return <div className="max-w-lg space-y-5">
+    <div><label htmlFor="account-locale" className="mb-2 block text-xs font-semibold text-text-muted">{t("nav.language")}</label><Select id="account-locale" ariaLabel={t("nav.language")} value={locale} disabled={saving} options={LOCALES.map((value) => ({ value, label: t(LOCALE_LABEL_KEYS[value]) }))} onChange={(value) => { if (isLocale(value)) setLocale(value); }} /></div>
+    <div><label htmlFor="account-theme" className="mb-2 block text-xs font-semibold text-text-muted">{t("nav.theme")}</label><Select id="account-theme" ariaLabel={t("nav.theme")} value={themePreference} disabled={saving} options={THEME_PREFERENCES.map((value) => ({ value, label: t(`theme.${value}`) }))} onChange={(value) => { if (isThemePreference(value)) setThemePreference(value); }} /></div>
+    <p className="text-xs text-text-muted">{accountPreferencesMessage(locale, "automatic")}</p>
+    {saving || saved ? <p role="status" className="text-sm text-state-success">{preferenceSaveMessage(locale, saving ? "saving" : "saved")}</p> : null}
+  </div>;
+}
+
+function MerchantForm({ merchant, onSaved }: { merchant: SessionMerchant; onSaved: (merchant: SessionMerchant) => void }) {
+  const { t, locale } = useI18n();
+  const [draft, setDraft] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const currentAccount = useCurrentAccountWrite();
+  const name = draft ?? merchant.name;
+  const suspended = merchant.status === "suspended";
+  const save = useMutation<SessionMerchant, Error, number>({ mutationFn: () => api.updateAccountMerchant({ name: name.trim() }), onSuccess: (next, generation) => { if (!currentAccount(generation)) return; onSaved(next); setDraft(null); }, onError: (error, generation) => { if (currentAccount(generation)) setError(error instanceof ApiError ? error.detail : t("account.error")); } });
+  return <form className="max-w-lg space-y-5" onSubmit={(event) => {
+    event.preventDefault();
+    if (save.isPending || suspended) return;
+    const length = [...name.trim()].length;
+    setError(length < 1 || length > 160 ? accountPreferencesMessage(locale, "merchantInvalid") : "");
+    if (length >= 1 && length <= 160) save.mutate(getAccountGeneration());
+  }}>
+    <Input label={t("account.merchant")} value={name} onChange={(event) => { setDraft(event.target.value); setError(""); save.reset(); }} autoComplete="organization" disabled={suspended || save.isPending} aria-invalid={Boolean(error)} />
+    {suspended ? <p className="text-sm text-text-muted">{accountPreferencesMessage(locale, "merchantSuspended")}</p> : null}
+    {error ? <p role="alert" className="text-sm text-state-error">{error}</p> : null}
+    <div className="flex flex-wrap items-center gap-3"><Button type="submit" variant="primary" busy={save.isPending} disabled={suspended || name.trim() === merchant.name}>{t("account.save")}</Button>{save.isSuccess ? <p role="status" className="text-sm text-state-success">{t("account.saved")}</p> : null}</div>
   </form>;
 }

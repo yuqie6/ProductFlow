@@ -8,25 +8,25 @@ type AccountName = "anonymous" | "alice" | "bob" | "operator" | "operatorNoMerch
 const SESSIONS: Record<AccountName, SessionState> = {
   anonymous: { authenticated: false, access_required: true, registration_available: false },
   alice: {
-    authenticated: true,
+    authenticated: true, preferences: { locale: "zh-CN", theme: "system" },
     access_required: false,
     user: { id: "user-alice", email: "alice@example.com", display_name: "Alice", is_operator: false },
     merchant: { id: "merchant-alice", name: "Alice shop", status: "active" },
   },
   bob: {
-    authenticated: true,
+    authenticated: true, preferences: { locale: "zh-CN", theme: "system" },
     access_required: false,
     user: { id: "user-bob", email: "bob@example.com", display_name: "Bob", is_operator: false },
     merchant: { id: "merchant-bob", name: "Bob shop", status: "active" },
   },
   operator: {
-    authenticated: true,
+    authenticated: true, preferences: { locale: "zh-CN", theme: "system" },
     access_required: true,
     user: { id: "user-operator", email: "operator@example.com", display_name: "Operator", is_operator: true },
     merchant: { id: "merchant-operator", name: "Operator shop", status: "active" },
   },
   operatorNoMerchant: {
-    authenticated: true,
+    authenticated: true, preferences: { locale: "zh-CN", theme: "system" },
     access_required: true,
     user: { id: "user-operator-no-merchant", email: "operator-no-merchant@example.com", display_name: "Operator", is_operator: true },
     merchant: null,

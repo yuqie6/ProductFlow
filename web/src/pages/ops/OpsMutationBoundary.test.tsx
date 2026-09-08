@@ -22,7 +22,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
     },
     useQuery: ({ queryKey }: { queryKey: unknown[] }) => ({
       isSuccess: true, isPending: false, isError: false,
-      data: queryKey[0] === "session" ? { authenticated: true, user: { id: "operator", is_operator: true }, merchant: null }
+      data: queryKey[0] === "session" ? { authenticated: true, preferences: { locale: "zh-CN", theme: "system" }, user: { id: "operator", is_operator: true }, merchant: null }
         : queryKey[0] === "ops-merchant" ? { id: "m", name: "Merchant", status: "active" }
         : queryKey[0] === "ops-facts" ? facts
         : queryKey[0] === "ops-quota" ? { merchant_id: "m", available_units: 10, reserved_units: 0 }
@@ -45,7 +45,7 @@ describe("late operations mutation responses", () => {
       : kind === "quota" ? <OpsQuota merchantId="m" />
       : <Routes><Route path="/ops/merchants/:merchantId/products/:productId" element={<OpsProductPage />} /></Routes>;
     renderToStaticMarkup(<MemoryRouter initialEntries={["/ops/merchants/m/products/p"]}><PreferencesProvider>{content}</PreferencesProvider></MemoryRouter>);
-    const mutation = fixtures.mutations[0];
+    const mutation = fixtures.mutations[1];
     client.setQueryData(["ops-facts", "m", "p"], facts);
     applyAccountSwitchBoundary(client);
     client.setQueryData(["new-account"], { private: "new account" });

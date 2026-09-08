@@ -1896,6 +1896,16 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
+ALTER TABLE users ADD CONSTRAINT ck_users_locale CHECK (locale IN ('zh-CN', 'en-US', 'ja-JP', 'vi-VN'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
+ALTER TABLE users ADD CONSTRAINT ck_users_theme CHECK (theme IN ('light', 'dark', 'system'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN duplicate_table THEN NULL;
+END $c$;`,
+	`DO $c$ BEGIN
 ALTER TABLE merchants ADD CONSTRAINT ck_merchants_status CHECK (status IN ('active', 'suspended'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;

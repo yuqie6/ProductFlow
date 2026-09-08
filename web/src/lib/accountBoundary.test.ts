@@ -14,7 +14,7 @@ import {
 import type { SessionState } from "./types";
 
 const ordinarySession: SessionState = {
-  authenticated: true,
+  authenticated: true, preferences: { locale: "zh-CN", theme: "system" },
   access_required: false,
   user: { id: "user-1", email: "user@example.com", display_name: "User", is_operator: false },
   merchant: { id: "merchant-1", name: "Shop", status: "active" },

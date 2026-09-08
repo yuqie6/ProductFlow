@@ -93,7 +93,7 @@ for (const failFirst of [false, true]) {
       const path = new URL(route.request().url()).pathname;
       if (path === "/api/auth/session") {
         await route.fulfill({ json: {
-          authenticated: true,
+          authenticated: true, preferences: { locale: "zh-CN", theme: "system" },
           access_required: false,
           user: { id: "transition-user", email: "transition@example.com", display_name: "Transition", is_operator: false },
           merchant: { id: "transition-merchant", name: "Transition merchant", status: "active" },

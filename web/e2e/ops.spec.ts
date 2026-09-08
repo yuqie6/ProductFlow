@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { LOCALES, translate } from "../src/lib/i18n";
-import type { GalleryAsset, OpsAction, OpsQuotaEvent, OpsTask, ProductFactsResponse } from "../src/lib/types";
+import type { GalleryAsset, AccountPreferences, OpsAction, OpsQuotaEvent, OpsTask, ProductFactsResponse } from "../src/lib/types";
 
 const created = "2026-09-08T00:00:00Z";
 const merchants = [{ id: "merchant-a", name: "Merchant A 商品商家", status: "active" }, { id: "merchant-b", name: "Merchant B", status: "suspended" }];
@@ -10,11 +10,11 @@ const asset: GalleryAsset = { id: "asset-a", product_id: "product-a", media_obje
 const taskKinds: OpsTask["kind"][] = ["agent_task", "workflow_run", "image_session", "local_edit"];
 const taskRows: OpsTask[] = taskKinds.map((kind, index) => ({ id: `task-${index}`, kind, product_id: kind === "image_session" ? null : "product-a", title: ["Assistant inspection", "Product generation", "Continuous image", "Local correction"][index], status: ["waiting_user", "unknown", "running", "draft"][index], created_at: created, started_at: index === 0 ? null : created, finished_at: null, failure_reason: index === 1 ? "Review required" : null }));
 
-async function mockOps(page: Page, ordinary = false) {
+async function mockOps(page: Page, ordinary = false, preferences: AccountPreferences = { locale: "zh-CN", theme: "system" }) {
   const state = { facts: factResponse(1, "Lamp A"), saves: 0, deletes: 0, deleted: false, adjustments: [] as Array<{ idempotency_key: string; delta_units: number; reason: string }>, actions: [] as OpsAction[], events: [] as OpsQuotaEvent[], requested: [] as string[] };
   await page.route("**/api/**", (route) => route.fulfill({ json: { items: [], conversations: [] } }));
-  await page.route("**/api/auth/session", (route) => route.fulfill({ json: { authenticated: true, access_required: true, user: { id: "operator", email: "ops@example.com", display_name: "Operator", is_operator: !ordinary }, merchant: ordinary ? merchants[0] : null } }));
-  await page.route("**/api/account", (route) => route.fulfill({ json: { user: { id: "operator", email: "ops@example.com", display_name: "Operator", is_operator: !ordinary }, merchant: ordinary ? merchants[0] : null } }));
+  await page.route("**/api/auth/session", (route) => route.fulfill({ json: { authenticated: true, preferences, access_required: true, user: { id: "operator", email: "ops@example.com", display_name: "Operator", is_operator: !ordinary }, merchant: ordinary ? merchants[0] : null } }));
+  await page.route("**/api/account", (route) => route.fulfill({ json: { preferences, user: { id: "operator", email: "ops@example.com", display_name: "Operator", is_operator: !ordinary }, merchant: ordinary ? merchants[0] : null } }));
   await page.route("**/api/account/sessions?*", (route) => route.fulfill({ json: { items: [], next_cursor: null } }));
   await page.route("**/api/ops/**", (route) => {
     const url = new URL(route.request().url());
@@ -89,7 +89,7 @@ for (const locale of LOCALES) for (const width of [390, 1440]) for (const theme 
     const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
     await page.setViewportSize({ width, height: 960 });
     await page.addInitScript(({ locale, theme }) => { localStorage.setItem("productflow.locale", locale); localStorage.setItem("productflow.theme", theme); }, { locale, theme });
-    const state = await mockOps(page);
+    const state = await mockOps(page, false, { locale, theme: theme as "light" | "dark" });
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/ops");
@@ -186,7 +186,7 @@ test("independent operator login lands in operations and mobile navigation conta
   let authenticated = false;
   await page.route("**/api/auth/session", (route) => {
     if (route.request().method() === "POST") { authenticated = true; return route.fulfill({ json: { ok: true } }); }
-    return route.fulfill({ json: authenticated ? { authenticated, access_required: true, user: { id: "operator", email: "ops@example.com", display_name: "Operator", is_operator: true }, merchant: null } : { authenticated, access_required: true } });
+    return route.fulfill({ json: authenticated ? { authenticated, preferences: { locale: "zh-CN", theme: "system" }, access_required: true, user: { id: "operator", email: "ops@example.com", display_name: "Operator", is_operator: true }, merchant: null } : { authenticated, access_required: true } });
   });
   await page.goto("/login");
   await page.getByLabel("邮箱", { exact: true }).fill("ops@example.com");
@@ -316,7 +316,7 @@ test("merchant Dock remains on ordinary merchant pages", async ({ page }) => {
 
 test("merchant-owning operator Dock unmounts when entering operations", async ({ page }) => {
   await mockOps(page);
-  await page.route("**/api/auth/session", (route) => route.fulfill({ json: { authenticated: true, access_required: true, user: { id: "operator", email: "ops@example.com", display_name: "Operator", is_operator: true }, merchant: merchants[0] } }));
+  await page.route("**/api/auth/session", (route) => route.fulfill({ json: { authenticated: true, preferences: { locale: "zh-CN", theme: "system" }, access_required: true, user: { id: "operator", email: "ops@example.com", display_name: "Operator", is_operator: true }, merchant: merchants[0] } }));
   await page.goto("/account");
   await expect(page.locator("[data-global-agent-launcher]")).toBeVisible();
   await page.locator('nav a[href="/ops"]').first().click();

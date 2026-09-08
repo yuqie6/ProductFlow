@@ -21,7 +21,7 @@ for (const width of [390, 1440]) {
       const patches: Record<string, unknown>[] = [];
       await page.route("**/api/**", (route) => route.fulfill({ json: { items: [] } }));
       await page.route("**/api/auth/session", (route) => route.fulfill({ json: {
-        authenticated: true, access_required: true,
+        authenticated: true, preferences: { locale, theme: width === 390 ? "light" : "dark" }, access_required: true,
         user: { id: "operator", email: "operator@example.com", display_name: "Operator", is_operator: true },
         merchant: { id: "merchant", name: "Shop", status: "active" },
       } }));

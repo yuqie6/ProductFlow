@@ -30,7 +30,7 @@ for (const width of [390, 1440]) {
       await page.route("**/api/**", (route) => route.fulfill({ json: { items: [] } }));
       await page.route("**/api/auth/session", (route) => route.fulfill({ json: {
         authenticated: signedIn, access_required: true, needs_bootstrap: false, registration_available: true,
-        ...(signedIn ? { user: { id: "user", email: "member@example.com", display_name: "Member", is_operator: false }, merchant: { id: "merchant", name: "Shop", status: "active" } } : {}),
+        ...(signedIn ? { preferences: { locale: "zh-CN", theme: "system" }, user: { id: "user", email: "member@example.com", display_name: "Member", is_operator: false }, merchant: { id: "merchant", name: "Shop", status: "active" } } : {}),
       } }));
       await page.route("**/api/auth/registration-code", (route) => {
         sent++;

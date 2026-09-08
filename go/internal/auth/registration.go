@@ -229,6 +229,7 @@ func (s Service) Register(ctx context.Context, email, challengeID, code, passwor
 		principal = &Principal{
 			UserID: userID, SessionID: sessionID, Email: emailNorm,
 			DisplayName: displayName, IsOperator: false, MerchantID: &merchantID,
+			Locale: defaultAccountLocale, Theme: defaultAccountTheme,
 		}
 		return nil
 	})
