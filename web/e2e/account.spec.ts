@@ -53,7 +53,7 @@ for (const locale of LOCALES) for (const width of [390, 1440]) for (const theme 
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/account");
     await expect(page.getByRole("heading", { name: t("account.title"), exact: true })).toBeVisible();
-    await expect(page.getByLabel(t("login.email"), { exact: true })).toHaveAttribute("readonly", "");
+    await expect(page.getByLabel(t("login.email"), { exact: true })).toHaveText(user.email);
     await expect(page.getByText(t("account.operator"), { exact: true })).toHaveCount(operator ? 1 : 0);
     await page.getByLabel(t("account.displayName"), { exact: true }).fill("Updated name");
     await page.locator("form").filter({ has: page.getByLabel(t("account.displayName"), { exact: true }) }).getByRole("button", { name: t("account.save"), exact: true }).click();
@@ -63,6 +63,8 @@ for (const locale of LOCALES) for (const width of [390, 1440]) for (const theme 
     await expect(page.getByRole("status")).toContainText(t("account.saved"));
     await checkWidth(page, width);
     await page.screenshot({ path: testInfo.outputPath("account.png"), fullPage: true });
+    await selectAccountSection(page, "security");
+    await page.screenshot({ path: testInfo.outputPath("security.png"), fullPage: true, animations: "disabled" });
     await page.getByRole("button", { name: t("account.next"), exact: true }).click();
     await page.getByRole("button", { name: t("account.revoke"), exact: true }).click();
     const dialog = page.getByRole("dialog");
@@ -139,6 +141,8 @@ test("password validation, rejected current password, and successful sign-out", 
     return route.fulfill({ json: { ok: true } });
   });
   await page.goto("/account");
+  await selectAccountSection(page, "security");
+  await page.locator(".account-password summary").click();
   await page.getByLabel("当前密码", { exact: true }).fill("current-password");
   await page.getByLabel("新密码", { exact: true }).fill("new-password123");
   await page.getByLabel("确认新密码", { exact: true }).fill("different-password");
@@ -167,10 +171,12 @@ test("recoverable loading and read errors, empty sessions, keyboard focus and ex
   release();
   await expect(page.getByRole("alert").filter({ hasText: "Profile unavailable" })).toBeVisible();
   await page.getByRole("region", { name: "个人资料", exact: true }).getByRole("button", { name: "重试", exact: true }).click();
+  await selectAccountSection(page, "security");
   await expect(page.getByRole("alert").filter({ hasText: "Sessions unavailable" })).toBeVisible();
   await page.getByRole("region", { name: "有效登录会话", exact: true }).getByRole("button", { name: "重试", exact: true }).click();
   await expect(page.getByLabel("显示名称", { exact: true })).toHaveValue("Member");
   await expect(page.getByText("暂无有效会话", { exact: true })).toBeVisible();
+  await selectAccountSection(page, "profile");
   await page.getByLabel("显示名称", { exact: true }).focus();
   await expect(page.getByLabel("显示名称", { exact: true })).toBeFocused();
   await page.getByLabel("显示名称", { exact: true }).fill(" ");
@@ -207,6 +213,7 @@ test.describe("touch account navigation", () => {
     await page.goto("/help");
     await page.getByRole("link", { name: "个人账户", exact: true }).last().tap();
     await expect(page.getByRole("heading", { name: "个人账户", exact: true })).toBeVisible();
+    await selectAccountSection(page, "security");
     const revoke = page.getByRole("button", { name: "退出当前会话", exact: true });
     await revoke.tap();
     await expect(page.getByRole("dialog")).toBeVisible();
@@ -221,3 +228,9 @@ test.describe("touch account navigation", () => {
     await expect(page).toHaveURL(/\/login$/);
   });
 });
+
+async function selectAccountSection(page: Page, section: "profile" | "preferences" | "security") {
+  const link = page.locator(`a[href="/account#${section}"]`);
+  await link.click();
+  await expect(link).toHaveAttribute("aria-current", "page");
+}

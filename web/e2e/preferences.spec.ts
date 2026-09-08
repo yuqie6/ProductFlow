@@ -55,20 +55,24 @@ for (const locale of LOCALES) for (const width of [390, 1440]) for (const theme 
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("/account");
+    await selectAccountSection(page, "preferences");
     await expect(page.getByRole("heading", { name: accountPreferencesMessage(locale, "title"), exact: true })).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("lang", locale);
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
     expect(state.writes).toHaveLength(0);
     await page.screenshot({ path: testInfo.outputPath("account-preferences.png"), fullPage: true });
+    await selectAccountSection(page, "profile");
     const merchantSection = page.locator('section[aria-labelledby="merchant-heading"]');
     await merchantSection.getByLabel(t("account.merchant"), { exact: true }).fill("  Atelier 商品  ");
     await merchantSection.getByRole("button", { name: t("account.save"), exact: true }).click();
     await expect(merchantSection.getByText(t("account.saved"), { exact: true })).toBeVisible();
     expect(state.merchantWrites).toEqual(["Atelier 商品"]);
+    await selectAccountSection(page, "preferences");
     await page.getByRole("radio", { name: t("theme.system"), exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("data-theme-preference", "system");
     expect(state.writes.at(-1)?.input).toEqual({ theme: "system" });
     const nextLocale = locale === "en-US" ? "ja-JP" : "en-US";
+    await selectAccountSection(page, "preferences");
     await page.getByRole("combobox", { name: t("nav.language"), exact: true }).click();
     await page.getByRole("option", { name: t(LOCALE_LABEL_KEYS[nextLocale]), exact: true }).click();
     await expect(page.locator("html")).toHaveAttribute("lang", nextLocale);
@@ -100,6 +104,7 @@ test("top navigation and account share pending, failure, retry and saved prefere
   await page.goto("/account");
   await page.getByRole("button", { name: "Theme: Light", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Preferences were not saved");
+  await selectAccountSection(page, "preferences");
   await expect(page.getByRole("radio", { name: "Dark", exact: true })).toBeChecked();
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
@@ -112,6 +117,7 @@ test("top navigation and account share pending, failure, retry and saved prefere
     state.accounts.alice.preferences = { locale: "ja-JP", theme: "light" };
     await route.fulfill({ json: state.accounts.alice.preferences });
   });
+  await selectAccountSection(page, "preferences");
   await page.getByRole("combobox", { name: "Language", exact: true }).click();
   await page.getByRole("option", { name: "日本語", exact: true }).click();
   await expect(page.getByRole("radio", { name: "Light", exact: true })).toBeDisabled();
@@ -131,6 +137,7 @@ test("logout and new account ignore a late old preference response and anonymous
   await page.goto("/account");
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   expect(state.writes).toHaveLength(0);
+  await selectAccountSection(page, "preferences");
   await page.getByRole("combobox", { name: "Language", exact: true }).click();
   await page.getByRole("option", { name: "中文", exact: true }).click();
   await page.getByRole("button", { name: "Log out", exact: true }).click();
@@ -167,6 +174,7 @@ test("merchant name validation, failed save recovery and suspended or absent mer
   await save.click(); await expect(section.getByText("Profile saved", { exact: true })).toBeVisible();
   state.accounts.alice.merchant!.status = "suspended";
   await page.reload(); await expect(input).toBeDisabled();
+  await selectAccountSection(page, "preferences");
   await page.getByRole("radio", { name: "Light", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   state.accounts.alice = { ...state.accounts.alice, merchant: null, user: { ...state.accounts.alice.user, is_operator: true } };
@@ -190,9 +198,11 @@ test("late display-name response cannot overwrite newly saved preferences", asyn
   const form = page.locator("form").filter({ has: page.getByLabel("Display name", { exact: true }) });
   await form.getByLabel("Display name", { exact: true }).fill("Updated name");
   await form.getByRole("button", { name: "Save profile", exact: true }).click();
+  await selectAccountSection(page, "preferences");
   await page.getByRole("radio", { name: "Light", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   release();
+  await selectAccountSection(page, "profile");
   await expect(form.getByText("Profile saved", { exact: true })).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
@@ -230,9 +240,11 @@ test.describe("preference touch and keyboard controls", () => {
     await page.emulateMedia({ colorScheme: "light" });
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
     expect(state.writes).toHaveLength(1);
+    await selectAccountSection(page, "preferences");
     await page.getByRole("combobox", { name: "Language", exact: true }).tap();
     await page.getByRole("option", { name: "日本語", exact: true }).tap();
     await expect(page.locator("html")).toHaveAttribute("lang", "ja-JP");
+    await selectAccountSection(page, "preferences");
     const theme = page.getByRole("radio", { name: translate("ja-JP", "theme.system"), exact: true });
     await theme.focus();
     await expect(theme).toBeFocused();
@@ -261,12 +273,15 @@ for (const operation of ["logout", "password", "revoke"] as const) {
     const request = page.waitForRequest((request) => new URL(request.url()).pathname === endpoint && request.method() === method);
     if (operation === "logout") await page.getByRole("button", { name: "Log out", exact: true }).click();
     if (operation === "password") {
+      await selectAccountSection(page, "security");
+      await page.locator(".account-password summary").click();
       await page.getByLabel("Current password", { exact: true }).fill("current-password");
       await page.getByLabel("New password", { exact: true }).fill("new-password123");
       await page.getByLabel("Confirm new password", { exact: true }).fill("new-password123");
       await page.getByRole("button", { name: translate("en-US", "account.changePassword"), exact: true }).click();
     }
     if (operation === "revoke") {
+      await selectAccountSection(page, "security");
       await page.getByRole("button", { name: translate("en-US", "account.revokeCurrent"), exact: true }).click();
       await page.getByRole("dialog").getByRole("button", { name: translate("en-US", "account.revokeCurrent"), exact: true }).click();
     }
@@ -282,7 +297,7 @@ for (const operation of ["logout", "password", "revoke"] as const) {
     release();
     await (await response).finished();
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-    await expect(page).toHaveURL(/\/account$/);
+    await expect(page).toHaveURL(/\/account(?:#(?:profile|security))?$/);
     await expect(page.getByLabel(translate("ja-JP", "account.displayName"), { exact: true })).toHaveValue("bob");
     await expect(page.getByLabel(translate("ja-JP", "account.currentPassword"), { exact: true })).toHaveValue("");
     await expect(page.getByLabel(translate("ja-JP", "account.merchant"), { exact: true })).toHaveValue("bob shop");
@@ -294,6 +309,7 @@ test("mobile preference failure stays visible while its controls are scrolled in
   const state = await mockPreferences(page);
   state.failPreferences = 1;
   await page.goto("/account");
+  await selectAccountSection(page, "preferences");
   await page.getByRole("radio", { name: "Light", exact: true }).scrollIntoViewIfNeeded();
   await page.getByRole("radio", { name: "Light", exact: true }).click();
   const alert = page.getByRole("alert");
@@ -313,16 +329,40 @@ test("account section navigation preserves drafts and theme previews support key
   await page.goto("/account");
   const name = page.getByLabel("Display name", { exact: true });
   await name.fill("Unsaved account name");
-  await page.locator('a[href="#preferences"]').click();
+  await selectAccountSection(page, "preferences");
   const dark = page.getByRole("radio", { name: "Dark", exact: true });
   await dark.focus();
   await page.keyboard.press("ArrowLeft");
   await expect(page.getByRole("radio", { name: "Light", exact: true })).toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await page.locator('a[href="#profile"]').click();
+  const preferenceBounds = await page.locator("#preferences").evaluate((element) => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+  expect(preferenceBounds.scroll).toBeLessThanOrEqual(preferenceBounds.width);
+  await page.screenshot({ path: testInfo.outputPath("preferences-narrow.png"), fullPage: true });
+  await selectAccountSection(page, "profile");
   await expect(name).toHaveValue("Unsaved account name");
   const bounds = await page.evaluate(() => ({ width: innerWidth, client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
   expect(bounds.width).toBe(1024);
   expect(bounds.scroll).toBeLessThanOrEqual(bounds.client);
   await page.screenshot({ path: testInfo.outputPath("account-narrow.png"), fullPage: true });
+  await expect(page.locator("#preferences")).toBeHidden();
+  await selectAccountSection(page, "security");
+  const passwordToggle = page.locator(".account-password summary");
+  await expect(page.getByLabel("Current password", { exact: true })).toBeHidden();
+  await passwordToggle.focus();
+  await page.keyboard.press("Enter");
+  await page.getByLabel("Current password", { exact: true }).fill("password draft");
+  await selectAccountSection(page, "profile");
+  await page.goBack();
+  await expect(page.locator('a[href="/account#security"]')).toHaveAttribute("aria-current", "page");
+  await expect(page.getByLabel("Current password", { exact: true })).toHaveValue("password draft");
+  await page.reload();
+  await expect(page.locator('a[href="/account#security"]')).toHaveAttribute("aria-current", "page");
+  await expect(page.getByLabel("Display name", { exact: true })).toBeHidden();
+
 });
+
+async function selectAccountSection(page: Page, section: "profile" | "preferences" | "security") {
+  const link = page.locator(`a[href="/account#${section}"]`);
+  await link.click();
+  await expect(link).toHaveAttribute("aria-current", "page");
+}

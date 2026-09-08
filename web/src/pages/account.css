@@ -1,0 +1,39 @@
+.account-logout { display: flex; justify-content: flex-end; margin-bottom: 24px; }
+.account-sidebar { padding-right: 20px; }
+.account-nav-link[aria-current="page"] { color: var(--color-accent); background: var(--color-accent-soft); font-weight: 600; }
+.account-section[hidden] { display: none; }
+.account-section > header { margin-bottom: 24px; }
+.account-section-compact { margin-top: 32px; }
+.account-section-compact > header { margin-bottom: 16px; }
+.account-form > .block, .account-readonly {
+  display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 20px;
+  padding: 18px 0; border-bottom: 1px solid var(--color-border-l1);
+}
+.account-form > .block { margin-top: 0; }
+.account-form > .block > label, .account-readonly > span:first-child { margin: 0; font-size: 13px; font-weight: 500; color: var(--color-text-secondary); }
+.account-form input { max-width: 380px; background: var(--color-surface-raised); }
+.account-form > .account-readonly { margin-top: 0; }
+.account-password { border-bottom: 1px solid var(--color-border-l1); }
+.account-password > summary { list-style: none; }
+.account-password > summary::-webkit-details-marker { display: none; }
+.account-password[open] .account-password-chevron { transform: rotate(180deg); }
+.account-password > form { padding-bottom: 20px; }
+.account-preferences > div:first-child { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 20px; align-items: center; border-bottom: 1px solid var(--color-border-l1); padding-bottom: 24px; }
+.account-preferences > div:first-child > label { margin: 0; }
+.account-preferences > div:first-child > button { max-width: 380px; }
+.account-preferences fieldset { border-bottom: 1px solid var(--color-border-l1); padding-bottom: 24px; }
+@media (min-width: 1024px) {
+  .account-sidebar { border-right: 1px solid var(--color-border-l1); min-height: 470px; }
+}
+@media (max-width: 639px) {
+  .account-sidebar { padding-right: 0; }
+  .account-form > .block, .account-readonly, .account-preferences > div:first-child { grid-template-columns: 1fr; gap: 10px; }
+  .account-form input { max-width: none; }
+  .account-logout { margin-bottom: 20px; }
+}
+@media (min-width: 640px) {
+  .account-preferences fieldset > legend { float: left; width: 150px; }
+  .account-preferences fieldset > div { margin-left: 170px; }
+}
+.account-preferences fieldset { min-width: 0; }
+.account-password > summary:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 3px; border-radius: var(--radius-control); }
