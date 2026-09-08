@@ -45,7 +45,8 @@
 | Pi 默认并行工具同时追加 checkpoint，Node 为两个请求分配同一序号，Go 对不同内容返回 Conflict | TurnRuntime 串行持久化 checkpoint；清理等待待写链，新 Turn 重置；沿既有 lease 错误中止后续项 | 原代码两种并发场景发送 [1,1]；修复后确认成功发送 [1,2]、首条失败只发一次且两调用失败，清理等待；真实 PG 验证序号绑定内容 | 2b4355ec |
 | 连续生图结算吞掉缺失预留错误，允许终态与实际额度结算分离 | settleGenerationQuota 直接返回 quota.Settle 的错误；原终态事务回滚 | 独立 PostgreSQL 验证成功和已调用失败终态拒绝缺 hold，恢复原预留后同 attempt 可提交并结算 | `c8e00923` |
 | 手动重试缺失活动预留时退回首次已结算键，旧结算幂等结果放行当前终态 | 额度键查询返回是否命中活动预留；结算必须命中，取消/释放消费者保持原合同 | 两种终态的 retry=true 原实现均返回 nil；修复后拒绝并回滚，恢复同一重试 hold 后结算 | `bca12de2` |
-| Agent 统计可运行节点时需注入 Graph 依赖并编排三步内部查询 | Graph Service.CountRunnableNodesTx 拥有依赖和查询步骤，Agent 保留审批 Conflict 解释 | PostgreSQL 正常计数/跨商家/缺依赖/零运行写入；隔离基线 Agent 空图、确认与创建消费者通过 | 随本次提交 |
+| Agent 统计可运行节点时需注入 Graph 依赖并编排三步内部查询 | Graph Service.CountRunnableNodesTx 拥有依赖和查询步骤，Agent 保留审批 Conflict 解释 | PostgreSQL 正常计数/跨商家/缺依赖/零运行写入；隔离基线 Agent 空图、确认与创建消费者通过 | `d26d71dd` |
+| 局部编辑调用前数据库读取故障被归为不可重试业务失败，队列收到 nil | Execute 区分输入错误、失效 attempt 和基础设施读取错误；ReadIO 保留 cause | 独立 PG 42P01 经 queue.Consume 返回、信封 pending、task claimed，恢复后执行成功；三类媒体 I/O 映射保留 cause | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -263,3 +264,14 @@ Node [进程重启测试](../../agent-service/src/process-restart.e2e.test.ts) �
 独立 checkout 的 go vet -stdversion=false 检查通过；标准 vet 的既有 Go 1.23 声明与 testing.Context/Chdir 使用缺口未在本切片改变，关闭该分析项不计为标准 vet 全绿。没有付费模型调用、外部副作用或共享服务重启。
 
 删除无调用者的导出包装后，独立 checkout 的最终 Graph 数据库回归通过（0.877 秒），Agent 消费者组合通过（2.039 秒）；当前共享 docs-check 通过。主代理复核完整切片 diff、导出名称零代码残留和跨商家错误来源；临时 checkout 已清理。最终范围包含删除 graph/export.go，未修改其他任务的 Agent eval_*、后台或活文档。
+
+
+## 局部编辑调用前读取失败分类
+
+本切片由主代理负责，范围为 `localedit/execute.go`、现有 HTTP 测试服务装配和 [读取失败回归](../../go/internal/localedit/snapshot_failure_test.go)。旧 Execute 对 loadSnapshot 的全部错误调用不可重试 failed 终态。独立 PostgreSQL 测试暂时重命名该库的 product_image_assets 表，经 queue.Consume 实际触发 42P01；旧实现返回 nil，负例失败（1.944 秒）。数据库不可用不能证明输入不合法或 Provider 失败。
+
+Execute 现在只将输入 Validation/NotFound 转为既有业务失败，其他读取错误原样返回队列；loadSnapshot 的旧 attempt 使用已有 errAttemptFenced，调用者停止而不尝试提交失败。源图/mask/参考图的 media.ReadIO 保留原错误链，继续交给同一个基础设施错误分支。文件不存在、身份核验失败等既有输入错误文案保持原合同。不新增重试状态或队列机制，仍由 claimed 过期恢复创建新 attempt。
+
+测试服务增加显式数据库装配入口，原 newEditServer 继续复用原 testdb.Open；新故障测试使用自动清理的 pf_editsnapshot_* 独立库，避免重命名共享业务表。验证 queue.Consume 返回原 PostgreSQL 42P01、信封 pending、任务 running/claimed、Provider 未调用；恢复表后调用真实恢复函数，再次执行 succeeded 且调用测试 Provider。三种 ReadIO 映射的 cause 由定向单元回归验证，不能当作真实磁盘故障演练。当前回归没有重启 broker 或模拟 SIGKILL。
+
+最终 localedit 整包通过（6.294 秒），新增数据库恢复与三类 I/O 原因回归实际执行；标准 go vet 通过。主代理自审完整 diff、loadSnapshot 全调用者与旧错误路径，检查故障表恢复及临时数据库清理。当前 docs-check 和空白检查通过，没有修改其他任务的 quota、商品、schema 或评价文件，没有真实模型调用。

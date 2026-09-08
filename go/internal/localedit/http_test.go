@@ -44,6 +44,11 @@ type editServer struct {
 func newEditServer(t *testing.T, provider Provider) *editServer {
 	t.Helper()
 	pool, gdb := testdb.Open(t)
+	return newEditServerWithDatabase(t, provider, pool, gdb)
+}
+
+func newEditServerWithDatabase(t *testing.T, provider Provider, pool *pgxpool.Pool, gdb *gorm.DB) *editServer {
+	t.Helper()
 	root := t.TempDir()
 	engine := httpx.NewEngine(nil)
 	engine.Use(httpx.Session(httpx.NewCookieStore(httpx.SessionConfig{Secret: "test-session-secret-key"})))

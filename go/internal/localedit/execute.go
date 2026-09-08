@@ -45,9 +45,15 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 	}
 	snap, err := e.loadSnapshot(ctx, taskID, attemptID)
 	if err != nil {
-		detail := "局部编辑媒体读取失败"
+		if errors.Is(err, errAttemptFenced) {
+			return nil
+		}
 		var ae apperr.Error
-		if errors.As(err, &ae) && ae.Status == 400 {
+		if !errors.As(err, &ae) || (ae.Status != 400 && ae.Status != 404) {
+			return err
+		}
+		detail := "局部编辑媒体读取失败"
+		if ae.Status == 400 {
 			detail = ae.Detail
 		}
 		return e.finish(ctx, taskID, attemptID, "failed", "failed", "failed", detail, false, "", "")
@@ -259,7 +265,7 @@ func (e Executor) releaseIdle(ctx context.Context, taskID string) error {
 	return nil
 }
 
-// loadSnapshot 在 claim 成功后读任务、源图、mask、参考图。attempt 已不是当前 running 返回 409，调用方应停手。
+// loadSnapshot 在 claim 成功后读任务、源图、mask、参考图。失效 attempt 返回 errAttemptFenced；读取故障保留错误。
 func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (snapshot, error) {
 	var out snapshot
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
@@ -268,7 +274,7 @@ func (e Executor) loadSnapshot(ctx context.Context, taskID, attemptID string) (s
 			return err
 		}
 		if task.Status != "running" || task.ActiveAttemptID == nil || *task.ActiveAttemptID != attemptID {
-			return apperr.Conflict("局部编辑 attempt 已失效")
+			return errAttemptFenced
 		}
 		source, err := product.LoadAssetRow(ctx, pgxTx, task.SourceAssetID)
 		if err != nil {
@@ -591,6 +597,9 @@ func markUnknownLocked(ctx context.Context, tx *gorm.DB, task taskRow, detail st
 
 func mapLocalEditSourceRead(err error) error {
 	if re, ok := media.AsReadError(err); ok {
+		if re.Kind == media.ReadIO {
+			return err
+		}
 		switch re.Kind {
 		case media.ReadNotFound:
 			return apperr.Validation("局部编辑源图或 mask 媒体不存在")
@@ -605,6 +614,9 @@ func mapLocalEditSourceRead(err error) error {
 
 func mapLocalEditMaskRead(err error) error {
 	if re, ok := media.AsReadError(err); ok {
+		if re.Kind == media.ReadIO {
+			return err
+		}
 		switch re.Kind {
 		case media.ReadNotFound:
 			return apperr.Validation("局部编辑源图或 mask 媒体不存在")
@@ -619,6 +631,9 @@ func mapLocalEditMaskRead(err error) error {
 
 func mapLocalEditRefRead(err error) error {
 	if re, ok := media.AsReadError(err); ok {
+		if re.Kind == media.ReadIO {
+			return err
+		}
 		if re.Kind == media.ReadNotFound {
 			return apperr.Validation("局部编辑参考图媒体不存在")
 		}
