@@ -312,6 +312,9 @@ func (s *Service) Reserve(ctx context.Context, merchantID, idempotencyKey string
 			if existing.AmountUnits != amountUnits {
 				return apperr.Conflict("预留幂等键已存在且额度不一致")
 			}
+			if existing.PriceVersionID != priceVersionID {
+				return apperr.Conflict("预留幂等键已存在且价格版本不一致")
+			}
 			hold = holdFromRow(existing)
 			acctOut = accountFromRow(acct)
 			return nil
