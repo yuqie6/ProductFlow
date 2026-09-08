@@ -14,6 +14,8 @@
 
 [内容试跑](tasks/archive/image-quality-content-pilot.md) 已完成两商品完整对照（baseline `20260907T082558Z-673aeeb0` / candidate `20260907T084359Z-673aeeb0`）：闸门仍各 2/8；工作台均分相对原版 +4/平2/−2，炸锅卖点保真 5→4 单列。已归档；不把 k=1 写成泛化。新的端到端竞品比较须独立冻结输入与预算，不能覆盖旧 42/32 图位合同。[卖点保真对齐](tasks/archive/image-quality-selling-point-fidelity.md) 已收窄生成策略（一理由+本体证据、禁多利益底栏/臆造剖视/策划标签；拼装只发一句主要理由），确定性回归已归档。[卖点 live k=1](tasks/archive/image-quality-selling-point-live.md) 已归档（run `20260907T092416Z-d6b5915c`）：相对试跑 candidate 闸门否→是、保真 4→4（平）；≠R3 / ≠全面改善。
 
+2026-09-09 暗色摄影候选完成两样本各三次的真实生成对照及 18 次固定 v2 标注，暗色多数持平且胜负不稳定；未证实稳定改善，已移除候选附加指令。白 T 模特图符合原构图允许范围，与单品展示的三次比较均按不同目的处理。完整证据与删除验证见[局部生成候选](tasks/archive/category-generation-improvement.md)，不据此宣称类别整体达标。
+
 ## 组内交付
 
 1. [compete-facts-layout-contract](tasks/archive/compete-facts-layout-contract.md)：已冻结 IQ-CF-01…08 与 CF-B0…B5。[事实分层闸 CF-B0](tasks/archive/compete-facts-layer-gate.md)、[CF-B1 图位文字追溯](tasks/archive/compete-facts-text-trace.md)、[CF-B2 变更影响预览](tasks/archive/compete-facts-impact-preview.md)、[CF-B3 双路线](tasks/archive/compete-facts-produce-route.md)、[CF-B4 受控排版](tasks/archive/compete-facts-controlled-layout.md) 与 [CF-B5 品牌/视觉继承](tasks/archive/compete-facts-brand-inherit.md) 已交付（Brand 占位；≠R3）。合同实施批次收口；采用硬闸已有实现（见 archive），用户已裁定允许确认后采用及下载，保留实际质量结果；内容试跑已归档；后续 OCR/主体提取另发。
