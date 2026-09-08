@@ -15,6 +15,34 @@ from run_fault_recovery import provider_trace_report
 import run_load
 
 
+class ReadMeasurementTest(unittest.TestCase):
+    def test_warmup_latency_and_errors_do_not_enter_sample_statistics(self):
+        rows = [
+            run_load.RequestRecord("products", "m1", 200, 9000, phase="warmup"),
+            run_load.RequestRecord("products", "m1", 503, 8000, "unavailable", "warmup"),
+            run_load.RequestRecord("products", "m1", 200, 10),
+            run_load.RequestRecord("products", "m1", 200, 20),
+            run_load.RequestRecord("products", "m1", 503, 30, "unavailable"),
+        ]
+        report = run_load.summarize_reads(rows)["products"]
+        self.assertEqual(report["completed"], 2)
+        self.assertEqual(report["unexpected_failures"], 1)
+        self.assertEqual(report["p95_ms"], 20)
+        self.assertEqual(report["p99_ms"], 20)
+        self.assertEqual(report["max_ms"], 20)
+        self.assertEqual(report["warmup_requests"], 2)
+        self.assertEqual(report["sample_requests"], 3)
+
+    def test_warmup_alone_does_not_claim_measurement(self):
+        report = run_load.summarize_reads([
+            run_load.RequestRecord("products", "m1", 200, 10, phase="warmup"),
+        ])["products"]
+        self.assertEqual(report["completed"], 0)
+        self.assertEqual(report["sample_requests"], 0)
+        self.assertIsNone(report["p95_ms"])
+        self.assertIsNone(report["max_ms"])
+
+
 class EventEvidenceTest(unittest.TestCase):
     @staticmethod
     def provider_lines(request_id, prompt):

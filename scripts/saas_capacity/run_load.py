@@ -46,6 +46,27 @@ class RequestRecord:
     phase: str = "sample"
 
 
+def summarize_reads(read_records: list[RequestRecord]) -> dict[str, dict[str, Any]]:
+    """Report measured reads only; retain warmup counts for audit."""
+    by_route: dict[str, dict[str, Any]] = {}
+    for route in READ_ROUTES:
+        route_records = [record for record in read_records if record.route == route]
+        sample_records = [record for record in route_records if record.phase == "sample"]
+        successful = [record for record in sample_records if record.status == 200 and not record.error]
+        by_route[route] = {
+            "completed": len(successful),
+            "expected_4xx": 0,
+            "unexpected_failures": sum(record.status != 200 or bool(record.error) for record in sample_records),
+            "p50_ms": percentile([record.latency_ms for record in successful], 0.50),
+            "p95_ms": percentile([record.latency_ms for record in successful], 0.95),
+            "p99_ms": percentile([record.latency_ms for record in successful], 0.99),
+            "max_ms": max((record.latency_ms for record in successful), default=None),
+            "warmup_requests": sum(record.phase == "warmup" for record in route_records),
+            "sample_requests": sum(record.phase == "sample" for record in route_records),
+        }
+    return by_route
+
+
 @dataclass
 class SSEStats:
     merchant: str
@@ -772,21 +793,7 @@ async def run_round(args: argparse.Namespace) -> dict[str, Any]:
             writer.writerow(record.__dict__)
 
     read_records = [record for record in records if record.route in READ_ROUTES]
-    by_route: dict[str, dict[str, Any]] = {}
-    for route in READ_ROUTES:
-        route_records = [record for record in read_records if record.route == route]
-        successful = [record for record in route_records if record.status == 200 and not record.error]
-        by_route[route] = {
-            "completed": len(successful),
-            "expected_4xx": 0,
-            "unexpected_failures": sum(record.status != 200 or bool(record.error) for record in route_records),
-            "p50_ms": percentile([record.latency_ms for record in successful], 0.50),
-            "p95_ms": percentile([record.latency_ms for record in successful], 0.95),
-            "p99_ms": percentile([record.latency_ms for record in successful], 0.99),
-            "max_ms": max((record.latency_ms for record in successful), default=None),
-            "warmup_requests": sum(record.phase == "warmup" for record in route_records),
-            "sample_requests": sum(record.phase == "sample" for record in route_records),
-        }
+    by_route = summarize_reads(read_records)
     completed = sum(item["completed"] for item in by_route.values())
     unexpected = sum(item["unexpected_failures"] for item in by_route.values())
     sse_summary = [
