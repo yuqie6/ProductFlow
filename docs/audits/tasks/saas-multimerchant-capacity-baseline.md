@@ -2,8 +2,8 @@
 
 状态：认领
 类型：证据
-认领者：image_live_review
-认领于：2026-09-08T21:23:04+08:00
+认领者：root
+认领于：2026-09-09T01:44:07+08:00
 业务组：平台可靠性
 父账本：performance-governance.md
 完成后可拆：按实测瓶颈发布公平调度或读取优化；公开注册试用版固定候选复验
@@ -120,3 +120,15 @@ root 审查要求补查：非 settle hold 的 settled_units、资源窗口中间
 上述工具缺口已修订。独立短预检得到 33 个成功任务与 33 个完整 provider 生命周期，HTTP/执行峰值并发均为 3；125 次读取无失败，覆盖 10 个商家；20 个 SSE 客户端持续重连，无错误或提前关闭。8 个有效资源样本完整，最大间隔 3.0857 秒，RSS/CPU/PG/Redis 指标实际可读。证据位于 `/tmp/productflow-saas-capacity-0908/storage-dev/saas-capacity-tools-preflight-0908`，两个失败准备目录保留。运行后专用容器和端口已清理。
 
 root 已将审核后的工具复制到 `scripts/saas_capacity/` 及 `go/internal/auth/saas_capacity_fixture_test.go`，修正一项离线测试对开发工作树清洁状态的无关依赖；25 项 Python 测试与 ruff 通过。此提交仅冻结可复现工具候选，任务继续认领；短预检不代表完整容量或故障验收，commit-to-SSE 时间仍未测。后续须从新候选构建独立镜像并重新采证，不能沿用 e183 的生产版本身份。
+
+## e190 正式采证与 root 判读
+
+固定 `e190e250b68bdd2b623bfbeeb4b0db8b2520f412`、source identity `476f596e7c4cb50117379c816440327e81a499158e61903ab8b1f62280abfadd`、image `sha256:a606460a0f9de2996bf519576389f5e05ff196d26594f476b8af96ee91fc2837`。完整原始产物位于 `/tmp/productflow-saas-capacity-e190e250/storage-dev/saas-capacity-e190e250-0909`；启动路径遗漏单列 startup-failed，没有计入正式分母。六轮、争用和故障均已执行，专用容器/网络/端口已清理。
+
+- L1 三轮各 1800 次读取、L2 三轮各 5400 次读取（含预热），全部无意外失败；六轮共 2220 个生成任务成功，provider 归因完整，HTTP/执行并发均未超过 3。资源窗口完整，实际 CPU 限额 4 核，PG 峰值 39/100，RSS 峰值约 0.2163 GiB。此为固定夹具及 1px mock 输出，不代表真实大图内存峰值。
+- 旧汇总 p95/p99 混入预热；root 从不可变 CSV 的 sample 行独立重算，L1 每轮 1500 次、L2 每轮 4500 次，共 18000 次正式读取。最大路由 p95 140.005ms、p99 217.289ms，均满足读取目标。派生证据 `storage-dev/saas-capacity-root-review-0908/sample-only-read-replay-e190.json` 含源 CSV hash，原汇总未覆盖；工具的统计阶段口径仍需修订。
+- L1 SSE 检查通过；L2 各记录 238/387/357 次 premature closure 并返回失败。EOF 后读取可变 active task 的竞态，以及重连初始快照重复，尚不足以归因生产 SSE 故障。原始失败保留，SSE 语义判读待补；六轮 commit-to-observation 仍 unmeasurable。
+- 争用 A100/B20 全部完成，124 个任务的 quota 生命周期与 provider once 完整；B 等待 p95 74.629s，超过 10s，是真实 FAIL。账户总账检查误拒 psycopg Decimal：root 以新回归复现旧 e190 失败、修正精确整数聚合类型后 26 项测试通过；原始 10 商家快照重算全部一致。派生证据 `storage-dev/saas-capacity-root-review-0908/decimal-account-replay-e190.json` 绑定原始 contention SHA，整体争用仍 FAIL。
+- fault 前置真实读回 3 running + 1 queued；Redis 实际中断约 44.1s。短观察结束时 3 long 仍 running、新任务 queued/timed_out，provider 仅记录 3/5 预期请求。不能据此证明 90 分钟 stale 恢复失效，也不能宣称恢复通过。
+
+root 接管剩余判读与工具修正；本单尚未完整验收。商家公平性、故障后短窗口不可用、SSE/commit 测量缺口分别保留，不以修复统计器掩盖实际业务失败。

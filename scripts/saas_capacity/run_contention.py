@@ -6,6 +6,7 @@ import asyncio
 import json
 import statistics
 import time
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -368,12 +369,12 @@ def quota_report(
             outstanding = account.get("outstanding_units")
             expected_available = opening_balance_units + int(adjust_units or 0) - int(consumed or 0) - int(outstanding or 0)
             arithmetic_pass = (
-                isinstance(available, (int, float))
-                and isinstance(reserved, (int, float))
-                and isinstance(adjust_count, (int, float))
-                and isinstance(adjust_units, (int, float))
-                and isinstance(consumed, (int, float))
-                and isinstance(outstanding, (int, float))
+                # PostgreSQL SUM(bigint) is numeric, decoded by psycopg as
+                # Decimal. Keep the exact aggregate instead of using float.
+                all(
+                    isinstance(value, (int, float, Decimal)) and value == int(value)
+                    for value in (available, reserved, adjust_count, adjust_units, consumed, outstanding)
+                )
                 and int(adjust_count) == expected_adjust_units_per_merchant
                 and int(adjust_units) == expected_adjust_units_per_merchant
                 and int(available) == expected_available

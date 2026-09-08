@@ -3,6 +3,7 @@
 
 import sys
 import unittest
+from decimal import Decimal
 
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
@@ -20,6 +21,22 @@ class FakeDBProbe:
 
 class ContentionEvidenceTests(unittest.TestCase):
     merchants = [{"image_session_id": "session-a"}]
+
+    def test_quota_account_accepts_postgres_numeric_aggregates(self):
+        account = {
+            "merchant_id": "merchant-a",
+            "available_units": 1_009_157,
+            "reserved_units": 0,
+            "adjust_event_count": 10_000,
+            "adjust_units": Decimal("10000"),
+            "consumed_units": Decimal("843"),
+            "outstanding_units": Decimal("0"),
+        }
+        report = quota_report([], [], [account], 1_000_000, 10_000, expected_merchant_ids=["merchant-a"])
+        self.assertTrue(report["account_reconciliation"]["pass"])
+        account["available_units"] += 1
+        report = quota_report([], [], [account], 1_000_000, 10_000, expected_merchant_ids=["merchant-a"])
+        self.assertFalse(report["account_reconciliation"]["pass"])
 
     def test_accepted_snapshot_gap_is_reconciled_without_overwriting_raw_id(self):
         submissions = [

@@ -385,3 +385,9 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 - 2026-09-07 pin+正式 D4：新 pin `0.0.0-67b0f3092158`（≡`67b0f309`）；隔离项目 `pf-r6-d4-n-20260907` 上 `0.0.0-5ed2b916b569`→新 pin 主路径四项 health + `UPGRADE_SIMULATE_MIGRATE_FAIL` fail-stop **PASS**（非等价 retag）。证据见 [release-r6-pin-and-formal-d4](tasks/archive/release-r6-pin-and-formal-d4.md)。
 - 2026-09-07 资源预算：隔离项目 `pf-r6-budget-20260907`、pin `0.0.0-67b0f3092158`；空闲稳态 + 四项 health + bootstrap/登录/`/api` 探针下各容器 CPU/内存；部署规模对应表与观测依据建议（≥2 vCPU / ≥4 GiB，**非 SLA**）。证据见 [release-r6-resource-budget](tasks/archive/release-r6-resource-budget.md)。关闭裁定见 [release-r6-close-ruling](tasks/archive/release-r6-close-ruling.md)：**总纲 R6 通过**。
 - 2026-09-07 R6 关闭裁定：按 ROADMAP 六项对照归档证据，**总纲 R6 通过**；残余非宣称见 [release-r6-close-ruling](tasks/archive/release-r6-close-ruling.md)。≠R1–R5/≠SLA。
+
+## 2026-09-09 多商家固定采样
+
+[容量任务](tasks/saas-multimerchant-capacity-baseline.md) 已在固定 e190e250、4 核/8 GiB 限额、10 商家与本地 1px mock 输出下执行 L1/L2 各三轮、争用和故障实验。sample 阶段 18000 次读取无失败，最大路由 p95 140.005ms、p99 217.289ms；2220 个生成任务成功，provider 归因完整，最大并发 3。实际 RSS 峰值约 0.2163 GiB、PG 峰值 39/100；这些结果不覆盖真实大图内存或生产 SLA。
+
+整体未通过：A100/B20 争用中 B 等待 p95 为 74.629s，超过 10s；故障短窗口内未恢复，但没有覆盖 90 分钟 stale 阈值。L2 SSE 标记受 EOF 后状态读取竞态影响，commit-to-SSE 缺真实提交时间；两项不能冒充有效通过或确证生产根因。root 对预热统计和 Decimal 账户聚合做了绑定原始 hash 的独立重算，原始 FAIL 未覆盖；10 商家账本快照算术一致，争用等待 FAIL 保留。后续应处理实际公平性/恢复问题并补测量缺口，不能仅增加 worker 或放宽阈值。
