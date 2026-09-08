@@ -154,20 +154,22 @@ func main() {
 	})
 
 	server := asynq.NewServer(redisOpt, asynq.Config{Concurrency: 4})
-	errCh := make(chan error, 1)
-	go func() {
-		logger.Info("worker listen")
-		errCh <- server.Run(mux)
-	}()
-
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	select {
-	case <-stop:
-		server.Shutdown()
-	case err := <-errCh:
-		if err != nil {
-			logger.Fatal("worker", zap.Error(err))
-		}
+	defer signal.Stop(stop)
+	logger.Info("worker listen")
+	if err := runWorker(server, mux, stop); err != nil {
+		logger.Fatal("worker", zap.Error(err))
 	}
+}
+
+func runWorker(server *asynq.Server, handler asynq.Handler, stop <-chan os.Signal) error {
+	// Run also handles process signals. A second Shutdown caller can return
+	// while the first caller is still draining workers, letting main exit early.
+	if err := server.Start(handler); err != nil {
+		return err
+	}
+	<-stop
+	server.Shutdown()
+	return nil
 }
