@@ -59,7 +59,8 @@ func (e Executor) markGenerationQuotaUnknown(ctx context.Context, merchantID, ta
 	if err != nil {
 		return err
 	}
-	return finalizeQuotaIgnoreMissing(e.quota().MarkUnknown(ctx, merchantID, key))
+	_, _, err = e.quota().MarkUnknown(ctx, merchantID, key)
+	return err
 }
 
 func (e Executor) releaseGenerationQuota(ctx context.Context, merchantID, taskID string) error {
@@ -67,17 +68,7 @@ func (e Executor) releaseGenerationQuota(ctx context.Context, merchantID, taskID
 	if err != nil {
 		return err
 	}
-	return finalizeQuotaIgnoreMissing(e.quota().Release(ctx, merchantID, key))
-}
-
-func finalizeQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) error {
-	if err == nil {
-		return nil
-	}
-	if apperr.IsNotFound(err) {
-		// 直插任务夹具未走 Generate Reserve；不要把缺 hold 升级成 worker 失败。
-		return nil
-	}
+	_, _, err = e.quota().Release(ctx, merchantID, key)
 	return err
 }
 

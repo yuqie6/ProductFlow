@@ -16,7 +16,7 @@ import (
 )
 
 func TestGenerationSettlementRequiresQuotaHold(t *testing.T) {
-	for _, terminal := range []string{"succeeded", "failed"} {
+	for _, terminal := range []string{"succeeded", "failed", "unknown", "cancelled"} {
 		for _, retry := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/retry=%t", terminal, retry), func(t *testing.T) {
 				pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_successhold_%d", time.Now().UnixNano()))
@@ -67,6 +67,15 @@ func TestGenerationSettlementRequiresQuotaHold(t *testing.T) {
 						return e.finishFailed(ctx, taskID, attemptID, session.ID, apperr.Validation("confirmed failure"))
 					}
 				}
+				wantHold := quota.StatusSettled
+				if terminal == "unknown" {
+					finish = func() error { return e.finishUnknown(ctx, taskID, attemptID, session.ID) }
+					wantHold = quota.StatusPendingReconciliation
+				}
+				if terminal == "cancelled" {
+					finish = func() error { _, err := ss.svc.Cancel(ctx, session.ID, taskID); return err }
+					wantHold = quota.StatusReleased
+				}
 				if err := finish(); !apperr.IsNotFound(err) {
 					t.Fatalf("missing hold must reject terminal commit: %v", err)
 				}
@@ -93,7 +102,7 @@ func TestGenerationSettlementRequiresQuotaHold(t *testing.T) {
 				if task.Status != terminal {
 					t.Fatalf("status=%s", task.Status)
 				}
-				if hold := loadQuotaHold(t, db, merchantID, key); hold.Status != quota.StatusSettled {
+				if hold := loadQuotaHold(t, db, merchantID, key); hold.Status != wantHold {
 					t.Fatalf("hold=%+v", hold)
 				}
 
