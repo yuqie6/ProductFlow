@@ -135,6 +135,20 @@ func stampUpdatedAt(t *testing.T, es *editServer, taskID string, updatedAt time.
 func markStaleLocalEdit(t *testing.T, es *editServer, taskID, phase string) {
 	t.Helper()
 	attempt := clockid.New()
+	if providerPhaseStarted(phase) {
+		// The runtime commits this reservation with the provider boundary.
+		var productID string
+		if err := es.pool.QueryRow(context.Background(), "SELECT product_id FROM local_image_edit_tasks WHERE id=$1", taskID).Scan(&productID); err != nil {
+			t.Fatal(err)
+		}
+		merchantID, err := merchantIDForProduct(context.Background(), es.db, productID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := (Executor{DB: es.db}).reserveEditQuota(context.Background(), merchantID, taskID, attempt); err != nil {
+			t.Fatal(err)
+		}
+	}
 	hash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	if _, err := es.pool.Exec(context.Background(), `
 		INSERT INTO local_image_edit_provider_attempts (

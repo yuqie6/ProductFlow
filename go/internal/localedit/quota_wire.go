@@ -65,20 +65,21 @@ func (e Executor) settleEditQuota(ctx context.Context, merchantID, taskID, attem
 
 func (e Executor) markEditQuotaUnknown(ctx context.Context, merchantID, taskID, attemptID string) error {
 	key := editQuotaKey(taskID, attemptID)
-	return finalizeQuotaIgnoreMissing(e.quota().MarkUnknown(ctx, merchantID, key))
+	_, _, err := e.quota().MarkUnknown(ctx, merchantID, key)
+	return err
 }
 
 func (e Executor) releaseEditQuota(ctx context.Context, merchantID, taskID, attemptID string) error {
 	key := editQuotaKey(taskID, attemptID)
-	return finalizeQuotaIgnoreMissing(e.quota().Release(ctx, merchantID, key))
+	return releaseQuotaIgnoreMissing(e.quota().Release(ctx, merchantID, key))
 }
 
-func finalizeQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) error {
+func releaseQuotaIgnoreMissing(hold quota.Hold, acct quota.Account, err error) error {
 	if err == nil {
 		return nil
 	}
 	if apperr.IsNotFound(err) {
-		// 夹具或跳过路径未 Reserve；不要把缺 hold 升级成 worker 失败。
+		// 调用准备提交前的取消或失败尚无预留，释放为空操作。
 		return nil
 	}
 	return err
@@ -101,9 +102,9 @@ func (s Service) finalizeEditQuotaOnCancel(ctx context.Context, merchantID, task
 	}
 	key := editQuotaKey(taskID, attemptID)
 	if providerPhaseStarted(progressPhase) {
-		return finalizeQuotaIgnoreMissing(s.quota().MarkUnknown(ctx, merchantID, key))
+		return (Executor{DB: s.DB}).markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
 	}
-	return finalizeQuotaIgnoreMissing(s.quota().Release(ctx, merchantID, key))
+	return releaseQuotaIgnoreMissing(s.quota().Release(ctx, merchantID, key))
 }
 
 func finalizeRecoveredUnknownQuota(ctx context.Context, db *gorm.DB, productID, taskID, attemptID string) error {
@@ -111,8 +112,7 @@ func finalizeRecoveredUnknownQuota(ctx context.Context, db *gorm.DB, productID, 
 	if err != nil {
 		return err
 	}
-	key := editQuotaKey(taskID, attemptID)
-	return finalizeQuotaIgnoreMissing((&quota.Service{DB: db}).MarkUnknown(ctx, merchantID, key))
+	return (Executor{DB: db}).markEditQuotaUnknown(ctx, merchantID, taskID, attemptID)
 }
 
 func quotaConflictDetail(err error) string {
