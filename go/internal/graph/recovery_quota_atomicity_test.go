@@ -16,7 +16,7 @@ func TestGraphRecoveryQuotaFailurePreservesRecoverableAttempt(t *testing.T) {
 	for _, phase := range []string{"claimed", "provider_call"} {
 		t.Run(phase, func(t *testing.T) {
 			pool, db := testdb.Open(t)
-			ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+			ctx := context.Background()
 			attempt := clockid.New()
 			runID := insertStaleRunningGraphRun(t, pool, phase, &attempt, time.Now().UTC().Add(-time.Hour))
 			var nodeID string
@@ -49,7 +49,7 @@ func TestGraphRecoveryQuotaFailurePreservesRecoverableAttempt(t *testing.T) {
 				}
 			})
 			cutoff := time.Now().UTC().Add(-time.Minute)
-			if _, err := recoverGraphRunState(ctx, db, runID, cutoff); err == nil {
+			if _, err := recoverGraphRunState(ctx, cmdTestProducts{}, db, runID, cutoff); err == nil {
 				t.Fatal("recovery swallowed quota write failure")
 			}
 			var nodeStatus, runStatus, active string
@@ -76,7 +76,7 @@ func TestGraphRecoveryQuotaFailurePreservesRecoverableAttempt(t *testing.T) {
 			if _, err := pool.Exec(ctx, "ALTER TABLE merchant_quota_holds DROP CONSTRAINT "+constraint); err != nil {
 				t.Fatal(err)
 			}
-			result, err := recoverGraphRunState(ctx, db, runID, cutoff)
+			result, err := recoverGraphRunState(ctx, cmdTestProducts{}, db, runID, cutoff)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -101,7 +101,7 @@ func TestGraphRecoveryQuotaFailurePreservesRecoverableAttempt(t *testing.T) {
 			} else if runStatus != "unknown" || nodeStatus != "unknown" {
 				t.Fatalf("unknown run=%s node=%s", runStatus, nodeStatus)
 			}
-			if _, err := recoverGraphRunState(ctx, db, runID, cutoff); err != nil {
+			if _, err := recoverGraphRunState(ctx, cmdTestProducts{}, db, runID, cutoff); err != nil {
 				t.Fatal(err)
 			}
 			var hold schema.MerchantQuotaHolds

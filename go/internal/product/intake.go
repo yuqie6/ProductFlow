@@ -351,7 +351,6 @@ type ApplyIntakeResult struct {
 // ApplyIntake 把图片类型选择与参考图写入商品 intake；名称-only 图画按模板展开套图。
 // 选择 JSON 非法、参考图数量不对或不属于该商品返回 Validation；缺商品返回 NotFound。
 func (s Service) ApplyIntake(ctx context.Context, productID string, selectionJSON []byte, assetIDs []string) (ApplyIntakeResult, error) {
-	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	selection, err := parseSelection(string(selectionJSON))
 	if err != nil {
 		return ApplyIntakeResult{}, err

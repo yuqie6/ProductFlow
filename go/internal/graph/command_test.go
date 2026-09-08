@@ -108,7 +108,7 @@ func (cmdTestProducts) BoundAssetMetas(context.Context, *gorm.DB, string, []stri
 }
 
 func TestWriteTxRequiresZeroBaseRevision(t *testing.T) {
-	_, err := WriteTx(context.Background(), nil, Command{
+	_, err := WriteTx(context.Background(), nil, nil, Command{
 		ProductID: "prod",
 		Title:     "标题",
 		ChangeSet: ChangeSet{
@@ -124,7 +124,7 @@ func TestWriteTxRequiresZeroBaseRevision(t *testing.T) {
 
 func TestWriteTxProductSourceTemplate(t *testing.T) {
 	_, gdb := testdb.Open(t)
-	ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+	ctx := context.Background()
 	tx := gdb.WithContext(ctx).Begin()
 	if tx.Error != nil {
 		t.Fatal(tx.Error)
@@ -144,7 +144,7 @@ func TestWriteTxProductSourceTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := WriteTx(ctx, tx, Command{
+	result, err := WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID: productID,
 		Title:     "名称出生商品",
 		ChangeSet: cs,
@@ -210,7 +210,7 @@ func TestWriteTxProductSourceTemplate(t *testing.T) {
 		t.Fatalf("inverse %s", inverseRaw)
 	}
 
-	_, err = WriteTx(ctx, tx, Command{
+	_, err = WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID: productID,
 		Title:     "第二次",
 		ChangeSet: cs,
@@ -221,7 +221,7 @@ func TestWriteTxProductSourceTemplate(t *testing.T) {
 func beginCommandTx(t *testing.T) (context.Context, *gorm.DB) {
 	t.Helper()
 	_, gdb := testdb.Open(t)
-	ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+	ctx := context.Background()
 	tx := gdb.WithContext(ctx).Begin()
 	if tx.Error != nil {
 		t.Fatal(tx.Error)
@@ -249,7 +249,7 @@ func writeProductSource(t *testing.T, ctx context.Context, tx *gorm.DB, productI
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := WriteTx(ctx, tx, Command{ProductID: productID, Title: title, ChangeSet: cs})
+	result, err := WriteTx(ctx, cmdTestProducts{}, tx, Command{ProductID: productID, Title: title, ChangeSet: cs})
 	if err != nil {
 		t.Fatal(err)
 	}

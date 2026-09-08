@@ -19,7 +19,7 @@ func TestProviderUnknownRetainsFailureCause(t *testing.T) {
 	for _, kind := range []string{"prompt", "image", "image_missing_hold"} {
 		t.Run(kind, func(t *testing.T) {
 			pool, db := testdb.Open(t)
-			ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+			ctx := context.Background()
 			attempt := clockid.New()
 			runID := insertStaleRunningGraphRun(t, pool, "claimed", &attempt, time.Now().UTC())
 			var nodeID string
@@ -30,7 +30,7 @@ func TestProviderUnknownRetainsFailureCause(t *testing.T) {
 			if _, err := (&quota.Service{DB: db}).Adjust(ctx, merchantID, clockid.New(), 10, "provider cause fixture", ""); err != nil {
 				t.Fatal(err)
 			}
-			e := Executor{DB: db}
+			e := Executor{Products: cmdTestProducts{}, DB: db}
 			node := graphNodeRunRow{ID: nodeID, ActiveAttemptID: &attempt}
 			const detail = "provider response interrupted: upstream request trace-123"
 			calls := 0

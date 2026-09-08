@@ -10,8 +10,8 @@ import (
 )
 
 // Undo 应用最近一条非 Undo 历史的 inverse。空 inverse 返回 Conflict。
-func Undo(ctx context.Context, tx *gorm.DB, productID, graphID string) (CommandResult, error) {
-	row, err := loadGraph(ctx, tx, productID, graphID)
+func Undo(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string) (CommandResult, error) {
+	row, err := loadGraph(ctx, products, tx, productID, graphID)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -30,7 +30,7 @@ func Undo(ctx context.Context, tx *gorm.DB, productID, graphID string) (CommandR
 		return CommandResult{}, apperr.Conflict("该操作没有可撤销的 inverse")
 	}
 	summary := clipSummary("撤销：" + sourceHistorySummary(last.Summary))
-	return WriteTx(ctx, tx, Command{
+	return WriteTx(ctx, products, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{
@@ -47,8 +47,8 @@ func Undo(ctx context.Context, tx *gorm.DB, productID, graphID string) (CommandR
 // 副作用：workflow_graphs.revision 递增，替换节点/边/分组，并追加 workflow_operation_groups。
 // 栈顶不是 Undo 或 inverse 为空返回 Conflict（409）。空图画布从未编辑时 last 为 nil，同样 409。
 // 不要把 Redo 实现成再调一次 Undo。Undo 之后若又写入 HistoryEdit，栈顶不再是 Undo，重做机会消失。
-func Redo(ctx context.Context, tx *gorm.DB, productID, graphID string) (CommandResult, error) {
-	row, err := loadGraph(ctx, tx, productID, graphID)
+func Redo(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string) (CommandResult, error) {
+	row, err := loadGraph(ctx, products, tx, productID, graphID)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -67,7 +67,7 @@ func Redo(ctx context.Context, tx *gorm.DB, productID, graphID string) (CommandR
 		return CommandResult{}, apperr.Conflict("该操作没有可重做的 inverse")
 	}
 	summary := clipSummary("重做：" + sourceHistorySummary(last.Summary))
-	return WriteTx(ctx, tx, Command{
+	return WriteTx(ctx, products, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{

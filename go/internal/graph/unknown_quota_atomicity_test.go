@@ -16,7 +16,7 @@ func TestGraphUnknownTransitionsOwnQuota(t *testing.T) {
 	for _, entry := range []string{"provider_error", "claimed_failure", "run_failure"} {
 		t.Run(entry, func(t *testing.T) {
 			pool, db := testdb.Open(t)
-			ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+			ctx := context.Background()
 			attempt := clockid.New()
 			runID := insertStaleRunningGraphRun(t, pool, "provider_call", &attempt, time.Now().UTC())
 			var nodeID string
@@ -45,11 +45,11 @@ func TestGraphUnknownTransitionsOwnQuota(t *testing.T) {
 			finish := func() error {
 				switch entry {
 				case "provider_error":
-					return (Executor{DB: db}).markUnknownCommitted(ctx, runID, nodeID, &attempt, ProviderUnknownDetail)
+					return (Executor{Products: cmdTestProducts{}, DB: db}).markUnknownCommitted(ctx, runID, nodeID, &attempt, ProviderUnknownDetail)
 				case "claimed_failure":
-					return failClaimedNode(ctx, db, runID, nodeID, attempt, "write failure after provider")
+					return failClaimedNode(ctx, cmdTestProducts{}, db, runID, nodeID, attempt, "write failure after provider")
 				default:
-					return failGraphRun(ctx, db, runID, "run failure after provider")
+					return failGraphRun(ctx, cmdTestProducts{}, db, runID, "run failure after provider")
 				}
 			}
 			if err := finish(); err == nil {

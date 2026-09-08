@@ -15,11 +15,11 @@ import (
 
 // stageNew 在空图上应用 ChangeSet 并写入 workflow_graphs；只 flush 不 commit。
 // 跨包写入走 WriteTx。base_graph_revision 非 0 或商品已有 active 图返回 Conflict。
-func stageNew(ctx context.Context, tx *gorm.DB, productID, title string, changeSet ChangeSet) (CommandResult, error) {
+func stageNew(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, title string, changeSet ChangeSet) (CommandResult, error) {
 	if changeSet.BaseGraphRevision != 0 {
 		return CommandResult{}, apperr.Conflict("新建图的 base_graph_revision 必须为 0")
 	}
-	if err := lockProduct(ctx, tx, productID); err != nil {
+	if err := lockProduct(ctx, products, tx, productID); err != nil {
 		return CommandResult{}, err
 	}
 	exists, err := activeGraphExists(ctx, tx, productID)
@@ -34,10 +34,10 @@ func stageNew(ctx context.Context, tx *gorm.DB, productID, title string, changeS
 		return CommandResult{}, err
 	}
 	applied = assignPersistentIDs(EmptyGraph, applied, clockid.New)
-	if err := validateBoundAssets(ctx, tx, productID, applied); err != nil {
+	if err := validateBoundAssets(ctx, products, tx, productID, applied); err != nil {
 		return CommandResult{}, err
 	}
-	if err := validateProductSourceConfigs(ctx, tx, productID, applied); err != nil {
+	if err := validateProductSourceConfigs(ctx, products, tx, productID, applied); err != nil {
 		return CommandResult{}, err
 	}
 	title = strings.TrimSpace(title)
@@ -135,8 +135,8 @@ func recordOperationGroup(
 	return id, nil
 }
 
-func lockProduct(ctx context.Context, tx *gorm.DB, productID string) error {
-	guard, err := requireProductGuard(ctx)
+func lockProduct(ctx context.Context, products ProductGuard, tx *gorm.DB, productID string) error {
+	guard, err := requireProductGuard(products)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func activeGraphExists(ctx context.Context, tx *gorm.DB, productID string) (bool
 	return true, nil
 }
 
-func validateBoundAssets(ctx context.Context, tx *gorm.DB, productID string, graph AppliedGraph) error {
+func validateBoundAssets(ctx context.Context, products ProductGuard, tx *gorm.DB, productID string, graph AppliedGraph) error {
 	wanted := map[string]struct{}{}
 	for _, node := range graph.Nodes {
 		if node.BoundAssetID != nil && *node.BoundAssetID != "" {
@@ -165,19 +165,19 @@ func validateBoundAssets(ctx context.Context, tx *gorm.DB, productID string, gra
 	if len(wanted) == 0 {
 		return nil
 	}
-	guard, err := requireProductGuard(ctx)
+	guard, err := requireProductGuard(products)
 	if err != nil {
 		return err
 	}
 	return guard.HasAssets(ctx, tx, productID, sortedKeys(wanted))
 }
 
-func validateProductSourceConfigs(ctx context.Context, tx *gorm.DB, graphProductID string, graph AppliedGraph) error {
+func validateProductSourceConfigs(ctx context.Context, products ProductGuard, tx *gorm.DB, graphProductID string, graph AppliedGraph) error {
 	for _, node := range graph.Nodes {
 		if node.NodeType != NodeProductSource {
 			continue
 		}
-		if err := resolveProductSource(ctx, tx, graphProductID, node.Config); err != nil {
+		if err := resolveProductSource(ctx, products, tx, graphProductID, node.Config); err != nil {
 			return err
 		}
 	}
@@ -187,7 +187,7 @@ func validateProductSourceConfigs(ctx context.Context, tx *gorm.DB, graphProduct
 // resolveProductSource 校验 product_source 的 source_product_id / fact_set_version_id。
 // 未写 source_product_id 时绑定本图商品。Guard 返回 nil,nil 在这里变成 Validation，不要改成 NotFound。
 // 未绑定商品却带 fact_set_version_id 非法。缺当前 fact 版本允许通过（v2 无图出生）。
-func resolveProductSource(ctx context.Context, tx *gorm.DB, graphProductID string, config map[string]any) error {
+func resolveProductSource(ctx context.Context, products ProductGuard, tx *gorm.DB, graphProductID string, config map[string]any) error {
 	payload := config
 	if payload == nil {
 		payload = map[string]any{}
@@ -214,7 +214,7 @@ func resolveProductSource(ctx context.Context, tx *gorm.DB, graphProductID strin
 		}
 		return nil
 	}
-	guard, err := requireProductGuard(ctx)
+	guard, err := requireProductGuard(products)
 	if err != nil {
 		return err
 	}

@@ -8,8 +8,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type productGuardCtxKey struct{}
-
 // SourceProduct 是商品资料节点需要的身份摘要；SQL 留在 product 包。
 type SourceProduct struct {
 	ID               string
@@ -52,37 +50,20 @@ type ProductGuard interface {
 }
 
 // requireOwnedProduct 在已有工作商家时校验 product 归属；无商家上下文（worker/recovery）跳过。
-func requireOwnedProduct(ctx context.Context, tx *gorm.DB, productID string) error {
+func requireOwnedProduct(ctx context.Context, products ProductGuard, tx *gorm.DB, productID string) error {
 	if _, ok := auth.MerchantIDFrom(ctx); !ok {
 		return nil
 	}
-	guard, err := requireProductGuard(ctx)
+	guard, err := requireProductGuard(products)
 	if err != nil {
 		return err
 	}
 	return guard.Require(ctx, tx, productID)
 }
 
-// WithProductGuard 把守卫挂到 ctx 上，供 WriteTx / CreateEmpty / Project 使用。
-func WithProductGuard(ctx context.Context, g ProductGuard) context.Context {
-	if g == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, productGuardCtxKey{}, g)
-}
-
-func productGuardFrom(ctx context.Context) ProductGuard {
-	if ctx == nil {
-		return nil
-	}
-	g, _ := ctx.Value(productGuardCtxKey{}).(ProductGuard)
-	return g
-}
-
-func requireProductGuard(ctx context.Context) (ProductGuard, error) {
-	g := productGuardFrom(ctx)
-	if g == nil {
+func requireProductGuard(products ProductGuard) (ProductGuard, error) {
+	if products == nil {
 		return nil, apperr.Internal("图命令缺少商品守卫")
 	}
-	return g, nil
+	return products, nil
 }

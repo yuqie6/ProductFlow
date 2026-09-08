@@ -53,8 +53,8 @@ func jsonPtrBytes(s *string) []byte {
 	return []byte(*s)
 }
 
-func loadGraph(ctx context.Context, tx *gorm.DB, productID, graphID string) (graphRow, error) {
-	if err := requireOwnedProduct(ctx, tx, productID); err != nil {
+func loadGraph(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string) (graphRow, error) {
+	if err := requireOwnedProduct(ctx, products, tx, productID); err != nil {
 		return graphRow{}, err
 	}
 	var rec schema.WorkflowGraphs
@@ -68,8 +68,8 @@ func loadGraph(ctx context.Context, tx *gorm.DB, productID, graphID string) (gra
 	return graphRowFromSchema(rec), nil
 }
 
-func loadGraphForUpdate(ctx context.Context, tx *gorm.DB, productID, graphID string) (graphRow, error) {
-	if err := requireOwnedProduct(ctx, tx, productID); err != nil {
+func loadGraphForUpdate(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string) (graphRow, error) {
+	if err := requireOwnedProduct(ctx, products, tx, productID); err != nil {
 		return graphRow{}, err
 	}
 	var rec schema.WorkflowGraphs
@@ -83,8 +83,8 @@ func loadGraphForUpdate(ctx context.Context, tx *gorm.DB, productID, graphID str
 	return graphRowFromSchema(rec), nil
 }
 
-func loadActiveGraph(ctx context.Context, tx *gorm.DB, productID string) (graphRow, error) {
-	if err := requireOwnedProduct(ctx, tx, productID); err != nil {
+func loadActiveGraph(ctx context.Context, products ProductGuard, tx *gorm.DB, productID string) (graphRow, error) {
+	if err := requireOwnedProduct(ctx, products, tx, productID); err != nil {
 		return graphRow{}, err
 	}
 	var rec schema.WorkflowGraphs
@@ -98,8 +98,8 @@ func loadActiveGraph(ctx context.Context, tx *gorm.DB, productID string) (graphR
 	return graphRowFromSchema(rec), nil
 }
 
-func loadActiveGraphForUpdate(ctx context.Context, tx *gorm.DB, productID string) (*graphRow, error) {
-	if err := requireOwnedProduct(ctx, tx, productID); err != nil {
+func loadActiveGraphForUpdate(ctx context.Context, products ProductGuard, tx *gorm.DB, productID string) (*graphRow, error) {
+	if err := requireOwnedProduct(ctx, products, tx, productID); err != nil {
 		return nil, err
 	}
 	var rec schema.WorkflowGraphs

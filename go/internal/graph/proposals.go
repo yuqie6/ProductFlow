@@ -34,8 +34,8 @@ func proposalFromSchema(rec schema.WorkflowGraphProposals) proposalRow {
 
 // CreateProposal 校验后写入 PENDING 提案，不改 live 图。
 // 无 active 图、revision 已变或已有 pending 提案返回 Conflict；Apply 的 Validation 也升成 Conflict。
-func CreateProposal(ctx context.Context, tx *gorm.DB, productID, conversationID string, changeSet ChangeSet) (AgentProposalResult, error) {
-	row, err := loadActiveGraphForUpdate(ctx, tx, productID)
+func CreateProposal(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, conversationID string, changeSet ChangeSet) (AgentProposalResult, error) {
+	row, err := loadActiveGraphForUpdate(ctx, products, tx, productID)
 	if err != nil {
 		return AgentProposalResult{}, err
 	}
@@ -96,8 +96,8 @@ func CreateProposal(ctx context.Context, tx *gorm.DB, productID, conversationID 
 }
 
 // ConfirmProposal 把 PENDING 提案写入 live 图。非 pending 返回 NotPending。
-func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, proposalID string) (graphRow, error) {
-	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
+func ConfirmProposal(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID, proposalID string) (graphRow, error) {
+	row, err := loadGraphForUpdate(ctx, products, tx, productID, graphID)
 	if err != nil {
 		return graphRow{}, err
 	}
@@ -117,7 +117,7 @@ func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, propo
 	}
 	parsed.BaseGraphRevision = row.Revision
 	parsed.ActorType = ActorAgent
-	result, err := WriteTx(ctx, tx, Command{
+	result, err := WriteTx(ctx, products, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: parsed,
@@ -139,8 +139,8 @@ func ConfirmProposal(ctx context.Context, tx *gorm.DB, productID, graphID, propo
 
 // DiscardProposal 把提案标 discarded，不改 live 图。
 // 缺图或缺提案 NotFound；非 pending 返回 NotPending。
-func DiscardProposal(ctx context.Context, tx *gorm.DB, productID, graphID, proposalID string) error {
-	row, err := loadGraph(ctx, tx, productID, graphID)
+func DiscardProposal(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID, proposalID string) error {
+	row, err := loadGraph(ctx, products, tx, productID, graphID)
 	if err != nil {
 		return err
 	}

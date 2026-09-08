@@ -13,8 +13,8 @@ import (
 
 // CreateEmpty 持久化一张空的 active schema-v3 图。空画布不能作为 no-op ChangeSet 出生。
 // 商品已有 active 图时返回 Conflict。缺守卫返回 Internal，商品不存在返回 NotFound。
-func CreateEmpty(ctx context.Context, tx *gorm.DB, productID, title string) (graphRow, error) {
-	if err := lockProduct(ctx, tx, productID); err != nil {
+func CreateEmpty(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, title string) (graphRow, error) {
+	if err := lockProduct(ctx, products, tx, productID); err != nil {
 		return graphRow{}, err
 	}
 	exists, err := activeGraphExists(ctx, tx, productID)
@@ -55,11 +55,11 @@ func CreateEmpty(ctx context.Context, tx *gorm.DB, productID, title string) (gra
 
 // mutate 把 ChangeSet 应用到已有 active schema-v3 图；只 flush 不 commit。
 // 跨包写入走 WriteTx。非 active 或非 schema-v3 返回 Conflict；缺图返回 NotFound。
-func mutate(ctx context.Context, tx *gorm.DB, productID, graphID string, changeSet ChangeSet, kind HistoryKind) (CommandResult, error) {
+func mutate(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string, changeSet ChangeSet, kind HistoryKind) (CommandResult, error) {
 	if err := lockRunningGraphRunsForUpdate(ctx, tx, graphID); err != nil {
 		return CommandResult{}, err
 	}
-	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
+	row, err := loadGraphForUpdate(ctx, products, tx, productID, graphID)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -81,10 +81,10 @@ func mutate(ctx context.Context, tx *gorm.DB, productID, graphID string, changeS
 		return CommandResult{}, err
 	}
 	after := assignPersistentIDs(before, proposed, clockid.New)
-	if err := validateBoundAssets(ctx, tx, productID, after); err != nil {
+	if err := validateBoundAssets(ctx, products, tx, productID, after); err != nil {
 		return CommandResult{}, err
 	}
-	if err := validateProductSourceConfigs(ctx, tx, productID, after); err != nil {
+	if err := validateProductSourceConfigs(ctx, products, tx, productID, after); err != nil {
 		return CommandResult{}, err
 	}
 	err = tx.WithContext(ctx).Model(&schema.WorkflowGraphs{}).Where("id = ?", row.ID).Updates(map[string]any{

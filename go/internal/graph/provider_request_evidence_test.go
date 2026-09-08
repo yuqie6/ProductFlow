@@ -24,7 +24,7 @@ func TestProviderRequestEvidenceMatchesInvocation(t *testing.T) {
 		for _, oversized := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/oversized=%v", kind, oversized), func(t *testing.T) {
 				pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_reqtrace_%d", time.Now().UnixNano()))
-				ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+				ctx := context.Background()
 				merchantID := auth.MustDevMerchantID(t, db)
 				attempt := clockid.New()
 				phase := "claimed"
@@ -98,7 +98,7 @@ func TestProviderRequestEvidenceMatchesInvocation(t *testing.T) {
 						}
 					}
 				}
-				executor := Executor{DB: db}
+				executor := Executor{Products: cmdTestProducts{}, DB: db}
 				node := graphNodeRunRow{ID: nodeID, ActiveAttemptID: &attempt}
 				var err error
 				if kind == "prompt" {

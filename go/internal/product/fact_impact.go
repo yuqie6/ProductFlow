@@ -26,18 +26,17 @@ type FactsImpactPreviewResponse struct {
 // FactsUpdateResponse 是 PUT facts 在携带 update_node_ids 时的扩展响应。
 type FactsUpdateResponse struct {
 	FactsResponse
-	Impact            *graph.FactImpactPreview `json:"impact,omitempty"`
-	PreservedNodeIDs  []string                 `json:"preserved_node_ids,omitempty"`
-	AdoptedFactSetID  *string                  `json:"adopted_fact_set_version_id,omitempty"`
-	UpdateNodeIDs     []string                 `json:"update_node_ids,omitempty"`
-	DidAdoptFactSet   bool                     `json:"did_adopt_fact_set"`
+	Impact           *graph.FactImpactPreview `json:"impact,omitempty"`
+	PreservedNodeIDs []string                 `json:"preserved_node_ids,omitempty"`
+	AdoptedFactSetID *string                  `json:"adopted_fact_set_version_id,omitempty"`
+	UpdateNodeIDs    []string                 `json:"update_node_ids,omitempty"`
+	DidAdoptFactSet  bool                     `json:"did_adopt_fact_set"`
 }
 
 // PreviewFactsImpact 在不写库的情况下，按拟议 facts 列出 RoleFacts 依赖图位。
 func (s Service) PreviewFactsImpact(ctx context.Context, productID string, in FactsImpactPreviewInput) (FactsImpactPreviewResponse, error) {
 	var out FactsImpactPreviewResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		ctx = graph.WithProductGuard(ctx, GraphGuard{})
 		product, err := loadProduct(ctx, pgxTx, productID)
 		if err != nil {
 			return err
@@ -55,7 +54,7 @@ func (s Service) PreviewFactsImpact(ctx context.Context, productID string, in Fa
 			}
 		}
 		changed := graph.DiffFactKeys(currentMaps, proposed)
-		identity, applied, sources, err := graph.LoadLiveGraphSources(ctx, pgxTx, productID)
+		identity, applied, sources, err := graph.LoadLiveGraphSources(ctx, GraphGuard{}, pgxTx, productID)
 		if err != nil {
 			return err
 		}
@@ -91,7 +90,6 @@ func (s Service) PreviewFactsImpact(ctx context.Context, productID string, in Fa
 func (s Service) UpdateFactsAndAdopt(ctx context.Context, productID string, in UpdateFactsInput) (FactsUpdateResponse, error) {
 	var out FactsUpdateResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		ctx = graph.WithProductGuard(ctx, GraphGuard{})
 		product, err := loadProductForUpdate(ctx, pgxTx, productID)
 		if err != nil {
 			return err
@@ -166,7 +164,7 @@ func (s Service) UpdateFactsAndAdopt(ctx context.Context, productID string, in U
 		if !in.UpdateNodeIDsProvided {
 			return nil
 		}
-		identity, applied, sources, err := graph.LoadLiveGraphSources(ctx, pgxTx, productID)
+		identity, applied, sources, err := graph.LoadLiveGraphSources(ctx, GraphGuard{}, pgxTx, productID)
 		if err != nil {
 			return err
 		}
@@ -188,14 +186,14 @@ func (s Service) UpdateFactsAndAdopt(ctx context.Context, productID string, in U
 			}
 			out.Impact = &preview
 		}
-		adopted, err := graph.AdoptFactSetOnProductSources(ctx, pgxTx, productID, factSetID)
+		adopted, err := graph.AdoptFactSetOnProductSources(ctx, GraphGuard{}, pgxTx, productID, factSetID)
 		if err != nil {
 			return err
 		}
 		out.DidAdoptFactSet = adopted
 		out.AdoptedFactSetID = &factSetID
 		out.UpdateNodeIDs = append([]string(nil), updateIDs...)
-		preserved, err := graph.PreserveUnselectedFactArtifacts(ctx, pgxTx, productID, updateIDs)
+		preserved, err := graph.PreserveUnselectedFactArtifacts(ctx, GraphGuard{}, pgxTx, productID, updateIDs)
 		if err != nil {
 			return err
 		}

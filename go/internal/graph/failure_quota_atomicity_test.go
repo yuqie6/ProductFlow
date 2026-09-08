@@ -16,7 +16,7 @@ func TestGraphProvenFailureOwnsQuota(t *testing.T) {
 	for _, entry := range []string{"claimed_failure", "run_failure"} {
 		t.Run(entry, func(t *testing.T) {
 			pool, db := testdb.Open(t)
-			ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+			ctx := context.Background()
 			attempt := clockid.New()
 			runID := insertStaleRunningGraphRun(t, pool, "claimed", &attempt, time.Now().UTC())
 			var nodeID string
@@ -44,9 +44,9 @@ func TestGraphProvenFailureOwnsQuota(t *testing.T) {
 			finish := func() error {
 				switch entry {
 				case "claimed_failure":
-					return failClaimedNode(ctx, db, runID, nodeID, attempt, "invalid input before provider")
+					return failClaimedNode(ctx, cmdTestProducts{}, db, runID, nodeID, attempt, "invalid input before provider")
 				default:
-					return failGraphRun(ctx, db, runID, "run failure before provider")
+					return failGraphRun(ctx, cmdTestProducts{}, db, runID, "run failure before provider")
 				}
 			}
 			if err := finish(); err == nil {

@@ -18,7 +18,6 @@ import (
 // CreateAgentDraft 是名称-only 出生：写 product_source 图、空 intake、不设封面。
 // 商品名或 Idempotency-Key 非法返回 Validation；同 key 哈希不同返回 Conflict。缺 Canvas 写入器返回 Internal。
 func (s Service) CreateAgentDraft(ctx context.Context, name, idempotencyKey string, agentSessionID *string) (WorkspaceSnapshotResponse, error) {
-	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	normalizedName, err := normalizeName(name)
 	if err != nil {
 		return WorkspaceSnapshotResponse{}, err
@@ -37,7 +36,7 @@ func (s Service) CreateAgentDraft(ctx context.Context, name, idempotencyKey stri
 		if err != nil {
 			return canonicalCreation{}, Conversation{}, err
 		}
-		if _, err := graph.WriteTx(ctx, pgxTx, graph.Command{
+		if _, err := graph.WriteTx(ctx, GraphGuard{}, pgxTx, graph.Command{
 			ProductID: creation.product.ID,
 			Title:     creation.product.Name,
 			ChangeSet: changeSet,
@@ -51,7 +50,6 @@ func (s Service) CreateAgentDraft(ctx context.Context, name, idempotencyKey stri
 
 // CreateAgentWorkspace 是表单完整 Agent 出生：写商品、参考图、intake 与直连模板图，并打开对话。Idempotency-Key 去重。
 func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, idempotencyKey string, agentSessionID *string, uploads []Upload) (WorkspaceCreateResponse, error) {
-	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	normalizedName, err := normalizeName(name)
 	if err != nil {
 		return WorkspaceCreateResponse{}, err
@@ -112,7 +110,7 @@ func (s Service) CreateAgentWorkspace(ctx context.Context, name, selectionJSON, 
 			compensation.Rollback()
 			return canonicalCreation{}, Conversation{}, err
 		}
-		if _, err := graph.WriteTx(ctx, pgxTx, graph.Command{
+		if _, err := graph.WriteTx(ctx, GraphGuard{}, pgxTx, graph.Command{
 			ProductID: creation.product.ID,
 			Title:     creation.product.Name,
 			ChangeSet: changeSet,
@@ -159,7 +157,7 @@ func (s Service) GetAgentWorkspace(ctx context.Context, conversationID string) (
 // FinalizeAgentIntake 把名称-only 图按模板展开套图，并写入参考图与 intake。重复 Idempotency-Key 且哈希不同返回 Conflict。
 func (s Service) FinalizeAgentIntake(ctx context.Context, conversationID, selectionJSON, idempotencyKey string, sourceNote *string, uploads []Upload, taskID *string) (WorkspaceSnapshotResponse, error) {
 	_ = taskID
-	ctx = graph.WithProductGuard(ctx, GraphGuard{})
+
 	key, err := normalizeIdempotencyKey(idempotencyKey)
 	if err != nil {
 		return WorkspaceSnapshotResponse{}, err
@@ -302,7 +300,7 @@ func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Pro
 	if err != nil {
 		return false, err
 	}
-	expanded, _, err := graph.ExpandBirth(ctx, pgxTx, product.ID, product.Name, graph.DirectCreateInput{
+	expanded, _, err := graph.ExpandBirth(ctx, GraphGuard{}, pgxTx, product.ID, product.Name, graph.DirectCreateInput{
 		ImageTypes:        selectionToImageTypes(selection),
 		ReferenceAssetIDs: assetIDs,
 		ProductTitle:      product.Name,
@@ -315,7 +313,7 @@ func expandBirthGraphFromIntake(ctx context.Context, pgxTx *gorm.DB, product Pro
 }
 
 func liveGraphCounts(ctx context.Context, pgxTx *gorm.DB, productID string) (revision, nodeCount, groupCount int, err error) {
-	live, err := graph.TryLive(ctx, pgxTx, productID)
+	live, err := graph.TryLive(ctx, GraphGuard{}, pgxTx, productID)
 	if err != nil || live == nil {
 		return 0, 0, 0, err
 	}

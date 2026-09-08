@@ -28,7 +28,7 @@ func (e Executor) executeClaimedNode(ctx context.Context, runID, nodeRunID, atte
 		return err
 	}
 	reason := nodeFailureReason(err)
-	if failErr := failClaimedNode(ctx, e.DB, runID, nodeRunID, attemptID, reason); failErr != nil {
+	if failErr := failClaimedNode(ctx, e.Products, e.DB, runID, nodeRunID, attemptID, reason); failErr != nil {
 		return failErr
 	}
 	return nil
@@ -352,7 +352,7 @@ func (e Executor) markNodeSkipped(ctx context.Context, runID, nodeRunID string, 
 		}); err != nil {
 			return err
 		}
-		_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+		_, err = completeGraphRunIfNodesTerminal(ctx, e.Products, pgxTx, runID)
 		return err
 	})
 }
@@ -583,7 +583,7 @@ func (e Executor) markUnknownCommitted(ctx context.Context, runID, nodeRunID str
 		if err := markNodeUnknown(ctx, pgxTx, runID, nodeRunID, attemptID, detail); err != nil {
 			return err
 		}
-		_, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+		_, err := completeGraphRunIfNodesTerminal(ctx, e.Products, pgxTx, runID)
 		return err
 	})
 }
@@ -652,7 +652,7 @@ func (e Executor) persistContentArtifact(
 			}
 			productID = id
 			// 自动采用会修改 live graph。先锁 run，再锁 graph；mutate 同样先锁 running run，避免与 Inspector/Agent 写入交叉等待。
-			if err := lockGraphRunAndLiveGraph(ctx, pgxTx, productID, run.GraphID, run.ID); err != nil {
+			if err := lockGraphRunAndLiveGraph(ctx, e.Products, pgxTx, productID, run.GraphID, run.ID); err != nil {
 				return err
 			}
 		}
@@ -665,19 +665,19 @@ func (e Executor) persistContentArtifact(
 			return err
 		}
 		if !promote {
-			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
+			return finishUnpromotedNodeRun(ctx, e.Products, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
 		}
 		promotable, err := lockNodeRunForPromotion(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID)
 		if err != nil {
 			return err
 		}
 		if !promotable {
-			return finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
+			return finishUnpromotedNodeRun(ctx, e.Products, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now)
 		}
 		adopted := false
 		if promote {
 			if adoptionAttempted {
-				revision, didAdopt, err := adoptGeneratedDocument(ctx, pgxTx, productID, run.GraphID, *nodeRun.NodeID, adoptSummary(artifactType), run.Snapshot, writeback)
+				revision, didAdopt, err := adoptGeneratedDocument(ctx, e.Products, pgxTx, productID, run.GraphID, *nodeRun.NodeID, adoptSummary(artifactType), run.Snapshot, writeback)
 				if err != nil {
 					return err
 				}
@@ -716,7 +716,7 @@ func (e Executor) persistContentArtifact(
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
+			_, err = completeGraphRunIfNodesTerminal(ctx, e.Products, pgxTx, run.ID)
 			return err
 		}
 		if err := appendGraphRunEventLocked(ctx, pgxTx, run.ID, "node.succeeded", &nodeRun.ID, map[string]any{
@@ -724,7 +724,7 @@ func (e Executor) persistContentArtifact(
 		}); err != nil {
 			return err
 		}
-		_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
+		_, err = completeGraphRunIfNodesTerminal(ctx, e.Products, pgxTx, run.ID)
 		return err
 	})
 }
@@ -843,7 +843,7 @@ func (e Executor) persistImageArtifact(
 			return err
 		}
 		if !promote {
-			if err := finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now); err != nil {
+			if err := finishUnpromotedNodeRun(ctx, e.Products, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now); err != nil {
 				return err
 			}
 			return settle()
@@ -853,7 +853,7 @@ func (e Executor) persistImageArtifact(
 			return err
 		}
 		if !promotable {
-			if err := finishUnpromotedNodeRun(ctx, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now); err != nil {
+			if err := finishUnpromotedNodeRun(ctx, e.Products, pgxTx, run.ID, nodeRun.ID, nodeRun.ActiveAttemptID, now); err != nil {
 				return err
 			}
 			return settle()
@@ -883,7 +883,7 @@ func (e Executor) persistImageArtifact(
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID)
+			_, err = completeGraphRunIfNodesTerminal(ctx, e.Products, pgxTx, run.ID)
 			return err
 		}
 		if err := appendGraphRunEventLocked(ctx, pgxTx, run.ID, "node.succeeded", &nodeRun.ID, map[string]any{
@@ -893,7 +893,7 @@ func (e Executor) persistImageArtifact(
 		}); err != nil {
 			return err
 		}
-		if _, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID); err != nil {
+		if _, err = completeGraphRunIfNodesTerminal(ctx, e.Products, pgxTx, run.ID); err != nil {
 			return err
 		}
 		return settle()
@@ -1168,10 +1168,10 @@ func validateGeneratedPayload(artifactType string, payload map[string]any) error
 
 // finishUnpromotedNodeRun 在围栏失败、取消抢先或不应晋升时收口：仍能锁住则标 cancelled，否则 noop。
 // 不是 unknown、不是 failed。缺 attempt 只 complete。须已在事务里。
-func finishUnpromotedNodeRun(ctx context.Context, pgxTx *gorm.DB, runID, nodeRunID string, attemptID *string, now time.Time) error {
+func finishUnpromotedNodeRun(ctx context.Context, products ProductGuard, pgxTx *gorm.DB, runID, nodeRunID string, attemptID *string, now time.Time) error {
 	reason := GraphCancelledReason
 	if attemptID == nil || *attemptID == "" {
-		_, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+		_, err := completeGraphRunIfNodesTerminal(ctx, products, pgxTx, runID)
 		return err
 	}
 	promotable, err := lockNodeRunForPromotion(ctx, pgxTx, runID, nodeRunID, attemptID)
@@ -1197,7 +1197,7 @@ func finishUnpromotedNodeRun(ctx context.Context, pgxTx *gorm.DB, runID, nodeRun
 	}); err != nil {
 		return err
 	}
-	_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+	_, err = completeGraphRunIfNodesTerminal(ctx, products, pgxTx, runID)
 	return err
 }
 
@@ -1242,13 +1242,13 @@ func adoptSummary(artifactType string) string {
 // snapshot 对不上当前 revision 则不 adopt（返回 false），避免覆盖用户后来的编辑。
 // 写 workflow_graphs 节点 config + 历史。返回新 revision 与是否采用。
 func adoptGeneratedDocument(
-	ctx context.Context,
+	ctx context.Context, products ProductGuard,
 	pgxTx *gorm.DB,
 	productID, graphID, nodeID, summary string,
 	snapshot map[string]any,
 	writeback func(map[string]any) map[string]any,
 ) (int, bool, error) {
-	row, err := loadGraphForUpdate(ctx, pgxTx, productID, graphID)
+	row, err := loadGraphForUpdate(ctx, products, pgxTx, productID, graphID)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1272,7 +1272,7 @@ func adoptGeneratedDocument(
 		return row.Revision, false, nil
 	}
 	merged := writeback(originConfigForInvert(node))
-	result, err := WriteTx(ctx, pgxTx, Command{
+	result, err := WriteTx(ctx, products, pgxTx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{

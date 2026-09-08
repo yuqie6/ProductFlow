@@ -135,9 +135,9 @@ type ProposalEdgeView struct {
 
 // Project 把 live 图行展开成画布 HTTP 投影，供 GET current/get 与改图成功后的 200 体。
 // 读 workflow_graphs、节点/边/分组、workflow_operation_groups、artifacts 与 pending 提案；不写库。
-// ctx 必须带 ProductGuard，否则绑图元数据会 Internal。缺图由调用方 loadGraph 先 NotFound。
+// products 必须显式提供，否则绑图元数据会 Internal。缺图由调用方 loadGraph 先 NotFound。
 // CanRedo 仅当栈顶 HistoryKind=undo。不要把返回值当成 AppliedGraph。
-func Project(ctx context.Context, tx *gorm.DB, id Identity) (Projection, error) {
+func Project(ctx context.Context, products ProductGuard, tx *gorm.DB, id Identity) (Projection, error) {
 	row := graphRow{Identity: id}
 	applied, err := loadAppliedGraph(ctx, tx, row)
 	if err != nil {
@@ -147,7 +147,7 @@ func Project(ctx context.Context, tx *gorm.DB, id Identity) (Projection, error) 
 	if err != nil {
 		return Projection{}, err
 	}
-	sources, previews, artifactDigests, pendingCandidates, err := loadGraphSources(ctx, tx, row, applied)
+	sources, previews, artifactDigests, pendingCandidates, err := loadGraphSources(ctx, products, tx, row, applied)
 	if err != nil {
 		return Projection{}, err
 	}
@@ -334,7 +334,7 @@ func configStatusWithStale(applied AppliedGraph, node AppliedNode, artifactDiges
 // loadGraphSources 组装编译/投影用的 SourceRecord：商品 facts、绑定图元数据、current artifact digest。
 // 节点行已经由 loadAppliedGraph 展开；商品、fact、绑定资产和视觉版本均按类型批量读取。
 // Guard 缺商品/fact 返回空源，不报 NotFound。同时返回 preview 标题、digest、pending candidate 映射。
-func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, map[string]string, error) {
+func loadGraphSources(ctx context.Context, products ProductGuard, tx *gorm.DB, row graphRow, applied AppliedGraph) (map[string]SourceRecord, map[string]string, map[string]string, map[string]string, error) {
 	artifactIDs := make([]string, 0)
 	boundAssetIDs := make([]string, 0)
 	visualVersionIDs := make([]string, 0)
@@ -363,7 +363,7 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 	}
 	boundAssetMetas := map[string]BoundAssetMetadata{}
 	if len(boundAssetIDs) > 0 {
-		guard, err := requireProductGuard(ctx)
+		guard, err := requireProductGuard(products)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -376,7 +376,7 @@ func loadGraphSources(ctx context.Context, tx *gorm.DB, row graphRow, applied Ap
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	productSources, err := loadProductSourceSnapshots(ctx, tx, row.ProductID, applied.Nodes)
+	productSources, err := loadProductSourceSnapshots(ctx, products, tx, row.ProductID, applied.Nodes)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}

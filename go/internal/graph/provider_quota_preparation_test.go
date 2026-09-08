@@ -15,7 +15,7 @@ import (
 
 func TestGraphProviderPreparationCannotReserveAfterCancellation(t *testing.T) {
 	pool, db := testdb.Open(t)
-	ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+	ctx := context.Background()
 	attempt := clockid.New()
 	runID := insertStaleRunningGraphRun(t, pool, "claimed", &attempt, time.Now().UTC())
 	var graphID, productID, nodeID string
@@ -31,7 +31,7 @@ func TestGraphProviderPreparationCannotReserveAfterCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	invoked := false
-	_, _, err := (Executor{DB: db}).callImageProvider(ctx, runID, graphNodeRunRow{ID: nodeID, ActiveAttemptID: &attempt}, "fixture", ImageRequest{InputDigest: "digest"}, func(context.Context, ImageRequest) (ImageResult, error) { invoked = true; return ImageResult{}, nil })
+	_, _, err := (Executor{Products: cmdTestProducts{}, DB: db}).callImageProvider(ctx, runID, graphNodeRunRow{ID: nodeID, ActiveAttemptID: &attempt}, "fixture", ImageRequest{InputDigest: "digest"}, func(context.Context, ImageRequest) (ImageResult, error) { invoked = true; return ImageResult{}, nil })
 	if !errors.Is(err, errProviderFenced) {
 		t.Fatalf("expected fence, got %v", err)
 	}
@@ -49,7 +49,7 @@ func TestGraphProviderPreparationCannotReserveAfterCancellation(t *testing.T) {
 
 func TestGraphProviderPreparationQuotaFailureRollsBackIntent(t *testing.T) {
 	pool, db := testdb.Open(t)
-	ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+	ctx := context.Background()
 	attempt := clockid.New()
 	runID := insertStaleRunningGraphRun(t, pool, "claimed", &attempt, time.Now().UTC())
 	var nodeID string
@@ -87,7 +87,7 @@ func TestGraphProviderPreparationQuotaFailureRollsBackIntent(t *testing.T) {
 		}
 		return ImageResult{Model: "fixture"}, nil
 	}
-	e := Executor{DB: db}
+	e := Executor{Products: cmdTestProducts{}, DB: db}
 	node := graphNodeRunRow{ID: nodeID, ActiveAttemptID: &attempt}
 	if _, _, err := e.callImageProvider(ctx, runID, node, "fixture", ImageRequest{InputDigest: "digest"}, invoke); err == nil || errors.Is(err, errProviderFenced) {
 		t.Fatalf("expected quota persistence error, got %v", err)

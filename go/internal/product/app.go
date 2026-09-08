@@ -91,7 +91,6 @@ func (s Service) CreateWithoutGraph(ctx context.Context, in CreateInput) (Create
 // CreateDirect 是 v3 直连创建：同一事务写商品、参考图与 schema-v3 模板图，不创建 Agent 对话。
 // 名称、资料、图种或参考图非法返回 Validation；已有 active 图时 WriteTx 返回 Conflict。
 func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []graph.DirectCreateImageType, generationSpec map[string]any, deliverySpec map[string]any) (DirectCreateResponse, error) {
-	ctx = graph.WithProductGuard(ctx, GraphGuard{})
 	var result DirectCreateResponse
 	err := s.createWithGraph(ctx, in, true, true, func(tx *gorm.DB, creation canonicalCreation) error {
 		sourceID := creation.product.ID
@@ -110,7 +109,7 @@ func (s Service) CreateDirect(ctx context.Context, in CreateInput, imageTypes []
 		if err != nil {
 			return err
 		}
-		cmd, err := graph.WriteTx(ctx, tx, graph.Command{
+		cmd, err := graph.WriteTx(ctx, GraphGuard{}, tx, graph.Command{
 			ProductID: creation.product.ID,
 			Title:     creation.product.Name,
 			ChangeSet: changeSet,

@@ -31,7 +31,7 @@ func TestRuntimeFactsExcludePendingAndConflictedValues(t *testing.T) {
 	}
 }
 
-func (g *batchSourceGuard) Require(context.Context, *gorm.DB, string) error              { return nil }
+func (g *batchSourceGuard) Require(context.Context, *gorm.DB, string) error             { return nil }
 func (g *batchSourceGuard) Lock(context.Context, *gorm.DB, string) error                { return nil }
 func (g *batchSourceGuard) HasAssets(context.Context, *gorm.DB, string, []string) error { return nil }
 func (g *batchSourceGuard) LoadSource(_ context.Context, _ *gorm.DB, productID string) (*SourceProduct, error) {
@@ -74,14 +74,14 @@ func TestLoadProductSourceSnapshotsBatchesProductAndFactReads(t *testing.T) {
 		},
 		factSets: map[string]*FactSet{"fact-1": factOne, "fact-2": factTwo},
 	}
-	ctx := WithProductGuard(context.Background(), guard)
+	ctx := context.Background()
 	nodes := []AppliedNode{
 		{ID: "node-1", NodeType: NodeProductSource, Config: map[string]any{"source_product_id": "source-1"}},
 		{ID: "node-2", NodeType: NodeProductSource, Config: map[string]any{"source_product_id": "source-1", "fact_set_version_id": "fact-1"}},
 		{ID: "node-3", NodeType: NodeProductSource, Config: map[string]any{"source_product_id": "source-2"}},
 	}
 
-	got, err := loadProductSourceSnapshots(ctx, nil, "graph-product", nodes)
+	got, err := loadProductSourceSnapshots(ctx, guard, nil, "graph-product", nodes)
 	if err != nil {
 		t.Fatal(err)
 	}

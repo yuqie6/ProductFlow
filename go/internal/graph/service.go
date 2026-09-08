@@ -27,24 +27,19 @@ type Service struct {
 	// AfterProposalDecision 在确认或丢弃提案成功后、同一事务里回调，供 Agent journal 同步。
 	// nil 跳过。失败回滚这次确认/丢弃。
 	AfterProposalDecision func(ctx context.Context, tx *gorm.DB, productID, graphID, proposalID, decision string) error
-	// Products 经 guardCtx 挂到改图/投影/跑图提交的 ctx 上。必须注入；nil 时需要守卫的路径返回 Internal。
+	// Products 显式传入改图、投影和运行事务。必须注入；nil 时需要守卫的路径返回 Internal。
 	Products ProductGuard
-}
-
-func (s Service) guardCtx(ctx context.Context) context.Context {
-	return WithProductGuard(ctx, s.Products)
 }
 
 // CreateEmpty 为商品持久化一张空的 active schema-v3 图。商品已有 active 图时返回 Conflict。
 func (s Service) CreateEmpty(ctx context.Context, productID string) (Projection, error) {
-	ctx = s.guardCtx(ctx)
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		row, err := CreateEmpty(ctx, pgxTx, productID, DefaultGraphTitle)
+		row, err := CreateEmpty(ctx, s.Products, pgxTx, productID, DefaultGraphTitle)
 		if err != nil {
 			return err
 		}
-		out, err = Project(ctx, pgxTx, row.Identity)
+		out, err = Project(ctx, s.Products, pgxTx, row.Identity)
 		return err
 	})
 	return out, err
@@ -52,14 +47,13 @@ func (s Service) CreateEmpty(ctx context.Context, productID string) (Projection,
 
 // Current 读取商品当前 active 图。没有 active 图时返回 NotFound，不返回 nil Projection。
 func (s Service) Current(ctx context.Context, productID string) (Projection, error) {
-	ctx = s.guardCtx(ctx)
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		row, err := loadActiveGraph(ctx, pgxTx, productID)
+		row, err := loadActiveGraph(ctx, s.Products, pgxTx, productID)
 		if err != nil {
 			return err
 		}
-		out, err = Project(ctx, pgxTx, row.Identity)
+		out, err = Project(ctx, s.Products, pgxTx, row.Identity)
 		return err
 	})
 	return out, err
@@ -67,14 +61,13 @@ func (s Service) Current(ctx context.Context, productID string) (Projection, err
 
 // Get 按商品与图 id 读取 live 图。图不属于该商品时返回 NotFound。
 func (s Service) Get(ctx context.Context, productID, graphID string) (Projection, error) {
-	ctx = s.guardCtx(ctx)
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		row, err := loadGraph(ctx, pgxTx, productID, graphID)
+		row, err := loadGraph(ctx, s.Products, pgxTx, productID, graphID)
 		if err != nil {
 			return err
 		}
-		out, err = Project(ctx, pgxTx, row.Identity)
+		out, err = Project(ctx, s.Products, pgxTx, row.Identity)
 		return err
 	})
 	return out, err
@@ -95,11 +88,10 @@ func (s Service) ApplyAgentChangeSet(ctx context.Context, productID, graphID str
 }
 
 func (s Service) applyChangeSet(ctx context.Context, productID, graphID string, changeSet ChangeSet, actor ActorType) (Projection, error) {
-	ctx = s.guardCtx(ctx)
 	changeSet.ActorType = actor
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		result, err := WriteTx(ctx, pgxTx, Command{
+		result, err := WriteTx(ctx, s.Products, pgxTx, Command{
 			ProductID: productID,
 			GraphID:   &graphID,
 			ChangeSet: changeSet,
@@ -108,7 +100,7 @@ func (s Service) applyChangeSet(ctx context.Context, productID, graphID string, 
 		if err != nil {
 			return err
 		}
-		out, err = ProjectCommand(ctx, pgxTx, result)
+		out, err = ProjectCommand(ctx, s.Products, pgxTx, result)
 		return err
 	})
 	return out, err
@@ -125,10 +117,9 @@ type AgentProposalResult struct {
 // CreateAgentProposal 只存 PENDING 提案，不改 live 图。
 // CreateProposal 的 Conflict / 库错误原样返回。
 func (s Service) CreateAgentProposal(ctx context.Context, productID, conversationID string, changeSet ChangeSet) (AgentProposalResult, error) {
-	ctx = s.guardCtx(ctx)
 	var out AgentProposalResult
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		result, err := CreateProposal(ctx, pgxTx, productID, conversationID, changeSet)
+		result, err := CreateProposal(ctx, s.Products, pgxTx, productID, conversationID, changeSet)
 		if err != nil {
 			return err
 		}
@@ -140,12 +131,11 @@ func (s Service) CreateAgentProposal(ctx context.Context, productID, conversatio
 
 // TryCurrent 给 Agent 工具与工作台在「图可能尚未出生」时读 active 图画布投影。
 // 没有 active 图返回 nil, nil，不要改成 NotFound——HTTP current 才走 Current 的 404。
-// 只读 Project，不写库。ctx 会挂 ProductGuard。不要和 Get（按图 id）搞混。
+// 只读 Project，不写库。使用显式 Products 依赖。不要和 Get（按图 id）搞混。
 func (s Service) TryCurrent(ctx context.Context, productID string) (*Projection, error) {
-	ctx = s.guardCtx(ctx)
 	var out *Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		row, err := loadActiveGraph(ctx, pgxTx, productID)
+		row, err := loadActiveGraph(ctx, s.Products, pgxTx, productID)
 		if err != nil {
 			var e apperr.Error
 			if errors.As(err, &e) && e.Status == http.StatusNotFound {
@@ -153,7 +143,7 @@ func (s Service) TryCurrent(ctx context.Context, productID string) (*Projection,
 			}
 			return err
 		}
-		proj, err := Project(ctx, pgxTx, row.Identity)
+		proj, err := Project(ctx, s.Products, pgxTx, row.Identity)
 		if err != nil {
 			return err
 		}
@@ -165,14 +155,13 @@ func (s Service) TryCurrent(ctx context.Context, productID string) (*Projection,
 
 // Undo 应用最近一条可逆编辑的 inverse。没有可撤销操作时返回 Conflict。
 func (s Service) Undo(ctx context.Context, productID, graphID string) (Projection, error) {
-	ctx = s.guardCtx(ctx)
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		result, err := Undo(ctx, pgxTx, productID, graphID)
+		result, err := Undo(ctx, s.Products, pgxTx, productID, graphID)
 		if err != nil {
 			return err
 		}
-		out, err = ProjectCommand(ctx, pgxTx, result)
+		out, err = ProjectCommand(ctx, s.Products, pgxTx, result)
 		return err
 	})
 	return out, err
@@ -180,14 +169,13 @@ func (s Service) Undo(ctx context.Context, productID, graphID string) (Projectio
 
 // Redo 重做最近一次 Undo。栈顶不是 Undo 时返回 Conflict。
 func (s Service) Redo(ctx context.Context, productID, graphID string) (Projection, error) {
-	ctx = s.guardCtx(ctx)
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		result, err := Redo(ctx, pgxTx, productID, graphID)
+		result, err := Redo(ctx, s.Products, pgxTx, productID, graphID)
 		if err != nil {
 			return err
 		}
-		out, err = ProjectCommand(ctx, pgxTx, result)
+		out, err = ProjectCommand(ctx, s.Products, pgxTx, result)
 		return err
 	})
 	return out, err
@@ -195,14 +183,13 @@ func (s Service) Redo(ctx context.Context, productID, graphID string) (Projectio
 
 // ConfirmProposal 把 PENDING 提案应用到 live 图。非 pending 返回 NotPending；revision 已变返回 Conflict。
 func (s Service) ConfirmProposal(ctx context.Context, productID, graphID, proposalID string) (Projection, error) {
-	ctx = s.guardCtx(ctx)
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		row, err := ConfirmProposal(ctx, pgxTx, productID, graphID, proposalID)
+		row, err := ConfirmProposal(ctx, s.Products, pgxTx, productID, graphID, proposalID)
 		if err != nil {
 			return err
 		}
-		active, err := loadActiveGraph(ctx, pgxTx, productID)
+		active, err := loadActiveGraph(ctx, s.Products, pgxTx, productID)
 		if err != nil {
 			active = row
 		}
@@ -211,7 +198,7 @@ func (s Service) ConfirmProposal(ctx context.Context, productID, graphID, propos
 				return err
 			}
 		}
-		out, err = Project(ctx, pgxTx, active.Identity)
+		out, err = Project(ctx, s.Products, pgxTx, active.Identity)
 		return err
 	})
 	return out, err
@@ -219,13 +206,12 @@ func (s Service) ConfirmProposal(ctx context.Context, productID, graphID, propos
 
 // DiscardProposal 丢弃 PENDING 提案，不改 live 图。非 pending 返回 NotPending。
 func (s Service) DiscardProposal(ctx context.Context, productID, graphID, proposalID string) (Projection, error) {
-	ctx = s.guardCtx(ctx)
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if err := DiscardProposal(ctx, pgxTx, productID, graphID, proposalID); err != nil {
+		if err := DiscardProposal(ctx, s.Products, pgxTx, productID, graphID, proposalID); err != nil {
 			return err
 		}
-		row, err := loadGraph(ctx, pgxTx, productID, graphID)
+		row, err := loadGraph(ctx, s.Products, pgxTx, productID, graphID)
 		if err != nil {
 			return err
 		}
@@ -234,7 +220,7 @@ func (s Service) DiscardProposal(ctx context.Context, productID, graphID, propos
 				return err
 			}
 		}
-		out, err = Project(ctx, pgxTx, row.Identity)
+		out, err = Project(ctx, s.Products, pgxTx, row.Identity)
 		return err
 	})
 	return out, err
@@ -242,10 +228,9 @@ func (s Service) DiscardProposal(ctx context.Context, productID, graphID, propos
 
 // GetDocumentCandidate 读取内容节点上挂起的 AI 文稿候选。没有候选时返回 NotFound。
 func (s Service) GetDocumentCandidate(ctx context.Context, productID, graphID, nodeID string) (DocumentCandidate, error) {
-	ctx = s.guardCtx(ctx)
 	var out DocumentCandidate
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		_, _, _, _, _, candidate, err := loadDocumentCandidate(ctx, pgxTx, productID, graphID, nodeID, false)
+		_, _, _, _, _, candidate, err := loadDocumentCandidate(ctx, s.Products, pgxTx, productID, graphID, nodeID, false)
 		out = candidate
 		return err
 	})
@@ -254,10 +239,9 @@ func (s Service) GetDocumentCandidate(ctx context.Context, productID, graphID, n
 
 // ApplyDocumentCandidate 把候选 section 写入节点 config。revision 或 artifact 已变返回 Conflict；没有差异返回 Validation。
 func (s Service) ApplyDocumentCandidate(ctx context.Context, productID, graphID, nodeID string, input ApplyDocumentCandidateInput) (Projection, error) {
-	ctx = s.guardCtx(ctx)
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		row, _, node, _, artifact, candidate, err := loadDocumentCandidate(ctx, pgxTx, productID, graphID, nodeID, true)
+		row, _, node, _, artifact, candidate, err := loadDocumentCandidate(ctx, s.Products, pgxTx, productID, graphID, nodeID, true)
 		if err != nil {
 			return err
 		}
@@ -300,7 +284,7 @@ func (s Service) ApplyDocumentCandidate(ctx context.Context, productID, graphID,
 		} else if DocumentOrigin(node) == OriginSeed {
 			origin = OriginGenerated
 		}
-		result, err := WriteTx(ctx, pgxTx, Command{
+		result, err := WriteTx(ctx, s.Products, pgxTx, Command{
 			ProductID: productID,
 			GraphID:   &graphID,
 			ChangeSet: ChangeSet{
@@ -321,7 +305,7 @@ func (s Service) ApplyDocumentCandidate(ctx context.Context, productID, graphID,
 			Update("pending_candidate_artifact_id", nil).Error; err != nil {
 			return err
 		}
-		out, err = ProjectCommand(ctx, pgxTx, result)
+		out, err = ProjectCommand(ctx, s.Products, pgxTx, result)
 		return err
 	})
 	return out, err
@@ -329,10 +313,9 @@ func (s Service) ApplyDocumentCandidate(ctx context.Context, productID, graphID,
 
 // DiscardDocumentCandidate 清掉 pending_candidate_artifact_id。artifact 已变返回 Conflict。
 func (s Service) DiscardDocumentCandidate(ctx context.Context, productID, graphID, nodeID string, input DiscardDocumentCandidateInput) (Projection, error) {
-	ctx = s.guardCtx(ctx)
 	var out Projection
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		row, _, _, _, artifact, _, err := loadDocumentCandidate(ctx, pgxTx, productID, graphID, nodeID, true)
+		row, _, _, _, artifact, _, err := loadDocumentCandidate(ctx, s.Products, pgxTx, productID, graphID, nodeID, true)
 		if err != nil {
 			return err
 		}
@@ -348,7 +331,7 @@ func (s Service) DiscardDocumentCandidate(ctx context.Context, productID, graphI
 		if result.RowsAffected != 1 {
 			return apperr.Conflict("文稿候选已变化，请刷新后重试")
 		}
-		out, err = Project(ctx, pgxTx, row.Identity)
+		out, err = Project(ctx, s.Products, pgxTx, row.Identity)
 		return err
 	})
 	return out, err
@@ -379,11 +362,10 @@ func (s Service) SubmitRun(ctx context.Context, productID, graphID string, req G
 // SubmitRunTx 在调用方已有的事务里提交 GraphRun。语义与 [Service.SubmitRun] 相同。
 // 失败条件与 SubmitRun 相同。
 func (s Service) SubmitRunTx(ctx context.Context, pgxTx *gorm.DB, productID, graphID string, req GraphRunRequest) (GraphRunResponse, error) {
-	ctx = s.guardCtx(ctx)
 	if req.Scope == "" {
 		req.Scope = RunScopeGraph
 	}
-	submission, err := submitGraphRun(ctx, pgxTx, productID, graphID, req)
+	submission, err := submitGraphRun(ctx, s.Products, pgxTx, productID, graphID, req)
 	if err != nil {
 		return GraphRunResponse{}, err
 	}
@@ -393,8 +375,7 @@ func (s Service) SubmitRunTx(ctx context.Context, pgxTx *gorm.DB, productID, gra
 // CountRunnableNodesTx 在调用方事务中统计全图可运行节点，不写库或预留额度。
 // 商品守卫由 Service 提供；空图或节点配置无效保留运行选择器的 Validation。
 func (s Service) CountRunnableNodesTx(ctx context.Context, db *gorm.DB, productID, graphID string) (int, error) {
-	ctx = s.guardCtx(ctx)
-	row, err := loadGraph(ctx, db, productID, graphID)
+	row, err := loadGraph(ctx, s.Products, db, productID, graphID)
 	if err != nil {
 		return 0, err
 	}
@@ -420,8 +401,7 @@ func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req 
 	}
 	var out GraphRunPreviewResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		ctx := s.guardCtx(ctx)
-		row, err := loadGraph(ctx, pgxTx, productID, graphID)
+		row, err := loadGraph(ctx, s.Products, pgxTx, productID, graphID)
 		if err != nil {
 			return err
 		}
@@ -429,7 +409,7 @@ func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req 
 		if err != nil {
 			return err
 		}
-		sources, _, _, _, err := loadGraphSources(ctx, pgxTx, row, applied)
+		sources, _, _, _, err := loadGraphSources(ctx, s.Products, pgxTx, row, applied)
 		if err != nil {
 			return err
 		}
@@ -463,10 +443,9 @@ func (s Service) PreviewRun(ctx context.Context, productID, graphID string, req 
 // ListRuns 给 GET .../runs：按 started_at DESC 列出该图最近最多 20 条 GraphRun 摘要。
 // 图不属于该商品返回 NotFound。不写库、不入队。完整 snapshot、node input/output 走单个 run 详情，不要把本列表当详情接口。
 func (s Service) ListRuns(ctx context.Context, productID, graphID string) (GraphRunListResponse, error) {
-	ctx = s.guardCtx(ctx)
 	var out GraphRunListResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		runs, err := listGraphRuns(ctx, pgxTx, productID, graphID, 20)
+		runs, err := listGraphRuns(ctx, s.Products, pgxTx, productID, graphID, 20)
 		if err != nil {
 			return err
 		}
@@ -482,10 +461,9 @@ func (s Service) ListRuns(ctx context.Context, productID, graphID string) (Graph
 
 // GetRun 读取指定 GraphRun。找不到 run 返回 NotFound，不返回零值当成功。
 func (s Service) GetRun(ctx context.Context, productID, graphID, runID string) (GraphRunResponse, error) {
-	ctx = s.guardCtx(ctx)
 	var out GraphRunResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		run, err := loadGraphRun(ctx, pgxTx, productID, graphID, runID)
+		run, err := loadGraphRun(ctx, s.Products, pgxTx, productID, graphID, runID)
 		if err != nil {
 			return err
 		}
@@ -498,11 +476,10 @@ func (s Service) GetRun(ctx context.Context, productID, graphID, runID string) (
 // GetRunStatus 只读取指定 GraphRun 的 identity/status，供 SSE 终态兜底检查。
 // 不读取 snapshot、node_runs 或 provider 输入/输出；完整详情仍由 GetRun 提供。
 func (s Service) GetRunStatus(ctx context.Context, productID, graphID, runID string) (string, error) {
-	ctx = s.guardCtx(ctx)
 	var status string
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		var err error
-		status, err = loadGraphRunStatus(ctx, pgxTx, productID, graphID, runID)
+		status, err = loadGraphRunStatus(ctx, s.Products, pgxTx, productID, graphID, runID)
 		return err
 	})
 	return status, err
@@ -511,7 +488,6 @@ func (s Service) GetRunStatus(ctx context.Context, productID, graphID, runID str
 // GetRunForProduct 按 run id 读取运行，并校验属于该商品。workflowID 非空时还须匹配 graph_id。
 // run 不存在、不属于该商品或 graph_id 不匹配返回 NotFound。
 func (s Service) GetRunForProduct(ctx context.Context, productID, runID, workflowID string) (GraphRunResponse, error) {
-	ctx = s.guardCtx(ctx)
 	var out GraphRunResponse
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		run, err := loadGraphRunByID(ctx, pgxTx, runID)
@@ -521,7 +497,7 @@ func (s Service) GetRunForProduct(ctx context.Context, productID, runID, workflo
 		if workflowID != "" && run.GraphID != workflowID {
 			return apperr.NotFound("工作流运行不存在")
 		}
-		if _, err := loadGraph(ctx, pgxTx, productID, run.GraphID); err != nil {
+		if _, err := loadGraph(ctx, s.Products, pgxTx, productID, run.GraphID); err != nil {
 			return err
 		}
 		out = serializeGraphRun(run)
@@ -545,8 +521,7 @@ func (s Service) CancelRun(ctx context.Context, productID, graphID, runID string
 // CancelRunTx 在调用方已有的事务里取消 GraphRun。语义与 [Service.CancelRun] 相同。
 // 缺图或缺 run 返回 NotFound；已结束（含 unknown）返回 Conflict。
 func (s Service) CancelRunTx(ctx context.Context, pgxTx *gorm.DB, productID, graphID, runID string) (GraphRunResponse, error) {
-	ctx = s.guardCtx(ctx)
-	run, err := cancelGraphRun(ctx, pgxTx, productID, graphID, runID)
+	run, err := cancelGraphRun(ctx, s.Products, pgxTx, productID, graphID, runID)
 	if err != nil {
 		return GraphRunResponse{}, err
 	}
@@ -573,8 +548,7 @@ func (s Service) RetryRun(ctx context.Context, productID, graphID, runID string)
 // RetryRunTx 在调用方已有的事务里重试 failed 且 is_retryable 的 GraphRun。unknown 不可重试。
 // 非 failed 或不可重试返回 Validation；无法证明的 unknown 不得当失败自动重试。
 func (s Service) RetryRunTx(ctx context.Context, pgxTx *gorm.DB, productID, graphID, runID string) (GraphRunResponse, error) {
-	ctx = s.guardCtx(ctx)
-	submission, err := retryGraphRun(ctx, pgxTx, productID, graphID, runID)
+	submission, err := retryGraphRun(ctx, s.Products, pgxTx, productID, graphID, runID)
 	if err != nil {
 		return GraphRunResponse{}, err
 	}

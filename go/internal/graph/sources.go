@@ -114,7 +114,7 @@ func sourceSnapshotFromGuard(binding productSourceBinding, source *SourceProduct
 
 // loadProductSourceSnapshots 经 ProductGuard 批量读商品与 fact 版本，编进每个节点的 snapshot。
 // Guard 返回缺行时仍按单节点读取的规则转成 Validation 或空的 legacy source。
-func loadProductSourceSnapshots(ctx context.Context, tx *gorm.DB, graphProductID string, nodes []AppliedNode) (map[string]productSourceSnapshot, error) {
+func loadProductSourceSnapshots(ctx context.Context, products ProductGuard, tx *gorm.DB, graphProductID string, nodes []AppliedNode) (map[string]productSourceSnapshot, error) {
 	out := map[string]productSourceSnapshot{}
 	lookups := make([]productSourceLookup, 0)
 	sourceIDs := make([]string, 0)
@@ -135,7 +135,7 @@ func loadProductSourceSnapshots(ctx context.Context, tx *gorm.DB, graphProductID
 	if len(lookups) == 0 || len(sourceIDs) == 0 {
 		return out, nil
 	}
-	guard, err := requireProductGuard(ctx)
+	guard, err := requireProductGuard(products)
 	if err != nil {
 		return nil, err
 	}

@@ -16,7 +16,7 @@ func TestWriteTxRevisionConflict(t *testing.T) {
 	productID := insertCommandProduct(t, ctx, tx, "修订冲突")
 	created := writeProductSource(t, ctx, tx, productID, "修订冲突")
 	graphID := created.GraphID
-	_, err := WriteTx(ctx, tx, Command{
+	_, err := WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{
@@ -34,7 +34,7 @@ func TestWriteTxRequireActiveMissing(t *testing.T) {
 	ctx, tx := beginCommandTx(t)
 	productID := insertCommandProduct(t, ctx, tx, "无图商品")
 	fakeID := clockid.New()
-	_, err := WriteTx(ctx, tx, Command{
+	_, err := WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID:     productID,
 		GraphID:       &fakeID,
 		RequireActive: true,
@@ -54,7 +54,7 @@ func TestWriteTxRequireActiveMismatch(t *testing.T) {
 	productID := insertCommandProduct(t, ctx, tx, "图身份变化")
 	created := writeProductSource(t, ctx, tx, productID, "图身份变化")
 	staleID := clockid.New()
-	_, err := WriteTx(ctx, tx, Command{
+	_, err := WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID:     productID,
 		GraphID:       &staleID,
 		RequireActive: true,
@@ -71,7 +71,7 @@ func TestWriteTxRequireActiveMismatch(t *testing.T) {
 
 func TestWriteTxDoesNotCommit(t *testing.T) {
 	_, gdb := testdb.Open(t)
-	ctx := WithProductGuard(context.Background(), cmdTestProducts{})
+	ctx := context.Background()
 	tx := gdb.WithContext(ctx).Begin()
 	if tx.Error != nil {
 		t.Fatal(tx.Error)
@@ -100,7 +100,7 @@ func TestWriteTxDoesNotCommit(t *testing.T) {
 func TestTryLiveMissing(t *testing.T) {
 	ctx, tx := beginCommandTx(t)
 	productID := insertCommandProduct(t, ctx, tx, "尚无图")
-	live, err := TryLive(ctx, tx, productID)
+	live, err := TryLive(ctx, cmdTestProducts{}, tx, productID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestLoadLiveForUpdateRevisionConflict(t *testing.T) {
 	ctx, tx := beginCommandTx(t)
 	productID := insertCommandProduct(t, ctx, tx, "提取过期")
 	created := writeProductSource(t, ctx, tx, productID, "提取过期")
-	_, err := LoadLiveForUpdate(ctx, tx, productID, created.GraphID, created.Revision+1)
+	_, err := LoadLiveForUpdate(ctx, cmdTestProducts{}, tx, productID, created.GraphID, created.Revision+1)
 	assertAppErr(t, err, 409, "工作流已变化，请刷新后重试")
 }
 
@@ -121,7 +121,7 @@ func TestExpandBirthCreatesWhenMissing(t *testing.T) {
 	ctx, tx := beginCommandTx(t)
 	productID := insertCommandProduct(t, ctx, tx, "无图展开")
 	assetID := insertCommandAsset(t, ctx, tx, productID)
-	expanded, result, err := ExpandBirth(ctx, tx, productID, "无图展开", birthInput(productID, assetID))
+	expanded, result, err := ExpandBirth(ctx, cmdTestProducts{}, tx, productID, "无图展开", birthInput(productID, assetID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestExpandBirthMutatesNameOnly(t *testing.T) {
 	productID := insertCommandProduct(t, ctx, tx, "名称展开")
 	assetID := insertCommandAsset(t, ctx, tx, productID)
 	created := writeProductSource(t, ctx, tx, productID, "名称展开")
-	expanded, result, err := ExpandBirth(ctx, tx, productID, "名称展开", birthInput(productID, assetID))
+	expanded, result, err := ExpandBirth(ctx, cmdTestProducts{}, tx, productID, "名称展开", birthInput(productID, assetID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,21 +160,21 @@ func TestExpandBirthSkipsExpandedGraph(t *testing.T) {
 	ctx, tx := beginCommandTx(t)
 	productID := insertCommandProduct(t, ctx, tx, "已展开")
 	assetID := insertCommandAsset(t, ctx, tx, productID)
-	if _, _, err := ExpandBirth(ctx, tx, productID, "已展开", birthInput(productID, assetID)); err != nil {
+	if _, _, err := ExpandBirth(ctx, cmdTestProducts{}, tx, productID, "已展开", birthInput(productID, assetID)); err != nil {
 		t.Fatal(err)
 	}
-	live, err := TryLive(ctx, tx, productID)
+	live, err := TryLive(ctx, cmdTestProducts{}, tx, productID)
 	if err != nil || live == nil {
 		t.Fatalf("live %+v %v", live, err)
 	}
-	expanded, result, err := ExpandBirth(ctx, tx, productID, "已展开", birthInput(productID, assetID))
+	expanded, result, err := ExpandBirth(ctx, cmdTestProducts{}, tx, productID, "已展开", birthInput(productID, assetID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if expanded || result.GraphID != "" {
 		t.Fatalf("second expand %+v %+v", expanded, result)
 	}
-	again, err := TryLive(ctx, tx, productID)
+	again, err := TryLive(ctx, cmdTestProducts{}, tx, productID)
 	if err != nil || again == nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestWriteTxRebasesStaleNodeConfigWhenSiblingChanged(t *testing.T) {
 	ctx, tx := beginCommandTx(t)
 	productID := insertCommandProduct(t, ctx, tx, "兄弟节点顶 revision")
 	assetID := insertCommandAsset(t, ctx, tx, productID)
-	_, created, err := ExpandBirth(ctx, tx, productID, "兄弟节点顶 revision", birthInput(productID, assetID))
+	_, created, err := ExpandBirth(ctx, cmdTestProducts{}, tx, productID, "兄弟节点顶 revision", birthInput(productID, assetID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestWriteTxRebasesStaleNodeConfigWhenSiblingChanged(t *testing.T) {
 	}
 	overlay["style"] = []any{"并行采用"}
 	visualCfg["visual_overlay"] = overlay
-	sibling, err := WriteTx(ctx, tx, Command{
+	sibling, err := WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{
@@ -222,7 +222,7 @@ func TestWriteTxRebasesStaleNodeConfigWhenSiblingChanged(t *testing.T) {
 	briefCfg := cloneMap(brief.Config)
 	delete(briefCfg, "document_origin")
 	briefCfg["goal"] = "检查器一次保存"
-	saved, err := WriteTx(ctx, tx, Command{
+	saved, err := WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{
@@ -252,7 +252,7 @@ func TestWriteTxStaleNodeConfigConflictsWhenSameNodeChanged(t *testing.T) {
 	ctx, tx := beginCommandTx(t)
 	productID := insertCommandProduct(t, ctx, tx, "同节点丢失更新")
 	assetID := insertCommandAsset(t, ctx, tx, productID)
-	_, created, err := ExpandBirth(ctx, tx, productID, "同节点丢失更新", birthInput(productID, assetID))
+	_, created, err := ExpandBirth(ctx, cmdTestProducts{}, tx, productID, "同节点丢失更新", birthInput(productID, assetID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestWriteTxStaleNodeConfigConflictsWhenSameNodeChanged(t *testing.T) {
 	firstCfg := cloneMap(brief.Config)
 	delete(firstCfg, "document_origin")
 	firstCfg["goal"] = "先手写"
-	if _, err := WriteTx(ctx, tx, Command{
+	if _, err := WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{
@@ -280,7 +280,7 @@ func TestWriteTxStaleNodeConfigConflictsWhenSameNodeChanged(t *testing.T) {
 	lostCfg := cloneMap(brief.Config)
 	delete(lostCfg, "document_origin")
 	lostCfg["goal"] = "过期写"
-	_, err = WriteTx(ctx, tx, Command{
+	_, err = WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{
@@ -298,7 +298,7 @@ func TestWriteTxStaleRenameStillConflictsAfterSiblingConfig(t *testing.T) {
 	ctx, tx := beginCommandTx(t)
 	productID := insertCommandProduct(t, ctx, tx, "改名不 rebase")
 	assetID := insertCommandAsset(t, ctx, tx, productID)
-	_, created, err := ExpandBirth(ctx, tx, productID, "改名不 rebase", birthInput(productID, assetID))
+	_, created, err := ExpandBirth(ctx, cmdTestProducts{}, tx, productID, "改名不 rebase", birthInput(productID, assetID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestWriteTxStaleRenameStillConflictsAfterSiblingConfig(t *testing.T) {
 	}
 	overlay["style"] = []any{"并行采用"}
 	visualCfg["visual_overlay"] = overlay
-	if _, err := WriteTx(ctx, tx, Command{
+	if _, err := WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{
@@ -329,7 +329,7 @@ func TestWriteTxStaleRenameStillConflictsAfterSiblingConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = WriteTx(ctx, tx, Command{
+	_, err = WriteTx(ctx, cmdTestProducts{}, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{

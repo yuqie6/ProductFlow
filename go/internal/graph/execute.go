@@ -28,7 +28,7 @@ type Executor struct {
 	// AfterRunStatus 在 ExecuteRun 到达终态（成功、failed、unknown）后回调，供 Agent 同步 Task。
 	// nil 跳过。失败被吞掉，不回滚已写入的 run 状态。
 	AfterRunStatus func(ctx context.Context, tx *gorm.DB, runID string) error
-	// Products 在 ExecuteRun 开头挂到 ctx，供 compile/cook 锁商品、读 facts 与绑定图。
+	// Products 显式传入执行事务，用于锁商品、读 facts 与绑定图。
 	// nil 时需要守卫的路径返回 Internal。
 	Products ProductGuard
 }
@@ -41,7 +41,6 @@ type Executor struct {
 // 已证明的节点失败会把 run 标 failed 后仍返回 nil，让 worker 消费任务。
 // 不要在这里打 broker，也不要把 unknown 改成 failed。副作用见 executeLoop / claim / persist。
 func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
-	ctx = WithProductGuard(ctx, e.Products)
 	e.logger().Info("graph run", zap.String("workflow_run_id", runID))
 	unlock, ok := tryProcessLock(runID)
 	if !ok {
@@ -108,7 +107,7 @@ func (e Executor) ExecuteRun(ctx context.Context, runID string) error {
 			e.notifyRunStatus(ctx, runID)
 			return nil
 		}
-		if failErr := failGraphRun(leaseCtx, e.DB, runID, "工作流运行失败"); failErr != nil {
+		if failErr := failGraphRun(leaseCtx, e.Products, e.DB, runID, "工作流运行失败"); failErr != nil {
 			if isMissingGraphRun(failErr) {
 				return nil
 			}
@@ -213,7 +212,7 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 			if err := failBlockedQueuedNodes(ctx, pgxTx, runID, applied, run.NodeRuns); err != nil {
 				return err
 			}
-			done, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+			done, err := completeGraphRunIfNodesTerminal(ctx, e.Products, pgxTx, runID)
 			if err != nil {
 				return err
 			}
@@ -434,7 +433,7 @@ func (e Executor) finishOrLater(ctx context.Context, runID string) error {
 		if err := failBlockedQueuedNodes(ctx, pgxTx, runID, applied, run.NodeRuns); err != nil {
 			return err
 		}
-		_, err = completeGraphRunIfNodesTerminal(ctx, pgxTx, runID)
+		_, err = completeGraphRunIfNodesTerminal(ctx, e.Products, pgxTx, runID)
 		return err
 	})
 }

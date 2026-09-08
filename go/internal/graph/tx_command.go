@@ -32,17 +32,17 @@ type Live struct {
 
 // WriteTx 在调用方事务里执行 Graph Command。GraphID 为空则新建，否则改已有图。
 // 不自行 commit。base_graph_revision 不匹配、已有 active 图、RequireActive 对不上时返回 Conflict。
-func WriteTx(ctx context.Context, tx *gorm.DB, cmd Command) (CommandResult, error) {
+func WriteTx(ctx context.Context, products ProductGuard, tx *gorm.DB, cmd Command) (CommandResult, error) {
 	kind := cmd.Kind
 	if kind == "" {
 		kind = HistoryEdit
 	}
 	if cmd.GraphID == nil {
-		return stageNew(ctx, tx, cmd.ProductID, cmd.Title, cmd.ChangeSet)
+		return stageNew(ctx, products, tx, cmd.ProductID, cmd.Title, cmd.ChangeSet)
 	}
 	graphID := *cmd.GraphID
 	if cmd.RequireActive {
-		live, err := loadActiveGraphForUpdate(ctx, tx, cmd.ProductID)
+		live, err := loadActiveGraphForUpdate(ctx, products, tx, cmd.ProductID)
 		if err != nil {
 			return CommandResult{}, err
 		}
@@ -53,21 +53,21 @@ func WriteTx(ctx context.Context, tx *gorm.DB, cmd Command) (CommandResult, erro
 			return CommandResult{}, apperr.Conflict("工作流已变化，请重新预览后重试")
 		}
 	}
-	return mutate(ctx, tx, cmd.ProductID, graphID, cmd.ChangeSet, kind)
+	return mutate(ctx, products, tx, cmd.ProductID, graphID, cmd.ChangeSet, kind)
 }
 
 // ProjectCommand 把刚写入的 CommandResult 展开成画布 HTTP 投影。
-func ProjectCommand(ctx context.Context, tx *gorm.DB, result CommandResult) (Projection, error) {
-	return Project(ctx, tx, result.identity())
+func ProjectCommand(ctx context.Context, products ProductGuard, tx *gorm.DB, result CommandResult) (Projection, error) {
+	return Project(ctx, products, tx, result.identity())
 }
 
 // ProjectGraph 按商品与图 id 读取画布投影。对不上返回 NotFound。
-func ProjectGraph(ctx context.Context, tx *gorm.DB, productID, graphID string) (Projection, error) {
-	row, err := loadGraph(ctx, tx, productID, graphID)
+func ProjectGraph(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string) (Projection, error) {
+	row, err := loadGraph(ctx, products, tx, productID, graphID)
 	if err != nil {
 		return Projection{}, err
 	}
-	return Project(ctx, tx, row.Identity)
+	return Project(ctx, products, tx, row.Identity)
 }
 
 func (r CommandResult) identity() Identity {
@@ -82,8 +82,8 @@ func (r CommandResult) identity() Identity {
 }
 
 // TryLive 读取商品当前 active 图。没有 active 图返回 nil, nil，不报 NotFound。
-func TryLive(ctx context.Context, tx *gorm.DB, productID string) (*Live, error) {
-	row, err := loadActiveGraph(ctx, tx, productID)
+func TryLive(ctx context.Context, products ProductGuard, tx *gorm.DB, productID string) (*Live, error) {
+	row, err := loadActiveGraph(ctx, products, tx, productID)
 	if err != nil {
 		var e apperr.Error
 		if errors.As(err, &e) && e.Status == http.StatusNotFound {
@@ -95,8 +95,8 @@ func TryLive(ctx context.Context, tx *gorm.DB, productID string) (*Live, error) 
 }
 
 // TryLiveForUpdate 锁住商品当前 active 图并展开快照。没有 active 图返回 nil, nil。
-func TryLiveForUpdate(ctx context.Context, tx *gorm.DB, productID string) (*Live, error) {
-	row, err := loadActiveGraphForUpdate(ctx, tx, productID)
+func TryLiveForUpdate(ctx context.Context, products ProductGuard, tx *gorm.DB, productID string) (*Live, error) {
+	row, err := loadActiveGraphForUpdate(ctx, products, tx, productID)
 	if err != nil || row == nil {
 		return nil, err
 	}
@@ -105,8 +105,8 @@ func TryLiveForUpdate(ctx context.Context, tx *gorm.DB, productID string) (*Live
 
 // LoadLiveForUpdate 锁指定 live 图并校验 active schema-v3 与 expected revision。
 // 非 active 或非 schema-v3 返回 Conflict；revision 对不上返回 Conflict；缺图返回 NotFound。
-func LoadLiveForUpdate(ctx context.Context, tx *gorm.DB, productID, graphID string, expectedRevision int) (Live, error) {
-	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
+func LoadLiveForUpdate(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string, expectedRevision int) (Live, error) {
+	row, err := loadGraphForUpdate(ctx, products, tx, productID, graphID)
 	if err != nil {
 		return Live{}, err
 	}
@@ -134,11 +134,11 @@ func liveFromRow(ctx context.Context, tx *gorm.DB, row graphRow) (*Live, error) 
 // ExpandBirth 把名称-only 图（恰好一个 product_source）按模板展开套图。
 // 没有 live 图则新建完整模板；已有其它节点则不改图并返回 false。
 // 未选图种或缺参考图返回 false, nil，不报 Validation。只 flush 不 commit。
-func ExpandBirth(ctx context.Context, tx *gorm.DB, productID, title string, in DirectCreateInput) (bool, CommandResult, error) {
+func ExpandBirth(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, title string, in DirectCreateInput) (bool, CommandResult, error) {
 	if len(in.ImageTypes) == 0 || len(in.ReferenceAssetIDs) == 0 {
 		return false, CommandResult{}, nil
 	}
-	live, err := TryLiveForUpdate(ctx, tx, productID)
+	live, err := TryLiveForUpdate(ctx, products, tx, productID)
 	if err != nil {
 		return false, CommandResult{}, err
 	}
@@ -147,7 +147,7 @@ func ExpandBirth(ctx context.Context, tx *gorm.DB, productID, title string, in D
 		if err != nil {
 			return false, CommandResult{}, err
 		}
-		result, err := WriteTx(ctx, tx, Command{
+		result, err := WriteTx(ctx, products, tx, Command{
 			ProductID: productID,
 			Title:     title,
 			ChangeSet: changeSet,
@@ -173,7 +173,7 @@ func ExpandBirth(ctx context.Context, tx *gorm.DB, productID, title string, in D
 		return false, CommandResult{}, err
 	}
 	graphID := live.Identity.ID
-	result, err := WriteTx(ctx, tx, Command{
+	result, err := WriteTx(ctx, products, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: changeSet,

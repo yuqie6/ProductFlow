@@ -24,7 +24,7 @@ type graphRunSubmission struct {
 }
 
 // submitGraphRun 在已有 running 时 FIFO queued；同范围同目标合并。queued 运行在 dequeue 时按当时 live 图再快照。
-func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string, req GraphRunRequest) (graphRunSubmission, error) {
+func submitGraphRun(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string, req GraphRunRequest) (graphRunSubmission, error) {
 	if err := validateGraphRunRequest(req); err != nil {
 		return graphRunSubmission{}, err
 	}
@@ -37,7 +37,7 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 	force := req.Force
 	mode := validDocumentAction(req.DocumentAction)
 	section := req.DocumentSection
-	row, err := loadGraphForUpdate(ctx, tx, productID, graphID)
+	row, err := loadGraphForUpdate(ctx, products, tx, productID, graphID)
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
@@ -66,7 +66,7 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 			if _, err := queue.StageForActor(ctx, tx, queue.ActorGraphRun, active.ID, 0); err != nil {
 				return graphRunSubmission{}, err
 			}
-			full, err := loadGraphRun(ctx, tx, productID, graphID, active.ID)
+			full, err := loadGraphRun(ctx, products, tx, productID, graphID, active.ID)
 			if err != nil {
 				return graphRunSubmission{}, err
 			}
@@ -77,7 +77,7 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 			return graphRunSubmission{}, err
 		}
 		if queued != nil {
-			full, err := loadGraphRun(ctx, tx, productID, graphID, queued.ID)
+			full, err := loadGraphRun(ctx, products, tx, productID, graphID, queued.ID)
 			if err != nil {
 				return graphRunSubmission{}, err
 			}
@@ -87,7 +87,7 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 		if err != nil {
 			return graphRunSubmission{}, err
 		}
-		full, err := loadGraphRun(ctx, tx, productID, graphID, queuedRun.ID)
+		full, err := loadGraphRun(ctx, products, tx, productID, graphID, queuedRun.ID)
 		if err != nil {
 			return graphRunSubmission{}, err
 		}
@@ -107,7 +107,7 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 	}
 	if queued != nil || queuedCount > 0 {
 		if queued != nil {
-			full, err := loadGraphRun(ctx, tx, productID, graphID, queued.ID)
+			full, err := loadGraphRun(ctx, products, tx, productID, graphID, queued.ID)
 			if err != nil {
 				return graphRunSubmission{}, err
 			}
@@ -117,19 +117,19 @@ func submitGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string,
 		if err != nil {
 			return graphRunSubmission{}, err
 		}
-		full, err := loadGraphRun(ctx, tx, productID, graphID, queuedRun.ID)
+		full, err := loadGraphRun(ctx, products, tx, productID, graphID, queuedRun.ID)
 		if err != nil {
 			return graphRunSubmission{}, err
 		}
 		return graphRunSubmission{Run: full, Created: true}, nil
 	}
-	return startGraphRun(ctx, tx, productID, graphID, row, req)
+	return startGraphRun(ctx, products, tx, productID, graphID, row, req)
 }
 
 // startGraphRun 在没有 running/残留 queued 时立刻开跑：按当时 live 图快照、选出节点、写 running 行。
 // 副作用：workflow_graph_runs（running）、workflow_graph_node_runs（queued）、run.started、Stage asynq。
 // 23505 表示并发已有 running，返回 Conflict。不要在这里忽略 FIFO queued——那是 submitGraphRun 的职责。
-func startGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string, row graphRow, req GraphRunRequest) (graphRunSubmission, error) {
+func startGraphRun(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string, row graphRow, req GraphRunRequest) (graphRunSubmission, error) {
 	scope := req.Scope
 	if scope == "" {
 		scope = RunScopeGraph
@@ -142,7 +142,7 @@ func startGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string, 
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
-	sources, _, _, _, err := loadGraphSources(ctx, tx, row, applied)
+	sources, _, _, _, err := loadGraphSources(ctx, products, tx, row, applied)
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
@@ -193,7 +193,7 @@ func startGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID string, 
 	if _, err := queue.StageForActor(ctx, tx, queue.ActorGraphRun, runID, 0); err != nil {
 		return graphRunSubmission{}, err
 	}
-	full, err := loadGraphRun(ctx, tx, productID, graphID, runID)
+	full, err := loadGraphRun(ctx, products, tx, productID, graphID, runID)
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
@@ -370,7 +370,7 @@ func validateGraphRunRequest(req GraphRunRequest) error {
 // activateQueuedRun 把 queued 行升成 running：按当前 live 图重做 snapshot 与选点，再 Stage asynq。
 // 选点失败把该 queued 标 failed+retryable，不挡住后续 promote。23505 表示已有 running，返回 nil。
 // 须已 FOR UPDATE 住该 run。不要复用入队时的占位 snapshot。
-func activateQueuedRun(ctx context.Context, tx *gorm.DB, productID, runID string) error {
+func activateQueuedRun(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, runID string) error {
 	var rec schema.WorkflowGraphRuns
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&rec).Error
 	if err != nil {
@@ -379,7 +379,7 @@ func activateQueuedRun(ctx context.Context, tx *gorm.DB, productID, runID string
 	if rec.Status != RunStatusQueued {
 		return nil
 	}
-	row, err := loadGraphForUpdate(ctx, tx, productID, rec.GraphID)
+	row, err := loadGraphForUpdate(ctx, products, tx, productID, rec.GraphID)
 	if err != nil {
 		return err
 	}
@@ -396,7 +396,7 @@ func activateQueuedRun(ctx context.Context, tx *gorm.DB, productID, runID string
 	if err != nil {
 		return err
 	}
-	sources, _, _, _, err := loadGraphSources(ctx, tx, row, applied)
+	sources, _, _, _, err := loadGraphSources(ctx, products, tx, row, applied)
 	if err != nil {
 		return err
 	}
@@ -453,7 +453,7 @@ func activateQueuedRun(ctx context.Context, tx *gorm.DB, productID, runID string
 // promoteNextQueuedRun 在没有 running 时按 started_at, id FIFO 升一条 queued。
 // 升上去立刻又 failed/cancelled 则递归下一条。已有 running 或没有 queued 返回 nil。
 // 终态迁移与 promote 是两次写；recovery 必须再显式调用一次，不能只靠 running 行带头。
-func promoteNextQueuedRun(ctx context.Context, tx *gorm.DB, graphID string) error {
+func promoteNextQueuedRun(ctx context.Context, products ProductGuard, tx *gorm.DB, graphID string) error {
 	active, err := loadActiveRun(ctx, tx, graphID)
 	if err != nil || active != nil {
 		return err
@@ -477,7 +477,7 @@ func promoteNextQueuedRun(ctx context.Context, tx *gorm.DB, graphID string) erro
 	if err != nil {
 		return err
 	}
-	if err := activateQueuedRun(auth.WithMerchantID(ctx, merchantID), tx, graph.ProductID, rec.ID); err != nil {
+	if err := activateQueuedRun(auth.WithMerchantID(ctx, merchantID), products, tx, graph.ProductID, rec.ID); err != nil {
 		return err
 	}
 	var after schema.WorkflowGraphRuns
@@ -485,15 +485,15 @@ func promoteNextQueuedRun(ctx context.Context, tx *gorm.DB, graphID string) erro
 		return err
 	}
 	if after.Status == RunStatusFailed || after.Status == RunStatusCancelled {
-		return promoteNextQueuedRun(ctx, tx, graphID)
+		return promoteNextQueuedRun(ctx, products, tx, graphID)
 	}
 	return nil
 }
 
 // listGraphRuns 按 started_at DESC 列出该图的 run 摘要。图不属于商品则 NotFound。
 // limit 夹在 1–50，默认 20。run 与 node_runs 分批读取，只选择列表所需的状态字段。
-func listGraphRuns(ctx context.Context, tx *gorm.DB, productID, graphID string, limit int) ([]graphRunRow, error) {
-	if _, err := loadGraph(ctx, tx, productID, graphID); err != nil {
+func listGraphRuns(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string, limit int) ([]graphRunRow, error) {
+	if _, err := loadGraph(ctx, products, tx, productID, graphID); err != nil {
 		return nil, err
 	}
 	if limit < 1 {
@@ -545,8 +545,8 @@ func listGraphRuns(ctx context.Context, tx *gorm.DB, productID, graphID string, 
 }
 
 // loadGraphRun 按商品+图+run 读取并带上 node_runs。图或 run 对不上返回 NotFound，不返回零值。
-func loadGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) (graphRunRow, error) {
-	if _, err := loadGraph(ctx, tx, productID, graphID); err != nil {
+func loadGraphRun(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID, runID string) (graphRunRow, error) {
+	if _, err := loadGraph(ctx, products, tx, productID, graphID); err != nil {
 		return graphRunRow{}, err
 	}
 	var rec schema.WorkflowGraphRuns
@@ -568,8 +568,8 @@ func loadGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID st
 
 // loadGraphRunStatus 只读取 GraphRun 的 identity/status，供 SSE 终态兜底检查。
 // 商品和工作流校验也只取 graph id，不能把完整 GraphRun 投影带回读路径。
-func loadGraphRunStatus(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) (string, error) {
-	if err := requireOwnedProduct(ctx, tx, productID); err != nil {
+func loadGraphRunStatus(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID, runID string) (string, error) {
+	if err := requireOwnedProduct(ctx, products, tx, productID); err != nil {
 		return "", err
 	}
 	var graphRec schema.WorkflowGraphs
@@ -600,7 +600,7 @@ func lockGraphRunForUpdate(ctx context.Context, tx *gorm.DB, runID string) (sche
 
 // lockGraphRunAndLiveGraph 固定 GraphRun -> workflow_graphs 的取锁顺序。
 // 只有确实要修改 live graph 的运行路径使用它；普通节点状态迁移不应因此锁整张 graph。
-func lockGraphRunAndLiveGraph(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) error {
+func lockGraphRunAndLiveGraph(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID, runID string) error {
 	run, err := lockGraphRunForUpdate(ctx, tx, runID)
 	if err != nil {
 		return err
@@ -611,7 +611,7 @@ func lockGraphRunAndLiveGraph(ctx context.Context, tx *gorm.DB, productID, graph
 	if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
 		return err
 	}
-	_, err = loadGraphForUpdate(ctx, tx, productID, graphID)
+	_, err = loadGraphForUpdate(ctx, products, tx, productID, graphID)
 	return err
 }
 
@@ -746,8 +746,8 @@ func loadActiveRun(ctx context.Context, tx *gorm.DB, graphID string) (*graphRunR
 // cancelGraphRun 取消 queued 或 running。已取消幂等返回当前行；已终态（含 unknown）返回 Conflict。
 // 先 FOR UPDATE run，再把仍 queued/running 的节点标 cancelled，写 run.cancelled，再 promote queued。
 // 不把已过 provider 边界的节点改成 unknown——取消是用户意图，不是无法证明。
-func cancelGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) (graphRunRow, error) {
-	if _, err := loadGraph(ctx, tx, productID, graphID); err != nil {
+func cancelGraphRun(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID, runID string) (graphRunRow, error) {
+	if _, err := loadGraph(ctx, products, tx, productID, graphID); err != nil {
 		return graphRunRow{}, err
 	}
 	var rec schema.WorkflowGraphRuns
@@ -792,7 +792,7 @@ func cancelGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID 
 		return graphRunRow{}, result.Error
 	}
 	if result.RowsAffected != 1 {
-		return loadGraphRun(ctx, tx, productID, graphID, runID)
+		return loadGraphRun(ctx, products, tx, productID, graphID, runID)
 	}
 	for _, node := range nodeRuns {
 		updates := terminalNodeRunUpdates(NodeRunCancelled, now)
@@ -824,14 +824,14 @@ func cancelGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID 
 	}); err != nil {
 		return graphRunRow{}, err
 	}
-	if err := promoteNextQueuedRun(ctx, tx, graphID); err != nil {
+	if err := promoteNextQueuedRun(ctx, products, tx, graphID); err != nil {
 		return graphRunRow{}, err
 	}
-	return loadGraphRun(ctx, tx, productID, graphID, runID)
+	return loadGraphRun(ctx, products, tx, productID, graphID, runID)
 }
 
-func retryGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID string) (graphRunSubmission, error) {
-	source, err := loadGraphRun(ctx, tx, productID, graphID, runID)
+func retryGraphRun(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID, runID string) (graphRunSubmission, error) {
+	source, err := loadGraphRun(ctx, products, tx, productID, graphID, runID)
 	if err != nil {
 		return graphRunSubmission{}, err
 	}
@@ -841,7 +841,7 @@ func retryGraphRun(ctx context.Context, tx *gorm.DB, productID, graphID, runID s
 	if !source.IsRetryable {
 		return graphRunSubmission{}, apperr.Validation("该工作流运行不可重试")
 	}
-	return submitGraphRun(ctx, tx, productID, graphID, GraphRunRequest{
+	return submitGraphRun(ctx, products, tx, productID, graphID, GraphRunRequest{
 		Scope:           source.RunScope,
 		NodeID:          source.RequestedNodeID,
 		NodeIDs:         source.RequestedNodeIDs,

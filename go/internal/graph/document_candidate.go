@@ -234,13 +234,13 @@ func applyDocumentSections(node AppliedNode, candidateConfig map[string]any, req
 
 // loadDocumentCandidate 读节点上挂起的候选 artifact。lock=true 时 FOR UPDATE 图。
 // 无 pending_candidate_artifact_id 返回 NotFound。outdated 仍返回，但 Apply 会拒。
-func loadDocumentCandidate(ctx context.Context, tx *gorm.DB, productID, graphID, nodeID string, lock bool) (graphRow, AppliedGraph, AppliedNode, schema.WorkflowGraphNodes, schema.WorkflowGraphArtifacts, DocumentCandidate, error) {
-	row, err := loadGraph(ctx, tx, productID, graphID)
+func loadDocumentCandidate(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID, nodeID string, lock bool) (graphRow, AppliedGraph, AppliedNode, schema.WorkflowGraphNodes, schema.WorkflowGraphArtifacts, DocumentCandidate, error) {
+	row, err := loadGraph(ctx, products, tx, productID, graphID)
 	if err != nil {
 		return graphRow{}, AppliedGraph{}, AppliedNode{}, schema.WorkflowGraphNodes{}, schema.WorkflowGraphArtifacts{}, DocumentCandidate{}, err
 	}
 	if lock {
-		row, err = loadGraphForUpdate(ctx, tx, productID, graphID)
+		row, err = loadGraphForUpdate(ctx, products, tx, productID, graphID)
 		if err != nil {
 			return graphRow{}, AppliedGraph{}, AppliedNode{}, schema.WorkflowGraphNodes{}, schema.WorkflowGraphArtifacts{}, DocumentCandidate{}, err
 		}
@@ -282,7 +282,7 @@ func loadDocumentCandidate(ctx context.Context, tx *gorm.DB, productID, graphID,
 	current := visibleDocument(node.NodeType, node.Config)
 	candidate := visibleDocument(node.NodeType, proposedConfig)
 	status := "ready"
-	sources, _, _, _, err := loadGraphSources(ctx, tx, row, applied)
+	sources, _, _, _, err := loadGraphSources(ctx, products, tx, row, applied)
 	if err != nil {
 		return graphRow{}, AppliedGraph{}, AppliedNode{}, nodeRec, artifact, DocumentCandidate{}, err
 	}

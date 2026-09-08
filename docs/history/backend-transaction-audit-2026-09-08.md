@@ -60,7 +60,8 @@
 | 连续生图新重试预留被旧 effect 误判为已调用，取消错误保留额度 | task/effect 持久化 billing_seq，按准确当前键与当前轮次 effect 收口 | 正常两次手动重试三种终态、迁移、回滚、整包验证通过；未运行开发库迁移 | 6444b51a |
 | 连续生图 unknown/取消在准确计费键缺失时仍提交终态 | 删除缺失预留兜底，MarkUnknown/Release 错误原样回滚 | 初始/手动重试四个红色场景修复；八种终态组合、恢复原键与整包通过 | `5636f688` |
 | Graph 付费调用缺预留仍提交 unknown，通用 effect 又不能直接区分非付费调用 | effect 保存可空 quota_key，准备与预留同事务；未知、取消、恢复复用准确额度身份 | 真实调用故障复现与回滚、非付费文稿/合成、迁移及 Graph 整包通过 | `1dedc721` |
-| Graph/连续生图/局部编辑的商家归属读取丢失数据库及取消原因 | 各既有查询保留 apperr 文案并 Join 原错误，不增加共享查询或第二份规则 | 三个真实数据库读取故障和取消回归；Graph 终态事务回滚及恢复 | 随本次提交 |
+| Graph/连续生图/局部编辑的商家归属读取丢失数据库及取消原因 | 各既有查询保留 apperr 文案并 Join 原错误，不增加共享查询或第二份规则 | 三个真实数据库读取故障和取消回归；Graph 终态事务回滚及恢复 | `19889e5a` |
+| Graph 商品服务经 context 隐式传播，事务函数及测试 helper 隐藏装配前置 | Service/Executor 保留 Products；Graph 事务函数和商品/配方调用显式传入既有 ProductGuard，删除 context 通道 | 商品/配方、跨商家和事务/执行/恢复合同验收见本节 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -69,7 +70,7 @@
 | 业务链 | 当前实现证据与结论 | 尚未证明的部分 |
 |---|---|---|
 | 商品与图创建 | `product.Service.CreateDirect → createWithGraph/createCanonical → graph.WriteTx`，商品、资产与图在调用者的同一事务组合；媒体沿 compensation 处理。保留 product 的创建 owner。 | 各种中断点的全组合故障注入尚未逐一覆盖；不从包测试推定整条真实商品交付签收。 |
-| 图修改 | `graph.Service → WriteTx → graph command/project`；商品、配方和 Agent 通过 Graph 写入口组合，Graph 用 ProductGuard 访问商品。 | `WithProductGuard` 的隐式依赖要求多个调用者懂装配；尚无本轮越权复现。 |
+| 图修改 | `graph.Service → WriteTx → graph command/project`；商品、配方和 Agent 通过 Graph 写入口组合，Graph 用 ProductGuard 访问商品。 | 商品依赖已通过 Service/Executor 字段和事务参数显式传递；未复现原 context 方式导致的越权。 |
 | 图执行 | `ExecuteRun → executeClaimedNode → runClaimedNode → prepare/finishProviderCall → persist*Artifact` 已有 lease、attempt、effect、投影晋升分层。 | 取消已在持锁命令收口；过期恢复已在同一事务收口；图像调用前 prepare/Reserve 已组合事务；成功已与结算同事务，明确失败终态也已在命令内处理；付费成功结算已要求 hold，本地合成显式跳过结算；其他终态的缺失 hold 合同仍需核实，需以数据库故障和竞争证明后修改；只改文件布局没有验收价值。 |
 | 连续生图 | `Execute → runGeneration → ensureEffect → Generate → saveCandidate → markEffect → finish*`；每次信封处理一个批次，已有 applied 批次跳过 Provider。 | billing sequence 绑定、部分候选已保存后的失败、effect 写失败及额度最终收口需继续审计；不能直接套用 node/attempt 的额度键规则。 |
 | 局部编辑 | 本轮覆盖 HTTP 创建/提交夹具、worker、task/attempt/asset/hold/账户、恢复与 queue.Consume。 | 未进行 SIGKILL 或真实 Provider 调用；进程崩溃按可持久化边界和实际恢复函数注入验证。 |
@@ -82,7 +83,7 @@
 
 1. **高：Graph 和连续生图的终态/额度事务分裂。** Graph 取消已归入持锁命令，Graph 过期恢复已同步额度；图像成功持久化已与结算同事务；明确失败终态额度已归入命令，付费成功结算已要求 hold；付费未知与调用后取消已依据 effect 的明确额度身份要求 hold，非付费 effect 跳过图像账本；释放入口的缺失 hold 合同仍待进一步核实；`imagesession/service.go`、`execute.go`、`quota_wire.go` 的 billing sequence 与终态组合需继续沿真实调用顺序核实。`imagesession.finishFailed` 的旧 attempt 越界已修复，成功/未知/过期恢复的额度事务已收敛，创建、取消和手工重试已改为用例内组合事务；billing sequence 已在后续切片绑定 task/effect 并删除前缀最新预留查询；unknown/release 的缺失 hold 容忍已在后续切片删除；准确预留缺失时终态回滚。当前属于已确认的代码风险，尚未全部做数据库故障复现和修复。不得宣称所有入口已原子收口。
 2. **中：局部编辑未知/释放的缺失 hold 合同与额度底层错误。** 当前唯一运行时 Reserve 入口与 provider_pending 同事务，不产生 claimed + hold；新增真实数据库准备失败后恢复执行回归确认旧 attempt 零 hold、新 attempt 正常结算，不为历史组合新增恢复分支。unknown 的缺失 hold 容忍已在后续切片删除并覆盖终态/取消/恢复；调用准备前 Release 可无 hold，本轮已核对 Execute 的全部 failed 分支均位于 prepareProviderCall 成功之前，Provider 返回错误及结果持久化失败均走 unknown，未发现生产调用后明确失败 Release 路径。成功结算已拒绝缺 hold。quota 的账户/hold/事件写入原因丢失已在后续切片修复并验证 HTTP 文案保持；账户初始化、锁定及读取错误转换仍待核实。
-3. **中：Graph context 服务依赖。** `WithProductGuard` 仍跨 product/recipe 装配，形成编译期不可见的前置。候选方向是显式 Graph 用例依赖与已有事务入口；必须维持跨商家统一 404、事务组合及 worker 无 HTTP 商家上下文的执行合同。Agent 的运行资格查询已归入 Graph Service，非测试 Agent 调用不再装配该 context 依赖；Graph 内部及 product/recipe 低层调用仍未整体迁移，不把依赖改善升级成已复现安全缺陷。
+3. **Graph context 服务依赖已迁移。** Service/Executor 继续持有 Products；Graph 的命令、读取、运行、晋升和恢复函数显式传递 ProductGuard；商品创建/事实更新、配方提取/应用/投影一并更新。WithProductGuard、context key 与读取器已删除，既有事务所有权和商家校验规则保持。此为依赖边界改善，不宣称修复已复现越权；最终验证及实际限制见本记录末节。
 4. **可选：节点执行职责与跨生成入口共享机制。** 保留三种不同的业务计费身份和 Provider 合同；只在同一规则的重复已导致漂移时抽取 owner。当前不建立统一生成框架，也不因 `execute_node.go` 较长拆文件。Graph 的 cook、效果记录、资产晋升、交付组合是后续逐边界验证对象。
 
 ## 验证入口
@@ -506,3 +507,20 @@ activeQuotaKey 删除 LIKE 前缀与 created_at DESC，查询准确 generationQu
 补充 Graph 实际 failClaimedNode：节点更新后读取商家失败，原 42P01 可提取，运行和节点仍 running、active attempt 保持；恢复表后再次失败收口进入 failed。故障表只存在于一次性测试库，清理由 IsolatedMigrated 负责。针对性三个包 PASS 3.036/1.783/1.983 秒；所有新增测试都实际访问数据库，没有跳过。
 
 当前 checkout 三包顺序整包最终全部通过：Graph 103.697 秒、localedit 9.681 秒、imagesession 61.649 秒，日志 /tmp/pf-merchant-read-cause-suite.log。Graph go vet -stdversion=false、另两包标准 go vet 与 just docs-check 通过；没有宣称修复 Graph 的既有标准 vet 版本声明问题。自审三处生产修改与三个新增测试文件，未修改平台错误/HTTP 公共实现或其他任务文件；本次没有迁移、真实 Provider 调用或新增重试。Graph context 的显式依赖迁移、额度内部读取/锁错误与其余节点职责审计仍未完成。
+
+
+## Graph 商品依赖从 context 迁为显式参数
+
+本轮由主代理唯一负责 Graph 调用链、商品 app/workspace/fact_impact/intake/recipe_create 的调用装配、recipe/service.go 和本记录；当前 dashboard 只持有 product 聚合读模型/HTTP/DTO 与 Web，eval 持有其独立文件，修改路径不相交。所有权及运行进程已刷新；未重启共享服务。
+
+静态调用图从 requireProductGuard 向上追踪到命令、投影、读图、运行终态晋升及恢复，证明隐式服务依赖贯穿多条事务链。保留已有 ProductGuard 接口及商品侧实现，Service.Products / Executor.Products 是外部装配入口，已有事务函数显式接收 ProductGuard；恢复沿原 products 参数继续传递。商品和配方在原 GORM 事务内提供依赖，不新增 Service 容器、事务框架或兼容重载。删除 WithProductGuard、productGuardCtxKey、productGuardFrom 和 guardCtx；context 继续携带请求取消、商家与执行 lease 等原有运行信息。
+
+本次收敛的是依赖装配合同：事务调用者直接声明所需服务，Graph 内部函数不再假定调用前某个上层已修改 context；产品/配方入口不再需要安排注入的时机或维持带服务的 context 传播。原锁商品、归属统一 404、批量读取及写事务规则仍由既有 owner 实现。没有证据把旧方式定性为已发生的跨商家越权，也不以参数变化或文件行数作为业务收益。
+
+验收固定到 19889e5a 的本地 shared clone，仅叠加本切片，Node 测试依赖链接已有 node_modules；不纳入其他任务未提交业务改动。全 Go 包编译检查通过（-run ^$，仅编译证据）；Graph/Agent go vet -stdversion=false 与 product/recipe 标准 go vet 通过。初次 Graph 整包 FAIL 97.608 秒，原因是 beginCommandTx 原经 context 隐式返回测试守卫，而辅助命令仍传 nil；已将这些调用显式绑定原 cmdTestProducts，未恢复任何生产兜底。商品整包 PASS 4.027 秒，配方整包 PASS 4.772 秒。
+
+初轮 Agent 整包 FAIL 88.753 秒：TestAgentSSETimeToFirstEventP95 在 POST /api/v2/agent-sessions 创建通用会话时收到 500，尚未进入 Graph；检查 CreateSession 路径只写会话及投影，无 Graph 调用。该用例原代码未改，单独复验 PASS 1.347 秒；最终 Agent 整包 PASS 83.995 秒。没有捕获初轮 500 的底层原因，故保留为未解释的测试风险，不能声称通过本重构解决。没有放宽断言或改成 skip。
+
+补齐命令夹具显式依赖后，最终 Graph 整包 PASS 107.733 秒。商品/配方首轮整包结果继续有效：相关代码、依赖及环境未变，后续只修改 Graph 内部测试的守卫参数。原事务不提交测试、revision/rebase 冲突、批量商品/fact 查询、跨商家读写、提案和运行消费者、Provider 请求证据、额度回滚及取消/恢复回归随包执行。全 Go 编译证据不能代替这些行为回归；本轮不提供真实模型质量或生产容量结论。
+
+最终逐文件比对 34 个交付代码/测试文件与固定验收 checkout 一致，完整 diff 自审确认仅修改依赖参数、装配及必要测试，未改变 SQL、取锁次序、状态判断或 Provider 请求。代码扫描无旧 context 服务通道残留；历史段落保留当时事实。共享 just docs-check 曾因 dashboard 归档文件尚未出现失败，未修改该任务文件；归档完成后共享检查 PASS。日志保留 /tmp/pf-explicit-graph-suite.log、/tmp/pf-explicit-graph-final.log、/tmp/pf-explicit-agent-focus.log、/tmp/pf-explicit-agent-final.log 与 /tmp/pf-explicit-graph-compile.log。测试进程终止后清理本轮临时 checkout、依赖链接和转换脚本；未迁移数据库或启动真实 Provider。节点执行职责和其余生成入口的重复机制仍按实际因果继续审计。

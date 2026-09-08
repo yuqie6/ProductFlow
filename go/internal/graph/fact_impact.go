@@ -393,8 +393,8 @@ func artifactFactSetVersionID(record SourceRecord) *string {
 }
 
 // LoadLiveGraphSources 读取商品 active 图与编译用 SourceRecord；无图返回 nil,nil,nil,nil。
-func LoadLiveGraphSources(ctx context.Context, tx *gorm.DB, productID string) (*Identity, AppliedGraph, map[string]SourceRecord, error) {
-	live, err := TryLive(ctx, tx, productID)
+func LoadLiveGraphSources(ctx context.Context, products ProductGuard, tx *gorm.DB, productID string) (*Identity, AppliedGraph, map[string]SourceRecord, error) {
+	live, err := TryLive(ctx, products, tx, productID)
 	if err != nil {
 		return nil, AppliedGraph{}, nil, err
 	}
@@ -405,7 +405,7 @@ func LoadLiveGraphSources(ctx context.Context, tx *gorm.DB, productID string) (*
 	if err != nil {
 		return nil, AppliedGraph{}, nil, err
 	}
-	sources, _, _, _, err := loadGraphSources(ctx, tx, graphRow{Identity: live.Identity}, applied)
+	sources, _, _, _, err := loadGraphSources(ctx, products, tx, graphRow{Identity: live.Identity}, applied)
 	if err != nil {
 		return nil, AppliedGraph{}, nil, err
 	}
@@ -415,8 +415,8 @@ func LoadLiveGraphSources(ctx context.Context, tx *gorm.DB, productID string) (*
 
 // AdoptFactSetOnProductSources 把绑定该商品的 product_source 钉到新 fact_set_version_id。
 // 不入队跑图。返回是否改写了配置。
-func AdoptFactSetOnProductSources(ctx context.Context, tx *gorm.DB, productID, factSetVersionID string) (bool, error) {
-	live, err := TryLiveForUpdate(ctx, tx, productID)
+func AdoptFactSetOnProductSources(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, factSetVersionID string) (bool, error) {
+	live, err := TryLiveForUpdate(ctx, products, tx, productID)
 	if err != nil {
 		return false, err
 	}
@@ -450,7 +450,7 @@ func AdoptFactSetOnProductSources(ctx context.Context, tx *gorm.DB, productID, f
 		return false, nil
 	}
 	graphID := live.Identity.ID
-	_, err = WriteTx(ctx, tx, Command{
+	_, err = WriteTx(ctx, products, tx, Command{
 		ProductID: productID,
 		GraphID:   &graphID,
 		ChangeSet: ChangeSet{
@@ -465,8 +465,8 @@ func AdoptFactSetOnProductSources(ctx context.Context, tx *gorm.DB, productID, f
 
 // PreserveUnselectedFactArtifacts 在采用新 fact 版本后，为未选中且已有产物的处理节点重盖 input_digest，
 // 使 skipUnchanged 保持 artifact、避免全图自动重跑。选中节点及其需重算的祖先保持 stale。
-func PreserveUnselectedFactArtifacts(ctx context.Context, tx *gorm.DB, productID string, updateNodeIDs []string) ([]string, error) {
-	identity, applied, sources, err := LoadLiveGraphSources(ctx, tx, productID)
+func PreserveUnselectedFactArtifacts(ctx context.Context, products ProductGuard, tx *gorm.DB, productID string, updateNodeIDs []string) ([]string, error) {
+	identity, applied, sources, err := LoadLiveGraphSources(ctx, products, tx, productID)
 	if err != nil {
 		return nil, err
 	}

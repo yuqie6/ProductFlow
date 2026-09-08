@@ -53,7 +53,7 @@ func TestClaimedFailureRollsBackOnMerchantReadFailure(t *testing.T) {
 	if err := db.Exec("ALTER TABLE products RENAME TO unavailable_merchant_source").Error; err != nil {
 		t.Fatal(err)
 	}
-	err := failClaimedNode(ctx, db, runID, nodeID, attempt, "input failure")
+	err := failClaimedNode(ctx, nil, db, runID, nodeID, attempt, "input failure")
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "42P01" {
 		t.Errorf("terminal transition lost original read failure: %v", err)
@@ -68,7 +68,7 @@ func TestClaimedFailureRollsBackOnMerchantReadFailure(t *testing.T) {
 	if err := db.Exec("ALTER TABLE unavailable_merchant_source RENAME TO products").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := failClaimedNode(ctx, db, runID, nodeID, attempt, "input failure"); err != nil {
+	if err := failClaimedNode(ctx, nil, db, runID, nodeID, attempt, "input failure"); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, "SELECT status FROM workflow_graph_runs WHERE id=$1", runID).Scan(&runStatus); err != nil {

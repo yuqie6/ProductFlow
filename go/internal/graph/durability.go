@@ -212,7 +212,7 @@ func aggregateGraphRunTerminalStatus(statuses, reasons []string) (string, *strin
 // 聚合顺序：unknown（不可重试）> failed（可重试）> cancelled > succeeded。
 // 写 workflow_graph_runs 终态、run.* 事件，并 promote 下一条 queued。仍有 queued/running 返回 false。
 // 调用方须已持事务；不要在这里把 unknown 改成 failed。
-func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID string) (bool, error) {
+func completeGraphRunIfNodesTerminal(ctx context.Context, products ProductGuard, tx *gorm.DB, runID string) (bool, error) {
 	var run schema.WorkflowGraphRuns
 	err := tx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Select("id", "graph_id", "status", "execution_lease_token", "execution_lease_expires_at").Where("id = ?", runID).Take(&run).Error
 	if err != nil || run.Status != RunStatusRunning {
@@ -263,7 +263,7 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 	}); err != nil {
 		return false, err
 	}
-	if err := promoteNextQueuedRun(ctx, tx, run.GraphID); err != nil {
+	if err := promoteNextQueuedRun(ctx, products, tx, run.GraphID); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -272,7 +272,7 @@ func completeGraphRunIfNodesTerminal(ctx context.Context, tx *gorm.DB, runID str
 // failGraphRunLocked 假定调用方已 FOR UPDATE 住 run：把仍 queued/running 的节点标 failed，
 // run 标 failed + is_retryable=true，再 promote queued。不检查 provider 边界——已打过 provider
 // 的节点必须先走 markNodeUnknown，否则会把无法证明的结果当可重试失败。
-func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) error {
+func failGraphRunLocked(ctx context.Context, products ProductGuard, tx *gorm.DB, runID, reason string) error {
 	now := time.Now().UTC()
 	if len(reason) > 1000 {
 		reason = reason[:1000]
@@ -333,7 +333,7 @@ func failGraphRunLocked(ctx context.Context, tx *gorm.DB, runID, reason string) 
 	if err := tx.WithContext(ctx).Select("graph_id").Where("id = ?", runID).Take(&rec).Error; err != nil {
 		return err
 	}
-	return promoteNextQueuedRun(ctx, tx, rec.GraphID)
+	return promoteNextQueuedRun(ctx, products, tx, rec.GraphID)
 }
 
 func nodePastProviderBoundary(phase *string) bool {
@@ -347,7 +347,7 @@ func nodePastProviderBoundary(phase *string) bool {
 // 已过 provider_call / provider_result_received 边界则标 unknown，禁止当 failed 重试。
 // attempt 不匹配、节点已终态、run 已终态：只尝试 complete，不改状态。
 // 写 node.failed 事件后调用 completeGraphRunIfNodesTerminal。
-func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expectedAttemptID, reason string) error {
+func failClaimedNode(ctx context.Context, products ProductGuard, gdb *gorm.DB, runID, nodeRunID, expectedAttemptID, reason string) error {
 	return tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
 		var run schema.WorkflowGraphRuns
 		err := dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error
@@ -365,18 +365,18 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expect
 			Where("id = ? AND graph_run_id = ?", nodeRunID, runID).
 			Take(&node).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			_, err = completeGraphRunIfNodesTerminal(ctx, products, dbTx, runID)
 			return err
 		}
 		if err != nil {
 			return err
 		}
 		if node.Status == NodeRunFailed || node.Status == NodeRunUnknown || node.Status == NodeRunSucceeded || node.Status == NodeRunSkipped || node.Status == NodeRunCancelled {
-			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			_, err = completeGraphRunIfNodesTerminal(ctx, products, dbTx, runID)
 			return err
 		}
 		if expectedAttemptID == "" || node.ActiveAttemptID == nil || *node.ActiveAttemptID != expectedAttemptID {
-			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			_, err = completeGraphRunIfNodesTerminal(ctx, products, dbTx, runID)
 			return err
 		}
 		if nodePastProviderBoundary(node.ProgressPhase) {
@@ -388,11 +388,11 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expect
 			if err := markNodeUnknown(ctx, dbTx, runID, nodeRunID, &attemptID, detail); err != nil {
 				return err
 			}
-			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			_, err = completeGraphRunIfNodesTerminal(ctx, products, dbTx, runID)
 			return err
 		}
 		if node.Status != NodeRunQueued && node.Status != NodeRunRunning {
-			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			_, err = completeGraphRunIfNodesTerminal(ctx, products, dbTx, runID)
 			return err
 		}
 		now := time.Now().UTC()
@@ -406,7 +406,7 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expect
 			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			_, err = completeGraphRunIfNodesTerminal(ctx, products, dbTx, runID)
 			return err
 		}
 		merchantID, err := merchantIDForGraphRun(ctx, dbTx, runID)
@@ -421,14 +421,14 @@ func failClaimedNode(ctx context.Context, gdb *gorm.DB, runID, nodeRunID, expect
 		}); err != nil {
 			return err
 		}
-		_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+		_, err = completeGraphRunIfNodesTerminal(ctx, products, dbTx, runID)
 		return err
 	})
 }
 
 // failGraphRun 是 ExecuteRun 在已证明失败时的收口。先锁 run：若有 running 且已过 provider 边界的节点，
 // 标 unknown 再 complete；否则 failGraphRunLocked。run 已终态直接返回 nil。
-func failGraphRun(ctx context.Context, gdb *gorm.DB, runID, reason string) error {
+func failGraphRun(ctx context.Context, products ProductGuard, gdb *gorm.DB, runID, reason string) error {
 	return tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
 		var run schema.WorkflowGraphRuns
 		err := dbTx.WithContext(ctx).Clauses(pfdb.ForUpdate()).Where("id = ?", runID).Take(&run).Error
@@ -463,9 +463,9 @@ func failGraphRun(ctx context.Context, gdb *gorm.DB, runID, reason string) error
 			if err := markNodeUnknown(ctx, dbTx, runID, boundaryID, boundaryAttempt, ProviderUnknownDetail); err != nil {
 				return err
 			}
-			_, err = completeGraphRunIfNodesTerminal(ctx, dbTx, runID)
+			_, err = completeGraphRunIfNodesTerminal(ctx, products, dbTx, runID)
 			return err
 		}
-		return failGraphRunLocked(ctx, dbTx, runID, reason)
+		return failGraphRunLocked(ctx, products, dbTx, runID, reason)
 	})
 }

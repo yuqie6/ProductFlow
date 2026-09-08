@@ -123,13 +123,12 @@ func (s Service) Get(ctx context.Context, recipeID string) (RecipeView, error) {
 // Create 从当前 live schema-v3 显式提取并保存配方。
 // 图不存在返回 NotFound；非 active 或 revision 已变返回 Conflict；选区非法或标题为空返回 Validation。
 func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error) {
-	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := s.getProductTarget(ctx, pgxTx, in.ProductID, false); err != nil {
 			return err
 		}
-		payload, err := extractLive(ctx, pgxTx, in)
+		payload, err := extractLive(ctx, s.Products, pgxTx, in)
 		if err != nil {
 			return err
 		}
@@ -138,7 +137,7 @@ func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error)
 			return err
 		}
 		if preferred == nil {
-			preferred, err = preferredVisualFromLive(ctx, pgxTx, in.ProductID, in.WorkflowID)
+			preferred, err = preferredVisualFromLive(ctx, s.Products, pgxTx, in.ProductID, in.WorkflowID)
 			if err != nil {
 				return err
 			}
@@ -194,7 +193,6 @@ func (s Service) Create(ctx context.Context, in CreateInput) (RecipeView, error)
 // 调用时机：HTTP POST .../versions。已归档 Conflict；expected_recipe_version 对不上 Conflict。
 // 不改目标商品的 live 图。
 func (s Service) Append(ctx context.Context, in AppendInput) (RecipeView, error) {
-	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out RecipeView
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		if _, err := s.getProductTarget(ctx, pgxTx, in.ProductID, false); err != nil {
@@ -210,7 +208,7 @@ func (s Service) Append(ctx context.Context, in AppendInput) (RecipeView, error)
 		if rec.Current == nil || rec.Current.Version != in.ExpectedRecipeVersion {
 			return apperr.Conflict("工作流配方版本已变化，请刷新后重试")
 		}
-		payload, err := extractLive(ctx, pgxTx, in.CreateInput)
+		payload, err := extractLive(ctx, s.Products, pgxTx, in.CreateInput)
 		if err != nil {
 			return err
 		}
@@ -219,7 +217,7 @@ func (s Service) Append(ctx context.Context, in AppendInput) (RecipeView, error)
 			return err
 		}
 		if preferred == nil {
-			preferred, err = preferredVisualFromLive(ctx, pgxTx, in.ProductID, in.WorkflowID)
+			preferred, err = preferredVisualFromLive(ctx, s.Products, pgxTx, in.ProductID, in.WorkflowID)
 			if err != nil {
 				return err
 			}
@@ -301,7 +299,6 @@ func (s Service) Archive(ctx context.Context, recipeID string, expectedVersion i
 // Preview 计算应用到目标商品时将出现的节点与边；完整配方不能 merge 进已有 live 图。
 // 商品或配方不存在返回 NotFound；已归档、版本已变或完整配方遇上已有图返回 Conflict。
 func (s Service) Preview(ctx context.Context, productID, recipeID string, expectedVersion int) (Preview, error) {
-	ctx = graph.WithProductGuard(ctx, s.Products)
 	var out Preview
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		target, err := s.getProductTarget(ctx, pgxTx, productID, false)
@@ -339,7 +336,6 @@ func (s Service) PreviewCreation(ctx context.Context, recipeID string, expectedV
 
 // Apply 按预览 digest 确认写入目标 live 图。完整配方在已有 live 图上返回冲突；fragment 可 merge 或返回显式冲突。相同幂等键回放。
 func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, error) {
-	ctx = graph.WithProductGuard(ctx, s.Products)
 	key, err := normalizeIdempotencyKey(in.IdempotencyKey)
 	if err != nil {
 		return ApplicationResult{}, err
@@ -379,7 +375,7 @@ func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, e
 		if err != nil {
 			return err
 		}
-		live, err := graph.TryLiveForUpdate(ctx, pgxTx, in.ProductID)
+		live, err := graph.TryLiveForUpdate(ctx, s.Products, pgxTx, in.ProductID)
 		if err != nil {
 			return err
 		}
@@ -391,7 +387,7 @@ func (s Service) Apply(ctx context.Context, in ApplyInput) (ApplicationResult, e
 		if plan.PreviewDigest != digest {
 			return apperr.Conflict("配方预览已变化，请重新预览后重试")
 		}
-		command, err := applyPlanCommand(ctx, pgxTx, in.ProductID, plan)
+		command, err := applyPlanCommand(ctx, s.Products, pgxTx, in.ProductID, plan)
 		if err != nil {
 			return wrapMergeErr(err)
 		}
@@ -486,7 +482,7 @@ func (s Service) planForProduct(
 	if err != nil {
 		return applyPlan{}, err
 	}
-	live, err := graph.TryLive(ctx, pgxTx, target.ID)
+	live, err := graph.TryLive(ctx, s.Products, pgxTx, target.ID)
 	if err != nil {
 		return applyPlan{}, err
 	}
@@ -545,7 +541,7 @@ func (s Service) planFromRecipe(
 
 // applyPlanCommand 把已确认的 change intent 交给 Graph Command。
 // create 走新建；merge 要求当前 active 图 id 仍是预览时的 GraphID，否则 409 重新预览。
-func applyPlanCommand(ctx context.Context, pgxTx *gorm.DB, productID string, plan applyPlan) (graph.CommandResult, error) {
+func applyPlanCommand(ctx context.Context, products graph.ProductGuard, pgxTx *gorm.DB, productID string, plan applyPlan) (graph.CommandResult, error) {
 	cmd := graph.Command{
 		ProductID: productID,
 		ChangeSet: plan.ChangeSet,
@@ -557,16 +553,16 @@ func applyPlanCommand(ctx context.Context, pgxTx *gorm.DB, productID string, pla
 			title = graph.DefaultGraphTitle
 		}
 		cmd.Title = title
-		return graph.WriteTx(ctx, pgxTx, cmd)
+		return graph.WriteTx(ctx, products, pgxTx, cmd)
 	}
 	cmd.GraphID = plan.GraphID
 	cmd.RequireActive = true
-	return graph.WriteTx(ctx, pgxTx, cmd)
+	return graph.WriteTx(ctx, products, pgxTx, cmd)
 }
 
 // applicationResult 在同一事务里投影刚写入的图。Created 表示这次是新确认还是幂等回放。
 func (s Service) applicationResult(ctx context.Context, pgxTx *gorm.DB, rec applicationRecord, created bool) (ApplicationResult, error) {
-	proj, err := graph.ProjectGraph(ctx, pgxTx, rec.ProductID, rec.GraphID)
+	proj, err := graph.ProjectGraph(ctx, s.Products, pgxTx, rec.ProductID, rec.GraphID)
 	if err != nil {
 		return ApplicationResult{}, err
 	}
@@ -587,8 +583,8 @@ func (s Service) applicationResult(ctx context.Context, pgxTx *gorm.DB, rec appl
 }
 
 // extractLive FOR UPDATE 锁 live 图再提取。非 active 或 revision 对不上返回 409，避免从过期画布存配方。
-func extractLive(ctx context.Context, pgxTx *gorm.DB, in CreateInput) (Payload, error) {
-	live, err := graph.LoadLiveForUpdate(ctx, pgxTx, in.ProductID, in.WorkflowID, in.ExpectedGraphRevision)
+func extractLive(ctx context.Context, products graph.ProductGuard, pgxTx *gorm.DB, in CreateInput) (Payload, error) {
+	live, err := graph.LoadLiveForUpdate(ctx, products, pgxTx, in.ProductID, in.WorkflowID, in.ExpectedGraphRevision)
 	if err != nil {
 		return Payload{}, err
 	}
@@ -613,8 +609,8 @@ func optionalVisual(ctx context.Context, tx *gorm.DB, id *string) (*string, erro
 	return &trimmed, nil
 }
 
-func preferredVisualFromLive(ctx context.Context, tx *gorm.DB, productID, workflowID string) (*string, error) {
-	live, err := graph.TryLive(ctx, tx, productID)
+func preferredVisualFromLive(ctx context.Context, products graph.ProductGuard, tx *gorm.DB, productID, workflowID string) (*string, error) {
+	live, err := graph.TryLive(ctx, products, tx, productID)
 	if err != nil {
 		return nil, err
 	}

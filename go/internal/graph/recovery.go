@@ -52,7 +52,7 @@ func recoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 	if limit <= 0 {
 		limit = graphRecoveryBatchLimit
 	}
-	ctx = WithProductGuard(ctx, products)
+
 	gdb, err := pfdb.OpenGorm(pool)
 	if err != nil {
 		return RecoverySummary{}, err
@@ -65,7 +65,7 @@ func recoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 	summary := RecoverySummary{HasMore: hasMore}
 	var errs []error
 	for _, runID := range runningIDs {
-		result, recErr := recoverGraphRunState(ctx, gdb, runID, cutoff)
+		result, recErr := recoverGraphRunState(ctx, products, gdb, runID, cutoff)
 		if recErr != nil {
 			errs = append(errs, fmt.Errorf("graph run %s: %w", runID, recErr))
 			continue
@@ -93,7 +93,7 @@ func recoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAf
 	}
 	for _, graphID := range queuedGraphIDs {
 		if recErr := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-			return promoteNextQueuedRun(ctx, pgxTx, graphID)
+			return promoteNextQueuedRun(ctx, products, pgxTx, graphID)
 		}); recErr != nil {
 			errs = append(errs, fmt.Errorf("graph %s promote: %w", graphID, recErr))
 		}
@@ -188,7 +188,7 @@ func graphRunningRecoveryScope(tx *gorm.DB, cutoff time.Time) *gorm.DB {
 		[]string{NodeRunQueued, NodeRunRunning}, queue.ActorGraphRun, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead})
 }
 
-func recoverGraphRunState(ctx context.Context, gdb *gorm.DB, runID string, cutoff time.Time) (graphRunRecoverResult, error) {
+func recoverGraphRunState(ctx context.Context, products ProductGuard, gdb *gorm.DB, runID string, cutoff time.Time) (graphRunRecoverResult, error) {
 	var result graphRunRecoverResult
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		run, locked, err := loadGraphRunSkipLocked(ctx, pgxTx, runID)
@@ -278,7 +278,7 @@ func recoverGraphRunState(ctx context.Context, gdb *gorm.DB, runID string, cutof
 			}
 			markedUnknown = true
 		}
-		if _, err := completeGraphRunIfNodesTerminal(ctx, pgxTx, run.ID); err != nil {
+		if _, err := completeGraphRunIfNodesTerminal(ctx, products, pgxTx, run.ID); err != nil {
 			return err
 		}
 		var statusRec schema.WorkflowGraphRuns

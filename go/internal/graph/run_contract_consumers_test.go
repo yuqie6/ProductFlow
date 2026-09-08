@@ -108,7 +108,7 @@ func TestAgentIntakePersistsCurrentNodeAndTextContracts(t *testing.T) {
 	if result["graph_expanded"] != true {
 		t.Fatalf("intake must expand the name-only graph: %+v", result)
 	}
-	live, err := graph.TryLive(graph.WithProductGuard(ctx, product.GraphGuard{}), gs.db, created.Product.ID)
+	live, err := graph.TryLive(ctx, product.GraphGuard{}, gs.db, created.Product.ID)
 	if err != nil || live == nil {
 		t.Fatalf("live graph: %v", err)
 	}

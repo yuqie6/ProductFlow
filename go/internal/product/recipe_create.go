@@ -66,7 +66,7 @@ func (s Service) CreateFromRecipe(ctx context.Context, in RecipeCreateInput) (Re
 	if replay, found, err := s.recipeCreationReplay(ctx, key, hash); found || err != nil {
 		return replay, err
 	}
-	ctx = graph.WithProductGuard(ctx, GraphGuard{})
+
 	var out RecipeCreateResponse
 	err = s.createWithGraph(ctx, in.Product, true, true, func(db *gorm.DB, creation canonicalCreation) error {
 		if err := db.Model(&schema.Products{}).Where("id = ?", creation.product.ID).Updates(map[string]any{
