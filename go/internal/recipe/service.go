@@ -9,7 +9,9 @@ package recipe
 
 import (
 	"context"
+	"errors"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -627,7 +629,11 @@ func preferredVisualFromLive(ctx context.Context, tx *gorm.DB, productID, workfl
 		return nil, nil
 	}
 	if err := visualSystemVersionExists(ctx, tx, *id); err != nil {
-		return nil, nil
+		var appErr apperr.Error
+		if errors.As(err, &appErr) && appErr.Status == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, err
 	}
 	return id, nil
 }

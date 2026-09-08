@@ -54,7 +54,8 @@
 | 同商家首次并发建账，唯一键冲突后在失败事务内重读，导致一个调用失败 | quota 以指定 merchant_id 的冲突忽略保持事务有效，仅插入者发试用额度 | PG 双事务固定缺行时序，两个调用成功且仅一笔试用额度事件；额度整包通过 | 5aad0c66 |
 | 额度事件插入唯一键错误被吞没，事务提交只返回笼统回滚错误 | appendEvent 统一返回数据库原因；重放仍由原账户锁及业务状态负责 | PG 唯一约束故障保留 23505 与约束名，余额/hold/事件整体回滚；额度整包通过 | 4ba18e26 |
 | Reserve 同键同金额、异价格版本仍返回旧 hold 成功 | 原账户锁内同时校验已存金额与版本，版本冲突返回 409 | PG 四种 hold 生命周期复现并修复；同版本重放及账本不变通过 | 87131c34 |
-| 配方已有商品依赖，却另行查询/锁定 products 并复制归属范围 | 四个用例通过既有 Products.Lock/LoadSource 取得商品身份与事实版本 | recipe 整包商家隔离、应用和回放通过；第二连接锁竞争与回滚释放、商品配方创建消费者通过 | 随本次提交 |
+| 配方已有商品依赖，却另行查询/锁定 products 并复制归属范围 | 四个用例通过既有 Products.Lock/LoadSource 取得商品身份与事实版本 | recipe 整包商家隔离、应用和回放通过；第二连接锁竞争与回滚释放、商品配方创建消费者通过 | 88dd8664 |
+| 配方继承视觉版本时将数据库错误当作可选缺失，后续写入只返回事务失效 | 仅 NotFound 可省略，原始读取失败直接返回 | 独立 PG 创建/追加原始 42P01、零部分版本、恢复后可选缺失合同通过 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -399,3 +400,14 @@ Create、Append、Preview、Apply 改为通过实例方法消费现有 Products�
 真实 PG 依赖回归通过包装并实际调用 product.GraphGuard 观察服务边界，Preview 不锁、Apply 锁定并读取。LoadSource 阶段另一连接使用 FOR UPDATE NOWAIT 得到 55P03，证明原组合事务仍持有商品锁；后续缺配方使 Apply 回滚，另一连接随即可锁。测试并不模拟锁结果。recipe 整包通过（3.025 秒），包含实际 HTTP 正常提取/预览/应用/回放及跨商家 404/零写入；标准 go vet 通过。product 的 TestRecipeCreation 组合通过（1.564 秒），覆盖配方创建、并发确认、HTTP 和提交失败文件回滚。未运行或声称 product 整包。
 
 完整自审及非测试扫描确认 recipe 不再引用 schema.Products、FROM products 或 current_fact_set_version_id。Graph 的 WithProductGuard 仍由 product/recipe 与自身 Service/Executor/recovery 装配；本次没有删除该隐式依赖，也没有把配方边界收敛当作 Graph context 迁移完成。后续对其整体迁移需要同时协调 product 的外部调用者。另发现 preferredVisualFromLive 将视觉版本查询的全部错误按缺失处理，仍待独立数据库故障验证，本次不顺带改变配方视觉继承语义。
+
+
+## 配方视觉继承区分缺失与读取失败
+
+本轮主代理独占 recipe/service.go、新增 visual_read_failure_test.go 与本记录。当前 auth/schema/Web 偏好与 dashboard 修改保持不动，测试使用独立 pf_recipe_visual_* 数据库；无 Provider 调用。
+
+沿创建/追加 → preferredVisualFromLive → graph.TryLive → visualSystemVersionExists 检查，原实现将全部版本查询错误视为可选缺失。回归先通过实际商品创建与 Graph ApplyChangeSet 设置视觉版本引用，再在一次性库中暂时重命名视觉版本表。旧实现 Create 实测只返回 25P02（事务已失效），原始 42P01 丢失（1.860 秒整组）；并没有成功保存丢失继承信息的配方。故障影响是原因不可解释，不能把它描述为已证实数据损坏。
+
+修复复用 apperr.NotFound 分类，只有确实缺失可省略，其余错误原样返回；同一 helper 覆盖 Create 和 Append，不增加重试或兜底。测试验证 Create 的原始 42P01 与零配方，恢复表后不存在的引用仍成功省略且投影 preferred_visual_system_version_id=nil；随后 Append 再遇读取故障仍保留 42P01，当前版本 ID 不变且只有原版本。临时数据库及其中故障表由 IsolatedMigrated 清理。
+
+最终 recipe 整包通过（4.271 秒），标准 go vet 通过。新增测试完整自审确认使用真实图修改入口、两个配方用例及实际 PG 读写；本切片不改 HTTP schema、视觉版本继承策略或商品模块，也没有宣称完成 Graph context 迁移及整体后端验收。
