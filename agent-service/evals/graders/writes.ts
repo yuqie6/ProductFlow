@@ -52,7 +52,9 @@ export function isBusinessWrite(name: string): boolean {
 // Operations form a set of constrained effects; their array positions are not business identities.
 export function matchesWrite(expectation: WriteExpectation, params: unknown): boolean {
   if (expectation.tool === "request_workflow_run_v1" || expectation.tool === "request_global_workflow_run_v1") {
-    params = { force: false, document_action: "", source_run_id: null, ...(params as object) };
+    const normalized = { force: false, document_action: "", source_run_id: null, ...(params as object) };
+    if (normalized.document_action === null) normalized.document_action = "";
+    params = normalized;
   }
   const operationPaths = new Map<string, Map<number, Record<string, unknown>>>();
   for (const [path, expected] of Object.entries(expectation.match)) {

@@ -75,13 +75,39 @@ describe("eval graders", () => {
     expect(gradeWrites(task.expect.writes, [call]).passed).toBe(false);
   });
 
-  it("rejects an unsolicited force/rewrite while accepting omitted run defaults", async () => {
+  it("treats null and empty document actions as the same wire default for both run tools", async () => {
     const { tasks } = await loadEvalTaskSet();
-    const task = tasks.find((task) => task.id === "workflow-run-request-run-current-workflow")!;
-    const params = task.reference.scripted_calls.at(-1)!.params as object;
+    for (const [taskID, tool] of [
+      ["workflow-run-request-run-current-workflow", "request_workflow_run_v1"],
+      ["workflow-run-request-global-node-run", "request_global_workflow_run_v1"],
+    ] as const) {
+      const task = tasks.find((candidate) => candidate.id === taskID)!;
+      const params = task.reference.scripted_calls.at(-1)!.params as Record<string, unknown>;
+      const call: EvalCallRecord = { name: tool, params, ts: "t", outcome: "succeeded" };
+      expect(gradeWrites(task.expect.writes, [call]).passed).toBe(true);
+      expect(gradeWrites(task.expect.writes, [{ ...call, params: { ...params, document_action: "" } }]).passed).toBe(true);
+      expect(gradeWrites(task.expect.writes, [{ ...call, params: { ...params, document_action: null } }]).passed).toBe(true);
+      for (const action of ["complete", "rewrite", "replace"] as const) {
+        expect(gradeWrites(task.expect.writes, [{ ...call, params: { ...params, document_action: action } }]).passed).toBe(false);
+      }
+    }
+  });
+
+  it("keeps non-action run fields strict after null normalization", async () => {
+    const { tasks } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "workflow-run-request-run-current-workflow")!;
+    const params = task.reference.scripted_calls.at(-1)!.params as Record<string, unknown>;
     const call: EvalCallRecord = { name: "request_workflow_run_v1", params, ts: "t", outcome: "succeeded" };
-    expect(gradeWrites(task.expect.writes, [call]).passed).toBe(true);
-    expect(gradeWrites(task.expect.writes, [{ ...call, params: { ...params, force: true, document_action: "rewrite" } }]).passed).toBe(false);
+    expect(gradeWrites(task.expect.writes, [{ ...call, params: { ...params, document_action: null, force: true } }]).passed).toBe(false);
+    expect(gradeWrites(task.expect.writes, [{ ...call, params: { ...params, document_action: null, source_run_id: "run-1" } }]).passed).toBe(false);
+  });
+
+  it("does not treat null as a non-empty document action", async () => {
+    const { tasks } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "workflow-run-request-force-rewrite")!;
+    const params = task.reference.scripted_calls.at(-1)!.params as Record<string, unknown>;
+    const call: EvalCallRecord = { name: "request_workflow_run_v1", params, ts: "t", outcome: "succeeded" };
+    expect(gradeWrites(task.expect.writes, [{ ...call, params: { ...params, document_action: null } }]).passed).toBe(false);
   });
   it("rejects failed writes and extra effects, while accepting a successful retry", () => {
     const expected = [{ tool: "apply_graph_change_set_v1", match: {

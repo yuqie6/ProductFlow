@@ -1,9 +1,9 @@
 # 任务：批准开发集合并采集可供 Miner 消费的冻结 L1 批次
 
-状态：阻塞
+状态：认领
 类型：证据
-认领者：—
-认领于：—
+认领者：capacity_baseline
+认领于：2026-09-09T00:50:10+08:00
 业务组：Agent 自进化
 父账本：agent-self-harness.md
 完成后可拆：自进化组协调者按父章程发布固定实验与自动验证切片；不直接发布整个进化系统
@@ -152,3 +152,25 @@ r7低负载准备已完成，root复核checkout干净且HEAD为9f3d25e7。集合
 r7固定9f3d25e7，run 20260908T125629Z-d80c35af，18/225 trial、6/75题后按合同停止。Go fixture前置和go-world 24项通过，但持久化评分缺discard分支，apply分支仅支持首节点rename/update，合法删除/断边/移动被错误计为意外变更。18份原始轨迹及stop-summary保留，无summary/development导出；专用Go host和pf_eval_r7库已清理。不能把所有persisted mismatch都提升为unknown，需分清业务不满足与观察器不支持。[持久化操作观察](archive/eval-persisted-operation-observation.md)修复完整操作语义并完成无模型正反覆盖前，禁止启动r8。旧七批不续接、不合并分母。
 
 持久化观察与共用 global seed 修复已验收，见上述归档任务；原题/world/Expect 未改，当前观察 fixture 增加原题指定图的元数据。r8 尚未启动，须固定新交付版本与观察身份，并等待 e190 容量正式计时结束，不能复用 r7 批次。
+
+## r8 准备窗口
+
+capacity_baseline 已重新认领。固定代码 `f9c01008`，独立 checkout `/tmp/productflow-eval-development-0909-r8`，产物 `storage-dev/eval-development-0909-r8`，专用 PG 前缀 `pf_eval_r8_`。当前仅准许轻量只读核对、建立固定 checkout 与冻结清单；e190 容量正式计时期间禁止安装、构建、Go/Node 测试、模型或数据库负载，等待 root 释放窗口。
+
+公开 development 集合仍为 83 题/11 world，L1 75×3=225，regression/acceptance 为 0；模型 openai/gpt-5.6-luna、并发 3、每题最多 12 轮及 180 秒，不额外覆盖推理参数。重新记录观察 fixture/代码/Skill/任务/world/集合身份，不能沿用 r7 的观察指纹；旧七批材料不合并或续跑。准备完成后等待运行分配。
+
+## r8 实际结果与审核缺口
+
+e190 窗口释放后完成固定 f9 来源首批 `20260908T174928Z-ad09433d` 的 225 份轨迹，原评分 161/225。原 run 的 Git provenance 为 unknown/dirty：archive checkout 缺 .git，运行时未记录有效 Git 身份；事后补 Git 不能改写原始记录。首批保留作开发诊断，尚未验收为正式固定基线。
+
+root 抽查并由执行者全量归因：34 条存在 document_action 的 null/空串等价字段误判，另 1 条同时存在 scope 差异；恢复归档素材的 3 条在模型前加载所选素材时报“全局素材不存在或已归档”，不能当模型行为失败。纯字段差异尚需按真实 wire 语义做受限离线重评分，不能改题目/Expect 或宽松消除 scope/操作顺序错误。
+
+执行者曾误启动第二批 `20260908T182733Z-222ed23e`，2 条落盘后停止；独立保留，不填入首批、不继续补抽。临时修改 staging provenance 导出的包未获 root 接受，须移入 evidence/rejected-derived-export 并标明原因，不能进入正常 development-inputs 消费。首批 225 的失败分析可继续；当前只准许调查最小离线归一化与重评分方案，不改冻结源码/答案，不再调用模型。r8 专用进程和数据库已由执行者清理，共享 dev 服务未动。
+
+root 已确认 runtime wire 的 document_action 空值语义，准许 capacity_baseline 在当前开发树的 `agent-service/evals/graders/writes.ts` 与 `graders.test.ts` 修复观察边界；固定 f9 checkout 和首批记录不可改。仅在两个 workflow run 请求中将 null 视作未指定 action，非空动作、scope/force/node/source 与商品身份严格比较。验证 omitted/null/空串及非空动作、其它字段的正反例。
+
+复用已有 grader 可在本任务 storage 内编写一次性只读重评分脚本，若原始轨迹足以重建完整评分输入，则生成绑定原始 hash 和本次 grader diff/hash 的独立诊断报告；不得编辑原 trials/transcript/provenance 或伪造 clean 身份，不新增 CLI/导出绕过，不作正式能力基线。缺失评分输入则明确列不可重评，不按删错误字符串推算通过率。无模型调用。root 持文档/Git。
+
+空 action 观察修复已完成 root 自审：仅两个 run 工具实际 null 归一化为空串，其它比较不变；13 项 grader 回归、TypeScript 检查及生成契约检查通过。离线 v2 直接导入固定 f9 旧 grader 和当前 grader，对同一 225 条持久化调用执行，write 失败 54→20，34 条差异均为该空值边界；原 161/225 不覆盖，不外推新能力通过率。v2 报告 `storage-dev/eval-development-0909-r8/agent-evals/evidence/r8-offline-grader-diagnostic-v2.json` 绑定 raw tree hash 50a8fd58d7534ecc432ff23d9d5309dc24468c7d5186e0cc2879c277c4c1177f 与两版 grader hash。哨兵模拟 v1 只保留作历史，不作为审核依据。
+
+本次提交冻结必要的观察器修复；本单仍未取得正式完整开发包，不立即开启下一批模型采样。归档选择故障已定位为评测把页面管理选择误装成附件，由独立任务 `agent-archived-asset-selection`处理，生产权限不放宽。后续固定运行须在启动前核对真实 Git provenance 和完整初始化合同。

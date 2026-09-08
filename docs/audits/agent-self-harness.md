@@ -29,7 +29,7 @@
 - 普通人工工程修复由 [Agent 质量组](agent-eval-system.md) 承接。[eval-skills](tasks/eval-skills.md) 的人工候选与结果不算本系统的自动收益。
 - 每轮使用已发布的固定评测与业务合同。评测器在候选之外运行，候选不能修改其规则、隐藏材料或成绩；独立验证不要求另一个工作组人工运行。
 - 已知普通生产故障继续正常修复，不为保存实验基线留在线上；自动进化在固定隔离版本中进行。共享代码变更仍由协调者预约排他范围，组不永久占有模块。
-- 现有 [eval-development-baseline](tasks/eval-development-baseline.md) 是一次性启动输入任务，既有 r1–r7 采证均未形成有效完整开发包。[不可测消费边界](tasks/archive/eval-unobservable-trial-boundary.md) 与 [图观察权威](tasks/archive/eval-graph-observation-authority.md) 已交付；新冻结批次仍待开发基线采证。[持久化操作观察](tasks/archive/eval-persisted-operation-observation.md) 已修复操作评分与全局场景初始化，188 条持久化路径有实际 case 映射，GoHost 26 项回归通过；这只证明观察合同，不证明模型能力提升。前置与占用以对应任务为准。它不定义未来每轮的人工流程。
+- 现有 [eval-development-baseline](tasks/eval-development-baseline.md) 是一次性启动输入任务，既有 r1–r7 采证均未形成有效完整开发包。[不可测消费边界](tasks/archive/eval-unobservable-trial-boundary.md) 与 [图观察权威](tasks/archive/eval-graph-observation-authority.md) 已交付；新冻结批次仍待开发基线采证。[持久化操作观察](tasks/archive/eval-persisted-operation-observation.md) 已修复操作评分与全局场景初始化，188 条持久化路径有实际 case 映射，GoHost 26 项回归通过；这只证明观察合同，不证明模型能力提升。r8 完整保留 225 条诊断轨迹，但 Git 身份记录缺失，未验收正式开发包；空 action 观察误判已修正并以原调用离线对照，不回填原评分。归档素材失败来自评测输入装配，正在独立修复。前置与占用以对应任务为准。它不定义未来每轮的人工流程。
 
 ## 当前基础与缺口
 
