@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/generation"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -47,12 +49,12 @@ func RunDispatcherOnce(ctx context.Context, pool *pgxpool.Pool, enqueue EnqueueF
 		return Summary{}, err
 	}
 
-	claimed, err := claimPending(ctx, gdb, now, limit, DefaultLeaseSeconds)
+	claimed, hasMore, err := claimPending(ctx, gdb, now, limit, DefaultLeaseSeconds)
 	if err != nil {
 		return Summary{}, err
 	}
 	summary.Pending = len(claimed)
-	summary.HasMore = len(claimed) == limit
+	summary.HasMore = hasMore
 	summary.Sent = sendAllClaimed(ctx, gdb, claimed, enqueue, now)
 	var dead int64
 	if err := gdb.WithContext(ctx).Model(&schema.AsyncDispatches{}).Where("status = ?", StatusDead).Count(&dead).Error; err != nil {
@@ -115,43 +117,292 @@ func reconcileStaleSent(ctx context.Context, dbTx *gorm.DB, now time.Time, sentA
 	return len(items), nil
 }
 
-// claimPending 用 SKIP LOCKED 抢走到期的 PENDING。多 dispatcher 并发时跳过已锁行，不互相等待。
-// 抢到后立刻写 lease 并 attempts+1；事务失败整批不算，避免「加了次数却没发出去」。
-func claimPending(ctx context.Context, gdb *gorm.DB, now time.Time, limit, leaseSeconds int) ([]Dispatch, error) {
+// generationActorNames 是共享全局生成槽的两个 durable actor。
+// 其它 actor 仍走普通 pending 顺序，不应被生成公平预算挡住。
+var generationActorNames = []string{ActorGraphRun, ActorImageSession}
+
+type generationMerchantStats struct {
+	Reserved  int64
+	ServiceAt time.Time
+	Served    bool
+}
+
+type generationPendingHead struct {
+	ID          string
+	MerchantID  string
+	AvailableAt time.Time
+	CreatedAt   time.Time
+}
+
+// claimPending 在同一事务内拿 generation admission lock，再 claim PENDING。
+// generation envelope 以 SENT/有效 dispatcher lease 作为预取 reservation，并按商家
+// 的服务历史交错选择；普通 actor 保留原有 available_at/id 顺序。
+func claimPending(ctx context.Context, gdb *gorm.DB, now time.Time, limit, leaseSeconds int) ([]Dispatch, bool, error) {
+	if limit < 1 {
+		return nil, false, nil
+	}
 	var claimed []Dispatch
+	hasMore := false
 	err := tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
-		var rows []schema.AsyncDispatches
-		if err := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Clauses(pfdb.SkipLocked()).
-			Where("status = ? AND available_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)", StatusPending, now, now).
-			Order("available_at ASC, id ASC").
-			Limit(limit).
-			Find(&rows).Error; err != nil {
+		if err := generation.LockAdmission(ctx, dbTx); err != nil {
 			return err
 		}
-		leaseUntil := now.Add(time.Duration(leaseSeconds) * time.Second)
-		for _, row := range rows {
-			token := clockid.New()
-			if err := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Where("id = ?", row.ID).Updates(map[string]any{
-				"lease_token":      token,
-				"lease_expires_at": leaseUntil,
-				"attempts":         row.Attempts + 1,
-				"updated_at":       now,
-			}).Error; err != nil {
+		maxConcurrent, err := generation.LoadMaxConcurrent(ctx, dbTx)
+		if err != nil {
+			return err
+		}
+		running, err := generation.CountAdmissionRunning(ctx, dbTx)
+		if err != nil {
+			return err
+		}
+		stats, reserved, err := loadGenerationMerchantStats(ctx, dbTx, now)
+		if err != nil {
+			return err
+		}
+		generationBudget := maxConcurrent - max(running, reserved)
+		if generationBudget < 0 {
+			generationBudget = 0
+		}
+		availableGenerationBudget := generationBudget
+		if generationBudget > limit {
+			generationBudget = limit
+		}
+
+		blockedMerchants := map[string]bool{}
+		generationClaims := 0
+		generationClaimLimit := generationBudget
+		if generationBudget == limit && generationBudget > 0 {
+			heads, err := loadGenerationPendingHeads(ctx, dbTx, now)
+			if err != nil {
 				return err
 			}
-			d := fromSchema(row)
-			d.LeaseToken = &token
-			d.LeaseExpiresAt = &leaseUntil
-			d.Attempts = row.Attempts + 1
-			d.UpdatedAt = now
-			claimed = append(claimed, d)
+			generationHead, ok := chooseGenerationHead(heads, stats, blockedMerchants)
+			if ok {
+				ordinaryHeads, err := loadPendingRows(ctx, dbTx, now, 1)
+				if err != nil {
+					return err
+				}
+				if len(ordinaryHeads) > 0 && ordinaryHeadBeforeGeneration(ordinaryHeads[0], generationHead, stats) {
+					// Reserve one slot for the older ordinary head whenever
+					// generation could otherwise fill the complete batch.
+					generationClaimLimit = limit - 1
+				}
+			}
+		}
+		for len(claimed) < generationClaimLimit {
+			heads, err := loadGenerationPendingHeads(ctx, dbTx, now)
+			if err != nil {
+				return err
+			}
+			head, ok := chooseGenerationHead(heads, stats, blockedMerchants)
+			if !ok {
+				break
+			}
+			row, ok, err := lockGenerationPendingHead(ctx, dbTx, head.MerchantID, now)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				blockedMerchants[head.MerchantID] = true
+				continue
+			}
+			dispatch, err := claimDispatchRow(ctx, dbTx, row, now, leaseSeconds)
+			if err != nil {
+				return err
+			}
+			claimed = append(claimed, dispatch)
+			generationClaims++
+			reserved++
+			stat := stats[head.MerchantID]
+			stat.Reserved++
+			stat.ServiceAt = now
+			stat.Served = true
+			stats[head.MerchantID] = stat
+		}
+
+		remaining := limit - len(claimed)
+		if remaining > 0 {
+			rows, err := loadPendingRows(ctx, dbTx, now, remaining)
+			if err != nil {
+				return err
+			}
+			for _, row := range rows {
+				dispatch, err := claimDispatchRow(ctx, dbTx, row, now, leaseSeconds)
+				if err != nil {
+					return err
+				}
+				claimed = append(claimed, dispatch)
+			}
+		}
+
+		if len(claimed) == limit {
+			if pending, err := hasPendingRows(ctx, dbTx, now, false); err != nil {
+				return err
+			} else {
+				hasMore = pending
+			}
+			if !hasMore && availableGenerationBudget > generationClaims {
+				pending, err := hasPendingRows(ctx, dbTx, now, true)
+				if err != nil {
+					return err
+				}
+				hasMore = pending
+			}
 		}
 		return nil
 	})
 	if err != nil {
+		return nil, false, err
+	}
+	return claimed, hasMore, nil
+}
+
+func loadGenerationMerchantStats(ctx context.Context, dbTx *gorm.DB, now time.Time) (map[string]generationMerchantStats, int, error) {
+	type statRow struct {
+		MerchantID string     `gorm:"column:merchant_id"`
+		Reserved   int64      `gorm:"column:reserved_count"`
+		ServiceAt  *time.Time `gorm:"column:service_at"`
+	}
+	var rows []statRow
+	if err := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).
+		Select(`COALESCE(merchant_id, '') AS merchant_id,
+			COUNT(*) FILTER (WHERE status = ? OR
+				(status = ? AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at > ?)) AS reserved_count,
+			MAX(CASE WHEN attempts > 0 THEN updated_at END) AS service_at`,
+			StatusSent, StatusPending, now).
+		Where("actor_name IN ?", generationActorNames).
+		Group("COALESCE(merchant_id, '')").Scan(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	stats := make(map[string]generationMerchantStats, len(rows))
+	reserved := 0
+	for _, row := range rows {
+		stat := generationMerchantStats{Reserved: row.Reserved}
+		reserved += int(row.Reserved)
+		if row.ServiceAt != nil {
+			stat.ServiceAt = row.ServiceAt.UTC()
+			stat.Served = true
+		}
+		stats[row.MerchantID] = stat
+	}
+	return stats, reserved, nil
+}
+
+func loadGenerationPendingHeads(ctx context.Context, dbTx *gorm.DB, now time.Time) ([]generationPendingHead, error) {
+	var heads []generationPendingHead
+	err := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).
+		Select("DISTINCT ON (COALESCE(merchant_id, '')) id, COALESCE(merchant_id, '') AS merchant_id, available_at, created_at").
+		Where("actor_name IN ? AND status = ? AND available_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)", generationActorNames, StatusPending, now, now).
+		Order("COALESCE(merchant_id, ''), available_at ASC, id ASC").
+		Scan(&heads).Error
+	return heads, err
+}
+
+func chooseGenerationHead(heads []generationPendingHead, stats map[string]generationMerchantStats, blocked map[string]bool) (generationPendingHead, bool) {
+	var best generationPendingHead
+	found := false
+	for _, head := range heads {
+		if blocked[head.MerchantID] {
+			continue
+		}
+		if !found || generationHeadBefore(head, best, stats) {
+			best = head
+			found = true
+		}
+	}
+	return best, found
+}
+
+func generationHeadBefore(left, right generationPendingHead, stats map[string]generationMerchantStats) bool {
+	leftStat := stats[left.MerchantID]
+	rightStat := stats[right.MerchantID]
+	if leftStat.Reserved != rightStat.Reserved {
+		return leftStat.Reserved < rightStat.Reserved
+	}
+	if leftStat.Served != rightStat.Served {
+		return !leftStat.Served
+	}
+	if leftStat.Served && !leftStat.ServiceAt.Equal(rightStat.ServiceAt) {
+		return leftStat.ServiceAt.Before(rightStat.ServiceAt)
+	}
+	if left.CreatedAt != right.CreatedAt {
+		return left.CreatedAt.Before(right.CreatedAt)
+	}
+	if left.AvailableAt != right.AvailableAt {
+		return left.AvailableAt.Before(right.AvailableAt)
+	}
+	if left.MerchantID != right.MerchantID {
+		return left.MerchantID < right.MerchantID
+	}
+	return left.ID < right.ID
+}
+
+func ordinaryHeadBeforeGeneration(ordinary schema.AsyncDispatches, generation generationPendingHead, stats map[string]generationMerchantStats) bool {
+	generationReadyAt := generation.AvailableAt
+	if serviceAt := stats[generation.MerchantID].ServiceAt; serviceAt.After(generationReadyAt) {
+		generationReadyAt = serviceAt
+	}
+	return ordinary.AvailableAt.Before(generationReadyAt)
+}
+
+func lockGenerationPendingHead(ctx context.Context, dbTx *gorm.DB, merchantID string, now time.Time) (schema.AsyncDispatches, bool, error) {
+	var row schema.AsyncDispatches
+	err := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Clauses(pfdb.SkipLocked()).
+		Where("COALESCE(merchant_id, '') = ? AND actor_name IN ? AND status = ? AND available_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)", merchantID, generationActorNames, StatusPending, now, now).
+		Order("available_at ASC, id ASC").Limit(1).Find(&row).Error
+	if err != nil {
+		return schema.AsyncDispatches{}, false, err
+	}
+	return row, row.ID != "", nil
+}
+
+func loadPendingRows(ctx context.Context, dbTx *gorm.DB, now time.Time, limit int) ([]schema.AsyncDispatches, error) {
+	if limit < 1 {
+		return nil, nil
+	}
+	query := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Clauses(pfdb.SkipLocked()).
+		Where("status = ? AND available_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)", StatusPending, now, now).
+		Where("actor_name NOT IN ?", generationActorNames)
+	var rows []schema.AsyncDispatches
+	if err := query.Order("available_at ASC, id ASC").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	return claimed, nil
+	return rows, nil
+}
+
+func claimDispatchRow(ctx context.Context, dbTx *gorm.DB, row schema.AsyncDispatches, now time.Time, leaseSeconds int) (Dispatch, error) {
+	token := clockid.New()
+	leaseUntil := now.Add(time.Duration(leaseSeconds) * time.Second)
+	if err := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).Where("id = ?", row.ID).Updates(map[string]any{
+		"lease_token":      token,
+		"lease_expires_at": leaseUntil,
+		"attempts":         row.Attempts + 1,
+		"updated_at":       now,
+	}).Error; err != nil {
+		return Dispatch{}, err
+	}
+	d := fromSchema(row)
+	d.LeaseToken = &token
+	d.LeaseExpiresAt = &leaseUntil
+	d.Attempts = row.Attempts + 1
+	d.UpdatedAt = now
+	return d, nil
+}
+
+func hasPendingRows(ctx context.Context, dbTx *gorm.DB, now time.Time, generationOnly bool) (bool, error) {
+	query := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).
+		Where("status = ? AND available_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)", StatusPending, now, now)
+	if generationOnly {
+		query = query.Where("actor_name IN ?", generationActorNames)
+	} else {
+		query = query.Where("actor_name NOT IN ?", generationActorNames)
+	}
+	var row schema.AsyncDispatches
+	err := query.Select("id").Limit(1).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func sendAllClaimed(ctx context.Context, gdb *gorm.DB, claimed []Dispatch, enqueue EnqueueFunc, now time.Time) int {

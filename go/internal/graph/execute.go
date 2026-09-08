@@ -137,7 +137,8 @@ func (e Executor) logger() *zap.Logger {
 
 // executeLoop 是单次 GraphRun 的调度循环：从 snapshot 找上游 ready 的 queued 节点，claim 后并发 cook。
 // 只在 ExecuteRun 已持进程锁 + execution lease 之后调用。循环里再 fail 被挡住的 queued、检查终态。
-// 容量不足返回 errWaitingCapacity 后短睡再试；真正抢不到锁才把 queue.ErrBusy 抛给 asynq。
+// 容量不足或另一商家已到期时返回 queue.ErrLater，让 queue 清掉 SENT/lease 交给 dispatcher 轮转；
+// 真正抢不到锁才把 queue.ErrBusy 抛给 asynq。
 // unknown 不停止 claim（noteNodeOutcome 把它当成功）；已证明失败才 stopClaiming。
 // 不要在这里打 broker，也不要把 missing run 当错误——当作已消费返回 nil。
 func (e Executor) executeLoop(ctx context.Context, runID string) error {
@@ -146,6 +147,7 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 	outcomes := make(chan nodeOutcome, 64)
 	inflight := 0
 	stopClaiming := false
+	claimedThisRound := false
 	defer func() {
 		for inflight > 0 {
 			<-outcomes
@@ -240,10 +242,10 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 		waitingCapacity := false
 		if !stopClaiming {
 			for _, nodeRun := range ready {
-				ok, attemptID, err := claimQueuedNodeRun(ctx, e.DB, nodeRun.ID)
+				ok, attemptID, err := claimQueuedNodeRun(ctx, e.DB, nodeRun.ID, claimedThisRound)
 				if errors.Is(err, errWaitingCapacity) {
 					waitingCapacity = true
-					continue
+					break
 				}
 				if err != nil {
 					return err
@@ -252,6 +254,7 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 					continue
 				}
 				claimed++
+				claimedThisRound = true
 				inflight++
 				go func(nodeRunID, attemptID string) {
 					outcomes <- nodeOutcome{err: e.executeClaimedNode(ctx, runID, nodeRunID, attemptID)}
@@ -266,12 +269,7 @@ func (e Executor) executeLoop(ctx context.Context, runID string) error {
 			continue
 		}
 		if waitingCapacity {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(capacityWait):
-			}
-			continue
+			return queue.ErrLater
 		}
 		return queue.ErrBusy
 	}

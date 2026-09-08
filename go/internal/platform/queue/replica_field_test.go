@@ -26,7 +26,7 @@ func TestReplicaFieldTwoDispatchersClaimOnce(t *testing.T) {
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		for i := 0; i < n; i++ {
 			agg := uniqueID(t)
-			d, err := queue.Stage(ctx, pgxTx, "replica-dispatch:"+agg, queue.ActorGraphRun, agg, nil, nil)
+			d, err := queue.Stage(ctx, pgxTx, "replica-dispatch:"+agg, queue.ActorDelivery, agg, nil, nil)
 			if err != nil {
 				return err
 			}

@@ -82,7 +82,7 @@ func TestRunDispatcherOnceHasMoreWhenClaimFillsLimit(t *testing.T) {
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		for i := range ids {
 			agg := uniqueID(t)
-			d, err := queue.Stage(ctx, pgxTx, "has-more:"+agg, queue.ActorGraphRun, agg, nil, nil)
+			d, err := queue.Stage(ctx, pgxTx, "has-more:"+agg, queue.ActorDelivery, agg, nil, nil)
 			if err != nil {
 				return err
 			}

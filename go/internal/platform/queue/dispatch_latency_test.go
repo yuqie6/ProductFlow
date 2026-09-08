@@ -70,7 +70,7 @@ func stageDispatchLatencyLoad(t *testing.T, ctx context.Context, gdb *gorm.DB, r
 				availableAt = &later
 			}
 			aggregateID := uniqueID(t)
-			d, err := queue.Stage(ctx, dbTx, "latency:"+aggregateID, queue.ActorGraphRun, aggregateID, nil, availableAt)
+			d, err := queue.Stage(ctx, dbTx, "latency:"+aggregateID, queue.ActorDelivery, aggregateID, nil, availableAt)
 			if err != nil {
 				return err
 			}

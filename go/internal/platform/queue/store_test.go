@@ -33,11 +33,11 @@ func TestStageAsyncDispatchIsIdempotentByDeliveryKey(t *testing.T) {
 	var first, second queue.Dispatch
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
-		first, err = queue.Stage(ctx, pgxTx, key, queue.ActorGraphRun, agg, map[string]any{"scope": "workflow"}, nil)
+		first, err = queue.Stage(ctx, pgxTx, key, queue.ActorDelivery, agg, map[string]any{"scope": "workflow"}, nil)
 		if err != nil {
 			return err
 		}
-		second, err = queue.Stage(ctx, pgxTx, key, queue.ActorGraphRun, agg, nil, nil)
+		second, err = queue.Stage(ctx, pgxTx, key, queue.ActorDelivery, agg, nil, nil)
 		return err
 	})
 	if err != nil {
@@ -63,7 +63,7 @@ func TestStagePublishesDispatchNotifyAfterCommit(t *testing.T) {
 	var staged queue.Dispatch
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
-		staged, err = queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorGraphRun, agg, nil, nil)
+		staged, err = queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorDelivery, agg, nil, nil)
 		return err
 	})
 	if err != nil {
@@ -79,7 +79,7 @@ func TestStagePublishesDispatchNotifyAfterCommit(t *testing.T) {
 	}
 
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		_, err := queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorGraphRun, agg, nil, nil)
+		_, err := queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorDelivery, agg, nil, nil)
 		return err
 	})
 	if err != nil {
@@ -117,7 +117,7 @@ func TestResetPendingPublishesDispatchNotify(t *testing.T) {
 	var staged queue.Dispatch
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
-		staged, err = queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorGraphRun, agg, nil, nil)
+		staged, err = queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorDelivery, agg, nil, nil)
 		return err
 	})
 	if err != nil {
@@ -136,7 +136,7 @@ func TestResetPendingPublishesDispatchNotify(t *testing.T) {
 	var restaged queue.Dispatch
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
-		restaged, err = queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorGraphRun, agg, nil, nil)
+		restaged, err = queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorDelivery, agg, nil, nil)
 		return err
 	})
 	if err != nil {
@@ -163,7 +163,7 @@ func TestConsumeBusyPublishesDispatchNotify(t *testing.T) {
 	var dispatch queue.Dispatch
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
-		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, agg, 0)
 		return err
 	})
 	if err != nil {
@@ -177,7 +177,7 @@ func TestConsumeBusyPublishesDispatchNotify(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
-		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+		queue.ActorDelivery: func(ctx context.Context, aggregateID string) error {
 			return queue.ErrBusy
 		},
 	})
@@ -195,7 +195,7 @@ func TestMarkFailedPublishesDispatchNotifyWhenPending(t *testing.T) {
 	var dispatch queue.Dispatch
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
-		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, agg, 0)
 		return err
 	})
 	if err != nil {
@@ -209,7 +209,7 @@ func TestMarkFailedPublishesDispatchNotifyWhenPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
-		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+		queue.ActorDelivery: func(ctx context.Context, aggregateID string) error {
 			return errors.New("provider boom")
 		},
 	})
@@ -227,7 +227,7 @@ func TestMarkFailedDoesNotNotifyWhenDead(t *testing.T) {
 	var dispatch queue.Dispatch
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
-		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, agg, 0)
 		return err
 	})
 	if err != nil {
@@ -244,7 +244,7 @@ func TestMarkFailedDoesNotNotifyWhenDead(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
-		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+		queue.ActorDelivery: func(ctx context.Context, aggregateID string) error {
 			return errors.New("exhausted")
 		},
 	})
@@ -304,7 +304,7 @@ func TestEnqueueFailureKeepsSent(t *testing.T) {
 	agg := uniqueID(t)
 	var dispatchID string
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		row, err := queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorGraphRun, agg, nil, nil)
+		row, err := queue.Stage(ctx, pgxTx, "graph:"+agg, queue.ActorDelivery, agg, nil, nil)
 		dispatchID = row.ID
 		return err
 	})
@@ -340,7 +340,7 @@ func TestConsumeClaimsSentAndMarksConsumed(t *testing.T) {
 	var dispatch queue.Dispatch
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
-		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, agg, 0)
 		return err
 	})
 	if err != nil {
@@ -352,7 +352,7 @@ func TestConsumeClaimsSentAndMarksConsumed(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
-		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+		queue.ActorDelivery: func(ctx context.Context, aggregateID string) error {
 			if aggregateID != agg {
 				return nil
 			}
@@ -382,7 +382,7 @@ func TestConsumeBusyReleasesToPending(t *testing.T) {
 	var dispatch queue.Dispatch
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
-		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, agg, 0)
 		return err
 	})
 	if err != nil {
@@ -392,7 +392,7 @@ func TestConsumeBusyReleasesToPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
-		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+		queue.ActorDelivery: func(ctx context.Context, aggregateID string) error {
 			return queue.ErrBusy
 		},
 	})
@@ -415,7 +415,7 @@ func TestConsumeLaterReleasesToPending(t *testing.T) {
 	var dispatch queue.Dispatch
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 		var err error
-		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, agg, 0)
 		return err
 	})
 	if err != nil {
@@ -425,7 +425,7 @@ func TestConsumeLaterReleasesToPending(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
-		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
+		queue.ActorDelivery: func(ctx context.Context, aggregateID string) error {
 			return queue.ErrLater
 		},
 	})
@@ -449,7 +449,7 @@ func TestConsumeRecordsResultCounters(t *testing.T) {
 		var dispatch queue.Dispatch
 		err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
 			var err error
-			dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+			dispatch, err = queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, agg, 0)
 			return err
 		})
 		if err != nil {
@@ -466,7 +466,7 @@ func TestConsumeRecordsResultCounters(t *testing.T) {
 		dispatch := stageSent(agg)
 		before := metrics.ConsumeResultCount("consumed")
 		err := queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
-			queue.ActorGraphRun: func(context.Context, string) error { return nil },
+			queue.ActorDelivery: func(context.Context, string) error { return nil },
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -480,7 +480,7 @@ func TestConsumeRecordsResultCounters(t *testing.T) {
 		dispatch := stageSent(agg)
 		before := metrics.ConsumeResultCount("busy")
 		err := queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
-			queue.ActorGraphRun: func(context.Context, string) error { return queue.ErrBusy },
+			queue.ActorDelivery: func(context.Context, string) error { return queue.ErrBusy },
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -494,7 +494,7 @@ func TestConsumeRecordsResultCounters(t *testing.T) {
 		dispatch := stageSent(agg)
 		before := metrics.ConsumeResultCount("later")
 		err := queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
-			queue.ActorGraphRun: func(context.Context, string) error { return queue.ErrLater },
+			queue.ActorDelivery: func(context.Context, string) error { return queue.ErrLater },
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -508,7 +508,7 @@ func TestConsumeRecordsResultCounters(t *testing.T) {
 		dispatch := stageSent(agg)
 		before := metrics.ConsumeResultCount("failed")
 		err := queue.Consume(ctx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
-			queue.ActorGraphRun: func(context.Context, string) error { return errors.New("actor failed") },
+			queue.ActorDelivery: func(context.Context, string) error { return errors.New("actor failed") },
 		})
 		if err == nil {
 			t.Fatal("expected actor error")
@@ -542,14 +542,14 @@ func TestRestageIfIdleSkipsPendingSentDeadAndRestagesConsumed(t *testing.T) {
 	ctx := context.Background()
 	agg := uniqueID(t)
 	err := tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		_, err := queue.StageForActor(ctx, pgxTx, queue.ActorGraphRun, agg, 0)
+		_, err := queue.StageForActor(ctx, pgxTx, queue.ActorDelivery, agg, 0)
 		return err
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, agg, nil)
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorDelivery, agg, nil)
 		if err != nil {
 			return err
 		}
@@ -568,7 +568,7 @@ func TestRestageIfIdleSkipsPendingSentDeadAndRestagesConsumed(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, agg, nil)
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorDelivery, agg, nil)
 		if err != nil {
 			return err
 		}
@@ -587,7 +587,7 @@ func TestRestageIfIdleSkipsPendingSentDeadAndRestagesConsumed(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, agg, nil)
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorDelivery, agg, nil)
 		if err != nil {
 			return err
 		}
@@ -605,7 +605,7 @@ func TestRestageIfIdleSkipsPendingSentDeadAndRestagesConsumed(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, agg, nil)
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorDelivery, agg, nil)
 		if err != nil {
 			return err
 		}
@@ -630,7 +630,7 @@ func TestRestageIfIdleSkipsPendingSentDeadAndRestagesConsumed(t *testing.T) {
 	}
 	missing := uniqueID(t)
 	err = tx.WithGorm(ctx, gdb, func(pgxTx *gorm.DB) error {
-		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorGraphRun, missing, nil)
+		changed, err := queue.RestageIfIdle(ctx, pgxTx, queue.ActorDelivery, missing, nil)
 		if err != nil {
 			return err
 		}

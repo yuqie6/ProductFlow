@@ -11,11 +11,10 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/generation"
 	"github.com/yuqie6/productflow/internal/platform/metrics"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
-
-const generationCapacityLockKey = 42630001
 
 // generationMaxConcurrent 读 app_settings.generation_max_concurrent_tasks。
 // 空值或非正整数回落到 3；结果夹在 1–20。与连续生图共用同一把容量锁，改上限两边一起生效。
@@ -37,7 +36,7 @@ func GenerationCapacityAvailable(ctx context.Context, tx *gorm.DB) (bool, error)
 
 func generationCapacityAvailable(ctx context.Context, tx *gorm.DB, domain string) (bool, error) {
 	lockStarted := time.Now()
-	err := tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(?)", generationCapacityLockKey).Error
+	err := generation.LockAdmission(ctx, tx)
 	metrics.ObserveAdvisoryLockWait(time.Since(lockStarted))
 	if err != nil {
 		return false, err
@@ -61,9 +60,11 @@ var (
 
 // claimQueuedNodeRun 把 queued 节点标 running 并分配 attempt_id。
 // 先查容量（pg_advisory_xact_lock），再按 run → node 加 FOR UPDATE，避免与取消死锁。
-// 未抢到返回 false, ""（不当失败）；容量满返回 errWaitingCapacity。
+// roundClaimed 表示本次 ExecuteRun 已经成功 claim 过节点；此时若另一商家已有到期
+// generation PENDING，就让本次消费轮释放 SENT，交给 dispatcher 轮转。
+// 未抢到返回 false, ""（不当失败）；容量或商家轮转门禁返回 errWaitingCapacity。
 // 副作用：workflow_graph_node_runs + node.claimed / node.started 事件。不要先锁 node 再锁 run。
-func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bool, string, error) {
+func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string, roundClaimed bool) (bool, string, error) {
 	claimed := false
 	claimedAttemptID := ""
 	err := tx.WithGorm(ctx, gdb, func(dbTx *gorm.DB) error {
@@ -96,6 +97,19 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 		}
 		if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
 			return err
+		}
+		if roundClaimed {
+			merchantID, err := merchantIDForGraphRun(ctx, dbTx, run.ID)
+			if err != nil {
+				return err
+			}
+			pending, err := otherMerchantGenerationPending(ctx, dbTx, merchantID, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			if pending {
+				return errWaitingCapacity
+			}
 		}
 		now := time.Now().UTC()
 		attemptID := clockid.New()
@@ -141,6 +155,31 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string) (bo
 		return false, "", errWaitingCapacity
 	}
 	return claimed, claimedAttemptID, err
+}
+
+// otherMerchantGenerationPending is evaluated while the shared generation
+// admission lock is held by claimQueuedNodeRun. A due PENDING envelope is
+// already a dispatcher-visible turn for another merchant, including one with
+// a live dispatcher lease that has not reached SENT yet.
+func otherMerchantGenerationPending(ctx context.Context, dbTx *gorm.DB, merchantID string, now time.Time) (bool, error) {
+	var row schema.AsyncDispatches
+	err := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).
+		Select("id").
+		Where("merchant_id IS NOT NULL AND merchant_id <> '' AND merchant_id <> ?", merchantID).
+		Where("actor_name IN ? AND status = ? AND available_at <= ?", []string{
+			queue.ActorGraphRun,
+			queue.ActorImageSession,
+		}, queue.StatusPending, now).
+		Order("available_at ASC, id ASC").
+		Limit(1).
+		Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func loadNodeRunStatuses(ctx context.Context, tx *gorm.DB, runID string) ([]string, []string, error) {
