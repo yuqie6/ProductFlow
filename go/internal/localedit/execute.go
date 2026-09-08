@@ -128,7 +128,11 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 		return e.finish(ctx, taskID, attemptID, "unknown", "unknown", "unknown", "图片 provider 返回的局部编辑结果数量无法确认", false, result.ProviderStatus, result.ResponseID)
 	}
 	if err := e.persistResult(ctx, snap, attemptID, result); err != nil {
-		return e.finish(ctx, taskID, attemptID, "unknown", "unknown_provider_effect", "unknown", "provider 结果已返回，但结果资产保存状态无法确认", false, result.ProviderStatus, result.ResponseID)
+		if errors.Is(err, errAttemptFenced) {
+			return nil
+		}
+		terminalErr := e.finish(ctx, taskID, attemptID, "unknown", "unknown", "unknown", "provider 结果已返回，但结果资产保存状态无法确认", false, result.ProviderStatus, result.ResponseID)
+		return errors.Join(err, terminalErr)
 	}
 	return nil
 }

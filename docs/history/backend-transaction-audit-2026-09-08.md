@@ -46,7 +46,8 @@
 | 连续生图结算吞掉缺失预留错误，允许终态与实际额度结算分离 | settleGenerationQuota 直接返回 quota.Settle 的错误；原终态事务回滚 | 独立 PostgreSQL 验证成功和已调用失败终态拒绝缺 hold，恢复原预留后同 attempt 可提交并结算 | `c8e00923` |
 | 手动重试缺失活动预留时退回首次已结算键，旧结算幂等结果放行当前终态 | 额度键查询返回是否命中活动预留；结算必须命中，取消/释放消费者保持原合同 | 两种终态的 retry=true 原实现均返回 nil；修复后拒绝并回滚，恢复同一重试 hold 后结算 | `bca12de2` |
 | Agent 统计可运行节点时需注入 Graph 依赖并编排三步内部查询 | Graph Service.CountRunnableNodesTx 拥有依赖和查询步骤，Agent 保留审批 Conflict 解释 | PostgreSQL 正常计数/跨商家/缺依赖/零运行写入；隔离基线 Agent 空图、确认与创建消费者通过 | `d26d71dd` |
-| 局部编辑调用前数据库读取故障被归为不可重试业务失败，队列收到 nil | Execute 区分输入错误、失效 attempt 和基础设施读取错误；ReadIO 保留 cause | 独立 PG 42P01 经 queue.Consume 返回、信封 pending、task claimed，恢复后执行成功；三类媒体 I/O 映射保留 cause | 随本次提交 |
+| 局部编辑调用前数据库读取故障被归为不可重试业务失败，队列收到 nil | Execute 区分输入错误、失效 attempt 和基础设施读取错误；ReadIO 保留 cause | 独立 PG 42P01 经 queue.Consume 返回、信封 pending、task claimed，恢复后执行成功；三类媒体 I/O 映射保留 cause | `5b6105a3` |
+| 局部编辑结果写入失败后使用非法 attempt phase，且原持久化原因被终态错误覆盖 | 复用合法 unknown phase；errors.Join 保留结果与终态错误，失效 attempt 停手 | 真实 PG 资产失败/终态同时失败两场景；恢复后额度待对账、重复信封 consumed、Provider 仅一次 | 随本次提交 |
 
 局部编辑的成功资产提交、普通终态、取消、过期未知和调用前准备分别有明确事务入口；这些入口调用 `quota.Service`，不直接改额度账户或账本表。外部 `Provider.Edit` 仍位于事务之外。失败事务中的媒体文件沿已有 compensation 回滚。没有新增状态、数据库列、并行账本或兼容读取路径。
 
@@ -275,3 +276,14 @@ Execute 现在只将输入 Validation/NotFound 转为既有业务失败，其他
 测试服务增加显式数据库装配入口，原 newEditServer 继续复用原 testdb.Open；新故障测试使用自动清理的 pf_editsnapshot_* 独立库，避免重命名共享业务表。验证 queue.Consume 返回原 PostgreSQL 42P01、信封 pending、任务 running/claimed、Provider 未调用；恢复表后调用真实恢复函数，再次执行 succeeded 且调用测试 Provider。三种 ReadIO 映射的 cause 由定向单元回归验证，不能当作真实磁盘故障演练。当前回归没有重启 broker 或模拟 SIGKILL。
 
 最终 localedit 整包通过（6.294 秒），新增数据库恢复与三类 I/O 原因回归实际执行；标准 go vet 通过。主代理自审完整 diff、loadSnapshot 全调用者与旧错误路径，检查故障表恢复及临时数据库清理。当前 docs-check 和空白检查通过，没有修改其他任务的 quota、商品、schema 或评价文件，没有真实模型调用。
+
+
+## 局部编辑结果持久化失败与重复投递
+
+本切片由主代理负责，范围为 `localedit/execute.go` 与 [结果写入数据库回归](../../go/internal/localedit/result_failure_test.go)。独立测试库在 Provider 返回后拒绝 local_edit 资产插入，旧执行器返回的却是 attempt phase 约束错误。当前 schema 只允许 claimed/provider_pending/provider_call/provider_result_received/succeeded/failed/unknown；该路径把任务投影用的 unknown_provider_effect 同时写入 attempt.phase，导致未知终态事务回滚。进一步拒绝 task unknown 写入时，原资产错误也被新的终态错误覆盖。两个原实现负例均失败（3.481 秒）。
+
+结果持久化失败分支改用已有 unknown phase，并以 errors.Join 返回原始结果错误与终态错误；终态成功时仍保留结果持久化错误，避免队列/日志误认正常完成。attempt fence 已失效直接停手，不把迟到返回当持久化故障。没有放宽 schema、增加新状态或重新调用 Provider；恢复入口的 task.progress_phase=unknown_provider_effect 与 attempt.phase=unknown 分工保持原样。前端没有依赖本次改动分支的 unknown_provider_effect 专用投影。
+
+新增两个 pf_editresult_* 独立 PostgreSQL 场景通过 queue.Consume 执行：资产插入失败必须保留原 ConstraintName；终态也失败时必须同时保留第二约束错误。第一种 task unknown，第二种 task running 并经实际过期恢复到 unknown；信封均回 pending，额度随后为 pending_reconciliation，零派生资产。模拟信封再次投递后实际 queue.Consume 成功并落 consumed，测试 Provider 累计只调用一次。测试约束仅留在自动销毁的独立数据库中，不修改共享表。没有真实模型或 broker/SIGKILL 演练。
+
+最终 localedit 整包通过（8.566 秒），标准 go vet 通过。主代理完整 diff 自审，核对 attempt phase 约束、状态消费者及测试库清理；当前 docs-check 与空白检查通过。其他任务的 schema、quota、商品和评价文件没有纳入修改。
