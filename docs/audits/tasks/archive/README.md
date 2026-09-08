@@ -4,6 +4,7 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [eval-scope-tool-observation.md](eval-scope-tool-observation.md) | 完成 | 全L1统一Go观察；75输入宿主与读回无基础设施缺口，真实写入/拒绝与注入回归，旧批次保持无效 |
 | [saas-locale-loading.md](saas-locale-loading.md) | 完成 | 当前语言按需加载，四语原文完整保留，真实首屏资源减少约79–94KB，身份与概览消费者验收 |
 | [category-annotation-comparison-basis.md](category-annotation-comparison-basis.md) | 完成 | v2显式展示目的与可比依据；27/27有效，非可比不计算分差，保留判读波动 |
 | [eval-intake-graph-observation.md](eval-intake-graph-observation.md) | 完成 | 创建场景跨工具真实Go观察、多工作流种子与可逆身份；12项跨语言回归通过 |

@@ -419,3 +419,7 @@ YYYY-MM-DD | commit=<sha> | run_id=<id> | command=<exact command> | layer=<L1/L2
 2026-09-08：[intake 观察](tasks/archive/eval-intake-observation.md) 将 L1 创建确认从静态选择匹配切换为真实 Go 执行、4xx拒绝和写后读取，保留实际幂等 key。Go/PG 与跨 Node/Go 无模型回归通过，题集/grader/Skill 未改。第四批117/225仍为无效诊断；完整开发基线与 Agent 行为门均未通过。
 
 2026-09-08：[创建场景跨工具观察](tasks/archive/eval-intake-graph-observation.md) 覆盖当前可达图写入、工作区创建、运行请求与读取，用实际创建商品和运行记录判读写后状态。两条 r5 提案独立回放，保留真实成功与409；根 Go eval 与12项跨语言测试通过，多工作流种子与双向身份映射已修正。题集/Skill/生产行为未改，D-02仍为部分完成；第五批133/225仅保留诊断，完整开发包待独立重采。
+
+### 2026-09-08 L1作用域观察收口
+
+[统一工具观察](tasks/archive/eval-scope-tool-observation.md)将所有L1业务工具接入真实Go宿主，transcript保存持久化最终状态与读回异常。75个development L1输入逐一物化/观察通过，基础设施及读回错误为0；未执行业务动作的41项期望失败保留。root真实PG与runner25项回归及未finalize新增回归通过，覆盖跨Skill调用、r6精确参数拒绝和注入合同。评分要求与题目未放宽，观察不依赖预期写入清单过滤事实。r6在174/225停止，仍无有效summary或开发导出；本交付不代表Agent能力提升，下一完整基线依赖新冻结采证窗口。

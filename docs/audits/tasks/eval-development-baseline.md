@@ -119,3 +119,19 @@ run `20260908T003528Z-e48b5db4` 固定 326bf59a，记录 133/225 trial、45/75 �
 [创建场景跨工具观察](archive/eval-intake-graph-observation.md) 承担新缺口；其检查需覆盖创建场景可调用的写工具，不再只按上一条成功路径补宿主。题目、评分、Skill 与原始五批保持冻结。完整开发包仍未交付。
 
 创建场景跨工具观察与多工作流种子已通过最终确定性回归；本单仍待新提交冻结与资源复核后恢复采证，旧五批不能用于完整开发包。
+
+## 第六次固定开发窗口
+
+主代理已验收并提交创建场景跨工具观察与多工作流物化 `c72047261e473ed900c237e125aac6e1b8433f98`，恢复 eval_baseline 认领。新干净 checkout `/tmp/productflow-eval-development-0908-r6`，新产物根 `storage-dev/eval-development-0908-r6`。固定该提交，不吸收共享工作树后续改动；沿原83道development/11个world分组，L1 75×3=225，regression/acceptance仍为空。模型openai/gpt-5.6-luna，推理参数未额外覆盖，并发3、180秒、12轮，冻结题目/Skill/评分/依赖/请求配置；正常失败保留，新的合同错误或不可测按原协议停止，不重采至绿。
+
+执行者独占新checkout/证据目录与 `pf_eval_r6`、`pf_eval_r6_intake` 独立数据库前缀；记录实际创建库并只清理这些库。不得改共享DB/provider/服务、旧五批轨迹或任何被测源码。root持有文档/Git/最终审核，执行者不提交。启动前记录完整冻结身份、manifest、预期分母与资源清单，运行既有Go观察前置及12项跨语言门以验证固定checkout；门通过即可按本段授权执行完整批次，无需再等流程确认。有效完整运行导出development输入包，前后指纹一致才交付。生成代码身份或依赖安装异常则报告，不绕过。
+
+## 第六批停止与统一观察前置
+
+固定c7204726，run `20260908T030817Z-618fbdd2`，174/225条、58/75题，各已记录题3次；150 passed/24 failed只作诊断计数。run-diagnosis-negative-edit-node三次apply/propose为unknown工具结果，measurementEligibility=false。SIGINT停止，driver退出1；没有summary或development导出，不续接、不降分母。
+
+root已读取 `storage-dev/eval-development-0908-r6/agent-evals/evidence/after-stop-identity-check.json`，same_identity=true，commit/题集/输入/Skill/harness/lock均未变。原始174条与转录保留；driver/CLI具体PID复查已终止，process-after-cleanup.txt记录无自有进程，前后独立DB前缀清单为空。post-stop-checks.txt早先owned_processes=1不单独作为最终进程证据。执行者交回材料后释放占用。
+
+[按作用域统一工具观察](archive/eval-scope-tool-observation.md)承担同类缺口，须在下一整批前覆盖所有实际暴露工具及冻结注入合同，不再逐Skill付费试跑发现接线缺失。跟进者root；该前置未验收前保持阻塞，不启动r7。
+
+统一观察已完成确定性前置验收：75输入物化/最终读取无基础设施缺口，root真实PG与runner25项回归以及未finalize新增回归通过。下一批仍须冻结最终提交、独立资源、模型与完整225分母后再恢复认领；旧六批不续接或合并。当前阻塞只剩新采证窗口冻结与资源复核。

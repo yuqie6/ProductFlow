@@ -148,12 +148,14 @@ async function runTrial(
   let errors: string[] = [];
   let events: Awaited<ReturnType<TurnStore["events"]>> = [];
   let observationHost: Awaited<ReturnType<typeof openGoEvalHost>> | undefined;
+  let finalObservation: { errors: string[]; state: Record<string, unknown>; readback_errors: string[] } | null = null;
+  let finalObservationUnknown = false;
   try {
     if (task.observability_blocker) throw new Error(`unobservable eval input: ${task.observability_blocker}`);
-    if (layer === "l1" && !process.env.VITEST && (task.skill === "graph-editing" || task.skill === "product-intake")) {
+    if (layer === "l1" && !process.env.VITEST) {
       observationHost = await openGoEvalHost(task, stub, {
         layer: "l1",
-        overlay: task.skill === "product-intake" ? "intake" : "graph",
+        overlay: "full",
       });
     }
     const started = await manager.start({
@@ -173,13 +175,31 @@ async function runTrial(
   } catch (error) {
     errors = [errorMessage(error)];
   } finally {
+    await manager.close().catch((error) => {
+      finalObservationUnknown = true;
+      errors.push(`manager close failed: ${errorMessage(error)}`);
+    });
+    if (observationHost) {
+      try {
+        finalObservation = await observationHost.observeFinal();
+        errors.push(...finalObservation.errors);
+        if (finalObservation.readback_errors.length > 0) {
+          finalObservationUnknown = true;
+          errors.push(...finalObservation.readback_errors.map((detail) => `final readback failed: ${detail}`));
+        }
+      } catch (error) {
+        const message = errorMessage(error);
+        finalObservationUnknown = true;
+        finalObservation = { errors: [message], state: {}, readback_errors: [message] };
+        errors.push(`final observation failed: ${message}`);
+      }
+    }
     await observationHost?.close().catch(() => undefined);
-    await manager.close().catch(() => undefined);
   }
 
   const calls = mergeToolCalls(terminal, stub.calls);
   const unobservedTools = calls.filter((call) => call.outcome === "unknown").map((call) => call.name);
-  const unobservable = isUnobservableTrial({
+  const unobservable = finalObservationUnknown || isUnobservableTrial({
     status: task.observability_blocker ? "unobservable" : terminal?.status ?? "failed",
     terminal: terminal?.status ?? null, tool_calls: calls,
   });
@@ -201,6 +221,7 @@ async function runTrial(
     output: terminal?.output ?? "",
     thinking: terminal?.thinking ?? "",
     error: terminal?.error ?? errors.join("; "),
+    ...(finalObservation ? { final_observation: finalObservation } : {}),
     events: events.map((event) => ({ sequence: event.sequence, kind: event.kind, created_at: event.created_at })),
     stub_calls: stub.calls,
   });

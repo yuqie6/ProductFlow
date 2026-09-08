@@ -19,9 +19,9 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
-// Node's L3 driver uses this opt-in, isolated PG host for business effects and user decisions.
-// L1 graph observation reuses the same host with PRODUCTFLOW_EVAL_HOST_LAYER=l1.
-// Pi execution leases remain local to the Node test harness; graph/library transactions are production code.
+// Node's L1/L3 drivers use this opt-in, isolated PG host for business effects
+// and user decisions across every conversation scope. Pi execution leases
+// remain local to the Node test harness; graph/library transactions are production code.
 func TestEvalUserSimHost(t *testing.T) {
 	id := os.Getenv("PRODUCTFLOW_EVAL_HOST_TASK")
 	if id == "" {
@@ -89,7 +89,12 @@ func TestEvalUserSimHost(t *testing.T) {
 		var callErr error
 		switch request.Method {
 		case "observe":
-			out = map[string]any{"errors": gradeEvalFinalWrites(t, as, seeded, task.Expect.Writes, baseline)}
+			state, readbackErrors := evalFinalPersistedState(t, as, seeded)
+			out = map[string]any{
+				"errors":          gradeEvalFinalWrites(t, as, seeded, task.Expect.Writes, baseline),
+				"state":           state,
+				"readback_errors": readbackErrors,
+			}
 		case "assets":
 			query, _ := p["query"].(string)
 			cursor, _ := p["cursor"].(string)

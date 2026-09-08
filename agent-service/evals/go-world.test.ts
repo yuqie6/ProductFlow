@@ -168,6 +168,19 @@ describe.skipIf(process.env.PRODUCTFLOW_RUN_AGENT_EVALS_GOPG !== "1")("L1 Go int
     }
   }, 180_000);
 
+  it("grades an unfinalized product intake as a persisted mismatch without crashing observation", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "product-intake-finalize-explicit-minimal-set")!;
+    const stub = createStubWorld(task, worlds.get(task.world)!, "conv-unfinalized-intake", "run-unfinalized-intake", {});
+    const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "full" });
+    try {
+      const final = await host.observeFinal();
+      expect(final.readback_errors).toEqual([]);
+      expect(final.state).toMatchObject({ product: expect.objectContaining({ intake: null }) });
+      expect(final.errors).toContain("persisted content mismatch: finalize_product_intake_v1");
+    } finally { await host.close(); }
+  }, 180_000);
+
   it("replays both recorded proposal inputs independently and observes their backend outcomes", async () => {
     const { tasks, worlds } = await loadEvalTaskSet();
     const task = tasks.find((candidate) => candidate.id === "product-intake-negative-delete-images")!;
@@ -401,5 +414,260 @@ describe.skipIf(process.env.PRODUCTFLOW_RUN_AGENT_EVALS_GOPG !== "1")("L1 Go int
         .resolves.toMatchObject({ accepted: true, status: "cancelled" });
       expect(await host.observe()).toEqual([]);
     } finally { await host.close(); }
+  }, 180_000);
+
+  it("routes a product-workflow write from run diagnosis through the full host", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "run-diagnosis-negative-edit-node")!;
+    const stub = createStubWorld(task, worlds.get(task.world)!, "conv-cross-skill", "run-cross-skill", {});
+    const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "full" });
+    try {
+      const before = await stub.client.productContext("conv-cross-skill", undefined, "detailed") as {
+        live_graph: { revision: number; nodes: Array<{ id: string; title: string }> };
+      };
+      const detail = await stub.client.workflowRunDetail("conv-cross-skill", "44444444-4444-4444-8444-444444444444");
+      expect(detail).toMatchObject({ run_id: "44444444-4444-4444-8444-444444444444", status: "failed" });
+      await expect(stub.client.getNodeDetail("conv-cross-skill", "node-prompt-1"))
+        .resolves.toMatchObject({ id: "node-prompt-1" });
+      const params = {
+        base_graph_revision: before.live_graph.revision,
+        summary: "诊断后改名",
+        operations: [{ op: "rename_node", node_ref: "node-prompt-1", title: "诊断修复标题" }],
+      } as JsonObject;
+      await expect(stub.client.applyGraphChangeSet("conv-cross-skill", params, "cross-skill-key"))
+        .resolves.toMatchObject({ accepted: true });
+      const after = await stub.client.productContext("conv-cross-skill", undefined, "detailed") as {
+        live_graph: { revision: number; nodes: Array<{ id: string; title: string }> };
+      };
+      expect(after.live_graph.revision).toBeGreaterThan(before.live_graph.revision);
+      expect(after.live_graph.nodes.find((node) => node.id === "node-prompt-1")?.title).toBe("诊断修复标题");
+      expect(stub.calls.filter((call) => call.name === "apply_graph_change_set_v1").map((call) => call.outcome))
+        .toEqual(["succeeded"]);
+      const final = await host.observeFinal();
+      expect(final.errors).toEqual([]);
+      expect(final.state).toMatchObject({ graph: expect.objectContaining({ revision: after.live_graph.revision }) });
+    } finally { await host.close(); }
+  }, 180_000);
+
+  it("keeps an unexpected product workflow request visible independently of expected writes", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "workflow-run-request-negative-ambiguous-cancel")!;
+    const conversationID = "conv-negative-unexpected-request";
+    const stub = createStubWorld(task, worlds.get(task.world)!, conversationID, "run-negative-unexpected-request", {});
+    const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "full" });
+    try {
+      const context = await stub.client.productContext(conversationID, undefined, "concise") as { live_graph: { revision: number } };
+      const prepared = await stub.client.prepareWorkflowRunRequest(conversationID, {
+        expected_workflow_revision: context.live_graph.revision,
+        task_id: null,
+        source_run_id: null,
+      });
+      await expect(stub.client.executeWorkflowRunRequest(
+        conversationID,
+        { ...prepared, scope: "graph" },
+        "negative-unexpected-request-step",
+        "negative-unexpected-request-key",
+      )).resolves.toMatchObject({ status: "awaiting_confirmation" });
+      const final = await host.observeFinal();
+      expect(final.readback_errors).toEqual([]);
+      expect(final.state).toMatchObject({ workflow_run_request: expect.objectContaining({ status: "awaiting_confirmation" }) });
+    } finally { await host.close(); }
+  }, 180_000);
+
+  it("keeps an unexpected global draft visible independently of expected writes", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "product-intake-negative-duplicate-candidate")!;
+    const positive = tasks.find((candidate) => candidate.id === "media-library-organization-sim-draft-confirm")!;
+    const call = positive.reference.scripted_calls.find((candidate) => candidate.name === "propose_global_draft")!;
+    const params = structuredClone(call.params) as JsonObject;
+    const conversationID = "conv-negative-unexpected-draft";
+    const stub = createStubWorld(task, worlds.get(task.world)!, conversationID, "run-negative-unexpected-draft", loadGlobalDraftSchema() as Record<string, unknown>);
+    const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "full" });
+    try {
+      await expect(stub.client.validateGlobalDraft(conversationID, params, undefined))
+        .resolves.toMatchObject({ status: "awaiting_confirmation" });
+      const final = await host.observeFinal();
+      expect(final.readback_errors).toEqual([]);
+      expect(final.state).toMatchObject({ library_draft: expect.objectContaining({ status: "awaiting_confirmation" }) });
+    } finally { await host.close(); }
+  }, 180_000);
+
+  it("reports a missing expected workflow request while preserving null readback", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "workflow-run-request-run-current-workflow")!;
+    const conversationID = "conv-missing-expected-request";
+    const stub = createStubWorld(task, worlds.get(task.world)!, conversationID, "run-missing-expected-request", {});
+    const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "full" });
+    try {
+      const final = await host.observeFinal();
+      expect(final.readback_errors).toEqual([]);
+      expect(final.state).toMatchObject({ workflow_run_request: null });
+      expect(final.errors).toContain("persisted content mismatch: request_workflow_run_v1");
+    } finally { await host.close(); }
+  }, 180_000);
+
+  it("reports a missing expected global draft while preserving null readback", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "media-library-organization-sim-draft-confirm")!;
+    const conversationID = "conv-missing-expected-draft";
+    const stub = createStubWorld(task, worlds.get(task.world)!, conversationID, "run-missing-expected-draft", loadGlobalDraftSchema() as Record<string, unknown>);
+    const host = await openGoEvalHost(task, stub, { layer: "l3", overlay: "full" });
+    try {
+      const final = await host.observeFinal();
+      expect(final.readback_errors).toEqual([]);
+      expect(final.state).toMatchObject({ library_draft: null });
+      expect(final.errors).toContain("library draft not confirmed");
+    } finally { await host.close(); }
+  }, 180_000);
+
+  it("keeps a first-write conflict observable when the full host is active", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "graph-editing-rename-node")!;
+    const stub = createStubWorld(task, worlds.get(task.world)!, "conv-injected", "run-injected", {});
+    const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "full" });
+    try {
+      const context = await stub.client.productContext("conv-injected", undefined, "concise") as { live_graph: { revision: number } };
+      const params = structuredClone(task.reference.scripted_calls.find((call) => call.name === "apply_graph_change_set_v1")!.params) as JsonObject;
+      params.base_graph_revision = context.live_graph.revision;
+      await expect(stub.client.applyGraphChangeSet("conv-injected", params, "injected-first"))
+        .rejects.toMatchObject({ status: 409 });
+      await expect(stub.client.applyGraphChangeSet("conv-injected", params, "injected-retry"))
+        .resolves.toMatchObject({ accepted: true });
+      expect(stub.calls.filter((call) => call.name === "apply_graph_change_set_v1").map((call) => call.outcome))
+        .toEqual(["failed", "succeeded"]);
+      expect(await host.observe()).toEqual([]);
+    } finally { await host.close(); }
+  }, 180_000);
+
+  it("retains every injected write conflict before the real write and its readback", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const base = tasks.find((candidate) => candidate.id === "graph-editing-rename-node")!;
+    const task = { ...base, inject: { write_409_count: 2 } };
+    const stub = createStubWorld(task, worlds.get(task.world)!, "conv-injected-count", "run-injected-count", {});
+    const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "full" });
+    try {
+      const context = await stub.client.productContext("conv-injected-count", undefined, "concise") as { live_graph: { revision: number } };
+      const params = structuredClone(base.reference.scripted_calls.find((call) => call.name === "apply_graph_change_set_v1")!.params) as JsonObject;
+      params.base_graph_revision = context.live_graph.revision;
+      await expect(stub.client.applyGraphChangeSet("conv-injected-count", params, "injected-count-1"))
+        .rejects.toMatchObject({ status: 409 });
+      await expect(stub.client.applyGraphChangeSet("conv-injected-count", params, "injected-count-2"))
+        .rejects.toMatchObject({ status: 409 });
+      await expect(stub.client.applyGraphChangeSet("conv-injected-count", params, "injected-count-3"))
+        .resolves.toMatchObject({ accepted: true });
+      expect(stub.calls.filter((call) => call.name === "apply_graph_change_set_v1").map((call) => call.outcome))
+        .toEqual(["failed", "failed", "succeeded"]);
+      const after = await stub.client.productContext("conv-injected-count", undefined, "concise") as { live_graph: { revision: number } };
+      expect(after.live_graph.revision).toBeGreaterThan(context.live_graph.revision);
+      const final = await host.observeFinal();
+      expect(final.errors).toEqual([]);
+      expect(final.readback_errors).toEqual([]);
+      expect(final.state).toMatchObject({ graph: expect.objectContaining({ revision: after.live_graph.revision }) });
+    } finally { await host.close(); }
+  }, 180_000);
+
+  it.each([500, "timeout"] as const)("retains a real read error as unknown for %s while healthy reads remain observed", async (status) => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const base = tasks.find((candidate) => candidate.id === "run-diagnosis-negative-edit-node")!;
+    const task = { ...base, inject: { read_error: { tool: "get_workflow_run_detail_v1", status } } };
+    const stub = createStubWorld(task, worlds.get(task.world)!, `conv-read-${status}`, `run-read-${status}`, {});
+    const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "full" });
+    try {
+      await expect(stub.client.workflowRunDetail(`conv-read-${status}`, "44444444-4444-4444-8444-444444444444"))
+        .rejects.toMatchObject({ status: status === "timeout" ? 504 : 500 });
+      await expect(stub.client.productContext(`conv-read-${status}`, undefined, "concise"))
+        .resolves.toMatchObject({ product: expect.objectContaining({ name: "评测商品" }) });
+      expect(stub.calls.filter((call) => call.name === "get_workflow_run_detail_v1").map((call) => call.outcome)).toEqual(["unknown"]);
+      expect(stub.calls.filter((call) => call.name === "get_product_workflow_context_v1").map((call) => call.outcome)).toEqual(["succeeded"]);
+      const final = await host.observeFinal();
+      expect(final.errors).toEqual([]);
+      expect(final.readback_errors).toEqual([]);
+      expect(final.state).toMatchObject({ product: expect.objectContaining({ name: "评测商品" }) });
+    } finally { await host.close(); }
+  }, 180_000);
+
+  it("retains a payload injection in the real product read response and call record", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "run-diagnosis-inspect-failed-node-injected-reason")!;
+    const payload = task.inject?.payload?.failure_reason;
+    expect(payload).toBeTruthy();
+    const stub = createStubWorld(task, worlds.get(task.world)!, "conv-payload", "run-payload", {});
+    const host = await openGoEvalHost(task, stub, { layer: "l2", overlay: "full" });
+    try {
+      const result = await stub.client.workflowRunDetail("conv-payload", "44444444-4444-4444-8444-444444444444") as { failure_reason: string };
+      expect(result.failure_reason).toContain(payload!);
+      expect(stub.calls.find((call) => call.name === "get_workflow_run_detail_v1")?.observed_injections).toEqual(["failure_reason"]);
+      const final = await host.observeFinal();
+      expect(final.errors).toEqual([]);
+      expect(final.readback_errors).toEqual([]);
+      expect(final.state).toMatchObject({ failed_run: expect.objectContaining({ failure_reason: expect.stringContaining(payload!) }) });
+    } finally { await host.close(); }
+  }, 180_000);
+
+  it("replays the r6 apply and propose parameters through the real graph authority", async () => {
+    const { tasks, worlds } = await loadEvalTaskSet();
+    const task = tasks.find((candidate) => candidate.id === "run-diagnosis-negative-edit-node")!;
+    const replays: Array<{ name: "apply" | "propose"; params: JsonObject }> = [
+      {
+        name: "apply",
+        params: {
+          base_graph_revision: 3,
+          operations: [{ op: "update_node_config", node_ref: "node-prompt-1", config: { image_type_key: "hero", produce_route: "generative" } }],
+          summary: "修复主图提示词节点：补齐生成路线并保留 hero 图类型",
+        },
+      },
+      {
+        name: "propose",
+        params: {
+          base_graph_revision: 3,
+          operations: [{
+            op: "update_node_config",
+            node_ref: "node-prompt-1",
+            config: {
+              image_type_key: "hero",
+              produce_route: "generative",
+              text_settings: { policy: "none", language: null },
+              prompt: {
+                design_goal: "制作清晰、可识别的商品封面主图，突出商品主体。",
+                shared_rules: ["保持商品外观与已知事实一致", "商品主体完整可见，画面清晰简洁"],
+                creative_boundary: ["不添加未提供的功能、规格或品牌信息"],
+                product_fidelity: { product_present: true, picture_in_picture: "none", requirements: ["优先保持商品形态、材质和颜色准确"] },
+                composition: { viewpoint: "正面三分之四视角", product_share_percent: 75, layout: "商品居中，主体完整，四周留出适度边距", copy_regions: [] },
+                content: { focus: ["商品主体"], selling_points: [], background: "简洁干净的棚拍背景", decorations: [] },
+                text: { headline: null, subtitle: null, body: null },
+                atmosphere: { keywords: ["清晰", "专业"], lighting: "均匀柔和的棚拍光线" },
+              },
+            },
+          }],
+          summary: "修复主图提示词节点的 provider_error：补齐生成路线、无文字策略和受约束的主图提示配置。",
+        },
+      },
+    ];
+    for (const [index, replay] of replays.entries()) {
+      const conversationID = `conv-r6-${replay.name}`;
+      const stub = createStubWorld(task, worlds.get(task.world)!, conversationID, `run-r6-${replay.name}`, {});
+      const host = await openGoEvalHost(task, stub, { layer: "l1", overlay: "full" });
+      try {
+        const before = await stub.client.productContext(conversationID, undefined, "detailed") as { live_graph: { revision: number } };
+        expect(before.live_graph.revision).toBe(2);
+        if (replay.name === "apply") {
+          await expect(stub.client.applyGraphChangeSet(conversationID, replay.params, "r6-apply-" + index))
+            .rejects.toMatchObject({ status: 409 });
+        } else {
+          await expect(stub.client.proposeGraphChangeSet(conversationID, replay.params, "r6-propose-" + index))
+            .rejects.toMatchObject({ status: 409 });
+          await expect(host.observeGraph()).resolves.toMatchObject({ pending_proposal: null });
+        }
+        const recorded = stub.calls.find((call) => call.name === replay.name + "_graph_change_set_v1")!;
+        expect(recorded.params).toEqual(replay.params);
+        expect(recorded.outcome).toBe("failed");
+        const after = await stub.client.productContext(conversationID, undefined, "detailed") as { live_graph: { revision: number } };
+        expect(after.live_graph.revision).toBe(before.live_graph.revision);
+        const final = await host.observeFinal();
+        expect(final.errors).toEqual([]);
+        expect(final.readback_errors).toEqual([]);
+        expect(final.state.graph).toBeDefined();
+      } finally { await host.close(); }
+    }
   }, 180_000);
 });

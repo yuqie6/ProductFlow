@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
+	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 )
 
@@ -77,6 +79,10 @@ func gradeEvalPersistedWrites(t *testing.T, as *agentServer, seeded seededEvalWo
 			var raw []byte
 			if err := as.pool.QueryRow(ctx, `SELECT intake_json FROM products WHERE id=$1`, seeded.ProductID).Scan(&raw); err != nil {
 				t.Fatal(err)
+			}
+			raw = bytes.TrimSpace(raw)
+			if len(raw) == 0 {
+				break
 			}
 			var intake map[string]any
 			if err := json.Unmarshal(raw, &intake); err != nil {
@@ -260,6 +266,87 @@ func gradeEvalFinalWrites(t *testing.T, as *agentServer, seeded seededEvalWorld,
 		}
 	}
 	return errors
+}
+
+// evalFinalPersistedState is the readback evidence paired with the write grader.
+// Keep the snapshot bounded to the objects exposed by the eval tools; media bytes
+// and unrelated merchant rows do not belong in a trial transcript.
+func evalFinalPersistedState(t *testing.T, as *agentServer, seeded seededEvalWorld) (map[string]any, []string) {
+	t.Helper()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db))
+	state := map[string]any{}
+	readbackErrors := []string{}
+	if seeded.GraphID != "" {
+		live, err := as.svc.Graph.Get(ctx, seeded.ProductID, seeded.GraphID)
+		if err != nil {
+			readbackErrors = append(readbackErrors, "graph: "+err.Error())
+		} else {
+			state["graph"] = live
+		}
+	}
+	if seeded.ProductID != "" {
+		product, err := as.svc.Product.Get(ctx, seeded.ProductID)
+		if err != nil {
+			readbackErrors = append(readbackErrors, "product: "+err.Error())
+		} else {
+			state["product"] = product
+		}
+	}
+	if seeded.CreatedProductID != "" {
+		product, err := as.svc.Product.Get(ctx, seeded.CreatedProductID)
+		if err != nil {
+			readbackErrors = append(readbackErrors, "created_product: "+err.Error())
+		} else {
+			state["created_product"] = product
+		}
+	}
+	if seeded.ConvID != "" {
+		var productID *string
+		if seeded.Scope != "global" && seeded.ProductID != "" {
+			productID = &seeded.ProductID
+		}
+		request, err := as.svc.GetWorkflowRunRequest(ctx, productID, seeded.ConvID, nil)
+		if err != nil {
+			readbackErrors = append(readbackErrors, "workflow_run_request: "+err.Error())
+		} else {
+			state["workflow_run_request"] = request
+		}
+	}
+	for key, runID := range map[string]string{
+		"failed_run": seeded.FailedRunID,
+		"recent_run": seeded.RecentRunID,
+	} {
+		if runID == "" || seeded.ConvID == "" {
+			continue
+		}
+		run, err := as.svc.WorkflowRunDetail(ctx, seeded.ConvID, runID)
+		if err != nil {
+			readbackErrors = append(readbackErrors, key+": "+err.Error())
+			continue
+		}
+		state[key] = run
+	}
+	if seeded.Scope == "global" {
+		draft, err := as.svc.Library.GetOrganizationDraft(ctx, seeded.ConvID)
+		if err == nil {
+			state["library_draft"] = draft
+		} else if apperr.IsNotFound(err) {
+			state["library_draft"] = nil
+		} else {
+			readbackErrors = append(readbackErrors, "library_draft: "+err.Error())
+		}
+		if assets, err := as.svc.ListLibraryAssets(ctx, seeded.ConvID, "", "", 100, LibraryReadOptions{IncludeArchived: true}); err == nil {
+			state["library_assets"] = assets
+		} else {
+			readbackErrors = append(readbackErrors, "library_assets: "+err.Error())
+		}
+		if products, err := as.svc.ListGlobalProducts(ctx, seeded.ConvID, "", "", 100); err == nil {
+			state["products"] = products
+		} else {
+			readbackErrors = append(readbackErrors, "products: "+err.Error())
+		}
+	}
+	return state, readbackErrors
 }
 
 var evalOperationPath = regexp.MustCompile(`^(operations|library_payload\.operations)\[([0-9]+)\]\.(.+)$`)
