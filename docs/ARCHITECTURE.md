@@ -12,7 +12,7 @@ ProductFlow 当前开发基线从一个管理员和一个 bootstrap 开发商家
 6. PostgreSQL。
 7. Redis 与媒体 storage。
 
-浏览器只访问 Web 和业务 API。Agent service 使用独立 bearer token 调用业务 API 的 internal 路由；API 通过 agent-service internal HTTP/SSE 控制 Turn。API、worker 和 async dispatcher 共享 PostgreSQL、Redis 和 storage。`just dev` 与 Docker Compose 都会启动 dispatcher。默认进程是 `go/cmd/productflow-api`、`productflow-worker`、`productflow-dispatcher`。schema 由 `productflow-migrate` 在启动前应用。退休的 FastAPI 树在 `retired/python`。
+浏览器只访问 Web 和业务 API。Agent service 使用独立 bearer token 调用业务 API 的 internal 路由；API 通过 agent-service internal HTTP/SSE 控制 Turn。API、worker 和业务恢复进程共用 PostgreSQL 和 storage；Redis 用于 API 认证限流。`just dev` 与 Docker Compose 都会启动 dispatcher。默认进程是 `go/cmd/productflow-api`、`productflow-worker`、`productflow-dispatcher`。schema 由 `productflow-migrate` 在启动前应用。退休的 FastAPI 树在 `retired/python`。
 
 本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`。未过的耐久 gate 见 `ROADMAP.md`。
 
@@ -64,7 +64,7 @@ GET `/api/v2/products/overview` 由 `go/internal/product/overview.go` 读取自�
 | 生图质量测评 | `go/internal/imageeval`、`go/cmd/productflow-image-evals` | 只读 CLI；opt-in live | `go/internal/imageeval` |
 | 错误与日志 | `go/internal/platform/apperr`、`httpx`、`log` | 中间件与 worker | platform 与各包 HTTP 测试 |
 
-dispatcher watch 模式有一个投递循环和五个独立恢复循环（Graph、ImageSession、Delivery、LocalEdit、Agent）。每域默认 10s cadence、域内批次串行，不等待其他域完成；满批恢复不立即续扫。取消时等待全部循环退出。one-shot 保留固定域顺序恢复后投递的合同。逐域批次日志携带 `domain/enqueued/unknown/has_more`，空批次为 Debug；耗时与错误由按域 recovery 指标记录。共享 PG 池仍为 16，独立调度不保证连接或 IO 饱和下的隔离。实现与回归：`go/cmd/productflow-dispatcher/main.go`、`coordinator.go`、`coordinator_test.go`。
+dispatcher watch 模式有五个独立业务恢复循环（Graph、ImageSession、Delivery、LocalEdit、Agent）。每域默认 10s cadence、域内批次串行，不等待其他域完成；满批恢复不立即续扫。取消时等待全部循环退出。one-shot 按固定域顺序执行恢复。逐域批次日志携带 `domain/enqueued/unknown/has_more`，空批次为 Debug；耗时与错误由按域 recovery 指标记录。共享 PG 池仍为 16，独立调度不保证连接或 IO 饱和下的隔离。实现与回归：`go/cmd/productflow-dispatcher/main.go`、`coordinator.go`、`coordinator_test.go`。
 
 ImageSession、Delivery、LocalEdit 恢复在发现候选时用 `FOR UPDATE SKIP LOCKED` 跳过持锁前缀；ImageSession 按 `created_at/id`，其余两域按 `updated_at/id` 排序，默认返回最多 26 个候选 ID（25 个处理项加 1 个探测项）。发现阶段短暂锁行，事务结束即释放；状态迁移另开逐任务事务重查，不持发现锁处理整个恢复批次。`HasMore` 只表示跳锁后的可选候选超出本批额度，不是全库积压计数。实现与回归：`go/internal/imagesession/`、`go/internal/delivery/`、`go/internal/localedit/` 各自的 `recovery.go` 与 `recovery_test.go`。
 
@@ -252,7 +252,7 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 - Graph/ImageSession 共用全库 generation admission lock 和容量计数；默认 3 槽，按实际商家占用、最近服务时间及就绪顺序分配。River generation 消费池与 delivery/local_edit/agent 分开，单进程默认并发分别为 3/2/2/2；多实例仍受业务全局生成容量约束。该容量合同不自动覆盖 LocalEdit。
 - `productflow-dispatcher` 保留进程名，仅执行五类业务恢复与额度待对账过期。各域独立循环，默认每 10 秒一次、每次最多 25 条，稳定排序和 SKIP LOCKED。`--watch`、`--recovery-interval` 控制扫描；旧投递 `--interval`/`--limit` 已删除。队列指标为 `productflow_queue_jobs{status=...}`，只反映 River 作业状态；业务 backlog 和 recovery duration 继续独立观测。
 - River job timeout 30 分钟、rescue 阈值 35 分钟；rescue 还受维护扫描和业务执行权限制。Graph 租约 35 分钟，每 5 分钟续租。连续生图依据 progress heartbeat（无则 started_at），默认 90 分钟无进展后恢复为 queued 或 unknown；已 applied 的候选不重放，旧 attempt 不得覆盖 unknown。进程正常超时可写 unknown，SIGKILL 则要等待业务恢复，不能把队列 rescue 当成供应商可安全重试。
-- Redis 仅用于认证限流，任务消费不依赖 Redis。River 原生迁移由 `productflow-migrate` 在现有迁移锁下按版本提交，业务 schema 仍单事务执行。检测到旧队列 pending/sent/dead 会拒绝切换；先核对处置业务记录和运行资源，不能清表规避停止证据。
+- Redis 仅用于认证限流，任务消费不依赖 Redis。River 原生迁移由 `productflow-migrate` 在现有迁移锁下按版本提交，业务 schema 仍单事务执行。快速开发阶段不兼容旧队列：停止旧应用进程后迁移直接退役 async_dispatches 表及枚举；旧开发执行不自动重放，账号、商品及素材保留。
 - PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
 - 连续生图状态的 `has_active_generation_task` 由同次返回的完整活动任务列表推导，不做独立 COUNT，避免查询间入队/完成导致活动标志与列表矛盾。此保证仅覆盖活动标志与任务列表，不表示轮次、effects 和队列统计共用一个全局快照。Status/SSE 返回该会话全部 queued/running，但不重复下发 `prompt`；提示词以详情和提交响应为准，前端把状态进度叠到已缓存任务上。实现：`go/internal/imagesession/serialize.go`、`web/src/pages/image-chat/branching.ts`；回归：`status_projection_test.go`、`active_status_load_test.go`、`branching.test.ts`。
 - 连续生图 Status 和详情仅在本次返回任务时读取队列概览；空任务列表不查询全局容量配置及队列 COUNT。详情返回终态任务时仍附带现行队列字段。实现与回归：`go/internal/imagesession/serialize.go`、`status_projection_test.go`、`http_load_test.go`。
@@ -281,7 +281,7 @@ API / worker / dispatcher 终端默认打可读行（时间、级别、进程、
 
 ## 11. Schema 演进
 
-空库和已有库都跑 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 建/补表和列，随后 ExtraDDL 幂等补上 CHECK、PostgreSQL enum、部分唯一索引和 FK。不使用 AutoMigrate（它会改写已有库的 unique 索引名）。该命令不删除已退休表或列；退休表用显式 SQL 删除。主仓库不写旧数据回填、冻结或 cutover gate。跟上主仓库可以重建数据库和 storage。
+空库和已有库都跑 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 建/补表和列，随后 ExtraDDL 幂等补上 CHECK、PostgreSQL enum、部分唯一索引和 FK。不使用 AutoMigrate（它会改写已有库的 unique 索引名）。退休结构仅由迁移中明确声明的删除操作处理，不执行自动 schema 差异删除；本轮包含旧 async_dispatches 表及枚举。主仓库不写旧数据回填、冻结或 cutover gate。跟上主仓库可以重建数据库和 storage。
 
 ## 12. 质量门
 

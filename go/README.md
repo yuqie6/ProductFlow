@@ -24,7 +24,7 @@ Compose 默认启动三个 Go 进程，占用 `APP_HOST_PORT`（默认 29280）�
 
 Worker 接收 SIGINT/SIGTERM 后停止领取并等待当前任务完成；30 秒等待超时后取消运行上下文，额外等待最多 10 秒，期间保留数据库连接供终态保存。River job timeout 为 30 分钟、rescue 阈值为 35 分钟；Graph 执行租约为 35 分钟，每 5 分钟续租。连续生图崩溃后的业务闲置恢复默认仍为 90 分钟，队列 rescue 不等于允许再次生图。River 日志经 zapslog 写入现有 Worker 日志。
 
-Go 工具链为 1.26.5，River 固定 0.47.0。`productflow-migrate` 是唯一 schema 入口：River 原生迁移按版本提交，业务 schema 在独立事务中建表、补列及约束，整个过程由既有 advisory lock 串行化。PostgreSQL enum 的版本变更不能把 River 全历史放进单个事务；迁移失败后重跑从已提交版本继续。业务受理和 job 插入的同事务原子性不受此限制。迁移检测到旧队列 pending/sent/dead 会拒绝切换，须停写并核对业务及停止记录后处理；不能通过清空队列跳过 unknown 或 dead 的处置。
+Go 工具链为 1.26.5，River 固定 0.47.0。`productflow-migrate` 是唯一 schema 入口：River 原生迁移按版本提交，业务 schema 在独立事务中建表、补列及约束，整个过程由既有 advisory lock 串行化。PostgreSQL enum 的版本变更不能把 River 全历史放进单个事务；迁移失败后重跑从已提交版本继续。业务受理和 job 插入的同事务原子性不受此限制。当前处于快速开发阶段，不兼容旧队列任务。停止旧应用进程后，迁移直接退役 async_dispatches 表及枚举；旧的未完成开发执行单独停止，不自动转成 River 作业。账号、商品和素材保留，新任务的 unknown 与重复调用防护仍有效。
 
 ## 配方列表排障
 

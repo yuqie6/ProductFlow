@@ -884,28 +884,15 @@ func TestApplyCreatesAndPreservesOperatorActionHistory(t *testing.T) {
 	}
 }
 
-func TestQueueCutoverRefusesUnresolvedOldJobs(t *testing.T) {
+func TestQueueCutoverRetiresOldJobs(t *testing.T) {
 	_, gdb := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_river_cutover_%d", time.Now().UnixNano()%1_000_000_000))
 	if err := gdb.Exec("CREATE TABLE async_dispatches (id text PRIMARY KEY, status text NOT NULL)").Error; err != nil {
 		t.Fatal(err)
 	}
-	for _, state := range []string{"pending", "sent", "dead"} {
-		if err := gdb.Exec("INSERT INTO async_dispatches VALUES ('old', ?)", state).Error; err != nil {
+	for _, state := range []string{"pending", "sent", "dead", "consumed"} {
+		if err := gdb.Exec("INSERT INTO async_dispatches VALUES (?, ?)", state, state).Error; err != nil {
 			t.Fatal(err)
 		}
-		if err := schema.Apply(gdb); err == nil || !strings.Contains(err.Error(), "queue cutover refused") {
-			t.Fatalf("%s: %v", state, err)
-		}
-		var retained int64
-		if err := gdb.Table("async_dispatches").Where("id='old' AND status=?", state).Count(&retained).Error; err != nil || retained != 1 {
-			t.Fatalf("unresolved evidence lost: %d %v", retained, err)
-		}
-		if err := gdb.Exec("DELETE FROM async_dispatches").Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := gdb.Exec("INSERT INTO async_dispatches VALUES ('done', 'consumed')").Error; err != nil {
-		t.Fatal(err)
 	}
 	if err := schema.Apply(gdb); err != nil {
 		t.Fatal(err)

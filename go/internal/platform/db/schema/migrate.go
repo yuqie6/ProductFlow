@@ -39,14 +39,9 @@ func Apply(gdb *gorm.DB) error {
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", schemaMigrationAdvisoryLock).Error; err != nil {
 			return fmt.Errorf("migration lock: %w", err)
 		}
+		// Retire the old development queue without replaying its jobs.
+		// Stop old application processes before applying this schema.
 		if tx.Migrator().HasTable("async_dispatches") {
-			var remaining int64
-			if err := tx.Table("async_dispatches").Where("status IN ?", []string{"pending", "sent", "dead"}).Count(&remaining).Error; err != nil {
-				return err
-			}
-			if remaining > 0 {
-				return fmt.Errorf("queue cutover refused: %d old active/stopped dispatches require disposition", remaining)
-			}
 			if err := tx.Migrator().DropTable("async_dispatches"); err != nil {
 				return err
 			}
