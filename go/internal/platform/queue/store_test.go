@@ -375,6 +375,81 @@ func TestConsumeClaimsSentAndMarksConsumed(t *testing.T) {
 	}
 }
 
+// 执行器已处理完业务结果后，handler 的取消不能阻止信封收尾。
+func TestConsumeFinalizesAfterActorCancellation(t *testing.T) {
+	actorFailure := errors.New("actor failed")
+	for _, tc := range []struct {
+		name          string
+		actorErr      error
+		wantStatus    string
+		wantErr       error
+		replacedLease bool
+	}{
+		{"completed", nil, queue.StatusConsumed, nil, false},
+		{"busy", queue.ErrBusy, queue.StatusPending, nil, false},
+		{"later", queue.ErrLater, queue.StatusPending, nil, false},
+		{"failed", actorFailure, queue.StatusPending, actorFailure, false},
+		{"completed_replaced_lease", nil, queue.StatusSent, nil, true},
+		{"busy_replaced_lease", queue.ErrBusy, queue.StatusSent, nil, true},
+		{"later_replaced_lease", queue.ErrLater, queue.StatusSent, nil, true},
+		{"failed_replaced_lease", actorFailure, queue.StatusSent, actorFailure, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool, gdb := testdb.Open(t)
+			ctx := context.Background()
+			agg := uniqueID(t)
+			var dispatch queue.Dispatch
+			if err := tx.WithGorm(ctx, gdb, func(db *gorm.DB) error {
+				var err error
+				dispatch, err = queue.StageForActor(ctx, db, queue.ActorDelivery, agg, 0)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := queue.RunDispatcherOnce(ctx, pool, func(string, string) error { return nil }, 100); err != nil {
+				t.Fatal(err)
+			}
+			actorCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			calls := 0
+			err := queue.Consume(actorCtx, pool, dispatch.ID, agg, map[string]queue.ActorFunc{
+				queue.ActorDelivery: func(received context.Context, _ string) error {
+					calls++
+					if tc.replacedLease {
+						if _, err := pool.Exec(ctx, `UPDATE async_dispatches SET lease_token = 'replacement' WHERE id = $1`, dispatch.ID); err != nil {
+							t.Fatal(err)
+						}
+					}
+					cancel()
+					if received.Err() != context.Canceled {
+						t.Fatal("actor must retain cancellable context")
+					}
+					return tc.actorErr
+				},
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Consume error %v, want %v", err, tc.wantErr)
+			}
+			var status string
+			var token *string
+			var expires *time.Time
+			if err := pool.QueryRow(ctx, `SELECT status, lease_token, lease_expires_at FROM async_dispatches WHERE id = $1`, dispatch.ID).Scan(&status, &token, &expires); err != nil {
+				t.Fatal(err)
+			}
+			leaseValid := token == nil && expires == nil
+			if tc.replacedLease {
+				leaseValid = token != nil && *token == "replacement" && expires != nil
+			}
+			if status != tc.wantStatus || !leaseValid {
+				t.Fatalf("status=%s lease=%v expires=%v", status, token, expires)
+			}
+			if calls != 1 {
+				t.Fatalf("actor calls=%d", calls)
+			}
+		})
+	}
+}
+
 func TestConsumeBusyReleasesToPending(t *testing.T) {
 	pool, gdb := testdb.Open(t)
 	ctx := context.Background()

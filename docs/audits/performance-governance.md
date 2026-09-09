@@ -393,3 +393,13 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 整体未通过：A100/B20 争用中 B 等待 p95 为 74.629s，超过 10s；故障短窗口内未恢复，但没有覆盖 90 分钟 stale 阈值。L2 SSE 标记受 EOF 后状态读取竞态影响，commit-to-SSE 缺真实提交时间；两项不能冒充有效通过或确证生产根因。root 对预热统计和 Decimal 账户聚合做了绑定原始 hash 的独立重算，原始 FAIL 未覆盖；10 商家账本快照算术一致，争用等待 FAIL 保留。后续应处理实际公平性/恢复问题并补测量缺口，不能仅增加 worker 或放宽阈值。
 
 [商家生成公平性](tasks/archive/generation-merchant-fairness.md) 已在 6a418d8f 实现并用 ca1a3cac 修正测量器复验：dispatcher 按商家服务历史选择有限 generation 预取，Graph 在其他商家等待时停止续取、自然完成在途节点后释放消费轮；单商家仍可用满全局槽。固定同规格 A100/B20 全部成功、provider 各一次、额度一致，B 等待 p95=3.5961s（e190 为 74.629s）、max=3.6144s，HTTP 在途峰值 3；独立真实 Graph/ImageSession 混合场景也完成。长任务非抢占等待单列，未改短任务阈值。实现与本次争用验收完成；整体容量仍缺故障完整恢复窗口、修订后正式 SSE 采样及 commit-to-SSE 时间，不能升级为生产 SLA。
+
+## 2026-09-09 取消后的队列收尾
+
+`platform/queue.Consume` 原来在 Actor 返回后继续用 handler context 更新信封。Actor 内发生取消时，即使业务终态已经保存，`MarkConsumed`、`ReleaseForRetry` 或 `MarkFailed` 仍会因 context canceled 留下 SENT 和消费租约。取消回归在修复前四种返回路径均失败。
+
+当前 Actor 仍接收原执行上下文；返回后，信封使用保留 context values、独立限时 5 秒的上下文完成收尾，写入仍校验原 lease token。重排队和失败收尾的数据库错误向调用方返回。该修改不延长 provider 执行时间，也不把无法证明的供应商结果转成成功或可自动重试。
+
+真实 PostgreSQL 回归覆盖正常完成、Busy、Later、失败及各自租约已被替换的八种情况；ImageSession 集成回归通过实际取消 provider，确认业务与 effect 保持 unknown、不可重试，信封 consumed 且清空租约，重复消费不再调用 Actor。两处定向 race 检查通过（queue 2.941s、ImageSession 3.851s）；旧 auth 包级库的身份迁移约束失败单列，新隔离库 auth 全包通过（24.406s）并已清理。全量 Go 检查已结束，除上述旧 auth 库迁移失败外其余包通过，不能将这次全量命令记为全绿。命令与检查日志保存在 `storage-dev/queue-cancel-finalize-0909/`。集成夹具最初受旧包级库积压影响未执行到 provider，已改为任务独立数据库，保留原失败日志。
+
+此结果覆盖 Actor 能返回时的取消收尾；进程被强制终止无法执行收尾，仍受原恢复扫描及闲置阈值约束，不据此宣称 90 分钟崩溃等待已经解决。

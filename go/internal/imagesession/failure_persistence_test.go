@@ -69,3 +69,48 @@ func TestConsumeDoesNotAcknowledgeFailedTaskPersistence(t *testing.T) {
 		})
 	}
 }
+
+func TestConsumeCancellationKeepsUnknownAndReleasesEnvelope(t *testing.T) {
+	pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_cancel_finalize_%d", time.Now().UnixNano()))
+	ss := newSessionServerWithDatabase(t, pool, db)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{"prompt": "取消后的信封收尾", "size": "1024x1024"})
+	ctx := context.Background()
+	var dispatch queue.Dispatch
+	if err := ss.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		dispatch, err = queue.StageForActor(ctx, tx, queue.ActorImageSession, taskID, 0)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.RunDispatcherOnce(ctx, ss.pool, func(string, string) error { return nil }, 100); err != nil {
+		t.Fatal(err)
+	}
+	actorCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	executor := Executor{DB: ss.db, Media: ss.media, Provider: contextCancelProvider{cancel: cancel}}
+	if err := queue.Consume(actorCtx, ss.pool, dispatch.ID, taskID, map[string]queue.ActorFunc{queue.ActorImageSession: executor.Execute}); err != nil {
+		t.Fatal(err)
+	}
+	task := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)
+	if task.Status != "unknown" || task.IsRetryable || len(task.ProviderEffects) != 1 || task.ProviderEffects[0].EffectResult != "unknown" {
+		t.Fatalf("uncertain provider result changed: %+v", task)
+	}
+	var envelope schema.AsyncDispatches
+	if err := ss.db.Where("id = ?", dispatch.ID).Take(&envelope).Error; err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Status != queue.StatusConsumed || envelope.LeaseToken != nil || envelope.LeaseExpiresAt != nil || envelope.ConsumedAt == nil {
+		t.Fatalf("envelope not finalized: %+v", envelope)
+	}
+	// 重复信封不得再次调用结果不明的供应商。
+	called := false
+	if err := queue.Consume(ctx, ss.pool, dispatch.ID, taskID, map[string]queue.ActorFunc{
+		queue.ActorImageSession: func(context.Context, string) error { called = true; return nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("consumed unknown result was replayed")
+	}
+}

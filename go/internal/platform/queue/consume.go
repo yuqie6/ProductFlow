@@ -132,7 +132,7 @@ func MarkFailed(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID
 // Consume 是 worker 入口：claim 消费 lease，调 Actor，成功则 CONSUMED。
 // 找不到行、身份/状态不对、抢不到 lease 都当空操作返回 nil。
 // 未知 actor 会 MarkFailed 并返回 nil，不把错误交给 asynq。
-// [ErrBusy]/[ErrLater] 释放 lease 回到 PENDING，不向 asynq 报失败。
+// [ErrBusy]/[ErrLater] 释放 lease 回到 PENDING；收尾写库失败仍向 asynq 返回错误。
 // 其他 error 先 MarkFailed 再返回给 asynq；worker MaxRetry=0，broker 不会重试。
 // 一次处理一条信封，没有 batch size；用 handler 耗时直方图。不 enqueue——PENDING→SENT 只发生在 dispatcher。
 func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID string, actors map[string]ActorFunc) error {
@@ -169,7 +169,12 @@ func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID st
 		result = "unknown"
 		return nil
 	}
-	if err := fn(ctx, aggregateID); err != nil {
+	actorErr := fn(ctx, aggregateID)
+	// Actor 仍使用可取消的执行上下文；返回后只给信封收尾独立的有限写库时间。
+	// 所有更新继续校验 lease token，取消不能赋予旧 worker 新的执行权。
+	finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelFinalize()
+	if err := actorErr; err != nil {
 		if errors.Is(err, ErrBusy) || errors.Is(err, ErrLater) {
 			delay := time.Duration(DefaultBusyRetrySeconds) * time.Second
 			if errors.Is(err, ErrLater) {
@@ -178,14 +183,14 @@ func Consume(ctx context.Context, pool *pgxpool.Pool, dispatchID, aggregateID st
 			} else {
 				result = "busy"
 			}
-			_, _ = ReleaseForRetry(ctx, pool, dispatchID, aggregateID, token, delay)
-			return nil
+			_, finalizeErr := ReleaseForRetry(finalizeCtx, pool, dispatchID, aggregateID, token, delay)
+			return finalizeErr
 		}
-		_, _ = MarkFailed(ctx, pool, dispatchID, aggregateID, token, err.Error(), DefaultMaxAttempts, DefaultBackoffSeconds)
+		_, finalizeErr := MarkFailed(finalizeCtx, pool, dispatchID, aggregateID, token, err.Error(), DefaultMaxAttempts, DefaultBackoffSeconds)
 		result = "failed"
-		return err
+		return errors.Join(err, finalizeErr)
 	}
-	_, err = MarkConsumed(ctx, pool, dispatchID, aggregateID, token)
+	_, err = MarkConsumed(finalizeCtx, pool, dispatchID, aggregateID, token)
 	if err != nil {
 		return err
 	}
