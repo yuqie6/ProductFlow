@@ -79,4 +79,4 @@ L1 图工具执行、拒绝及后续读取由同一真实 Go 合同决定。合�
 - 基线 commit / run_id / artifact：实现对照 `61426ed6`。Catalog/intake 卖点文案随已提交 `61426ed6` 提示词刷新两处 description，使 `TestEvalObservationFixtures` 与当前 Catalog 一致。旧三批不回填。
 - 交付定位：随本任务提交（用 `git log --follow -- docs/audits/tasks/archive/eval-graph-observation-authority.md` 查询）。
 - 审核者 / 结论：主代理-graph-obs-0906-1740 自审通过。L1 graph overlay（`PRODUCTFLOW_EVAL_HOST_LAYER=l1`）绑定 apply/propose/discard/context/node；`apperr` 保留原 HTTP 状态，基础设施为 500 `eval_host`。绑定宿主后跳过本地 revision 预校验，409 注入不伪造涨版本。Go 覆盖解散、错误路径 `design_goal`、退役 `design_goals` / `generation_spec.text_policy`、合法嵌套写入、多步 apply 拒绝、删除连带边、propose 拒绝无部分效果。Node GOPG 覆盖解散、非法/合法 config、409 后按 Go revision 重试、propose 退役字段 409。
-- Issue 结果 / 业务门槛结果 / 剩余缺口：实现完成。D-02 改为 `部分完成`：catalog/intake 仍用 fixtures；付费 L1 与 Skill A/B 仍由协调者冻结新身份后执行。L1 graph-editing 现依赖隔离 testdb 与 `DATABASE_URL`，资源合同已写入 ARCHITECTURE 与 [开发基线](../eval-development-baseline.md)。eval-skills 仍阻塞。
+- Issue 结果 / 业务门槛结果 / 剩余缺口：实现完成。D-02 改为 `部分完成`：catalog/intake 仍用 fixtures；付费 L1 与 Skill A/B 仍由协调者冻结新身份后执行。L1 graph-editing 现依赖隔离 testdb 与 `DATABASE_URL`，资源合同已写入 ARCHITECTURE 与 [开发基线](eval-development-baseline.md)。eval-skills 仍阻塞。

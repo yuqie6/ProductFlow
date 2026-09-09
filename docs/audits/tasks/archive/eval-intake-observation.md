@@ -12,7 +12,7 @@
 
 ## 问题来源与结果
 
-[开发基线](../eval-development-baseline.md) 第四批117/225后因finalize_product_intake_v1选择无法匹配预录Go观察停止。模型输入必须走真实Go语义得到可核对的成功或拒绝观察，不靠穷举参考答案或TypeScript仿造后端扩图。不改变题意/评分/Skill或旧结果。
+[开发基线](eval-development-baseline.md) 第四批117/225后因finalize_product_intake_v1选择无法匹配预录Go观察停止。模型输入必须走真实Go语义得到可核对的成功或拒绝观察，不靠穷举参考答案或TypeScript仿造后端扩图。不改变题意/评分/Skill或旧结果。
 
 ## 前置与并行
 

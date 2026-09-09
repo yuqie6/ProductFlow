@@ -46,6 +46,6 @@
 - `pnpm exec vitest run evals/collections.test.ts evals/live-observability.test.ts evals/stub-world.test.ts evals/report.test.ts`：44 passed。
 - `pnpm exec vitest run evals`：115 passed / 5 skipped；跳过项为 opt-in live，测试中的 fixture fail 输出是预期的诊断路径，测试断言全部通过。
 - `pnpm exec tsc --noEmit -p tsconfig.json`、`just agent-service-check-contracts` 通过；`just docs-check` 与完整 diff 自审随归档执行。
-- 原始依据：`8cf6e08a` / `20260905T131829Z-35b08c45`，产物根 `storage-dev/eval-development-20260905-r3`，59/225 条中 2 条含 unknown，原始证据不改写。停止批次的详细身份和成本缺口由 [开发基线](../eval-development-baseline.md) 持有。
+- 原始依据：`8cf6e08a` / `20260905T131829Z-35b08c45`，产物根 `storage-dev/eval-development-20260905-r3`，59/225 条中 2 条含 unknown，原始证据不改写。停止批次的详细身份和成本缺口由 [开发基线](eval-development-baseline.md) 持有。
 - 交付定位：随本任务提交。审核者：主代理-eval-quality-0905-2125，自审；边界修复与确定性证据满足本单合同。
 - 剩余缺口：结构操作 Go 观察仍不完整，未复采付费全量 L1、未交付有效开发包，不能据此启动依赖该包的自进化实验。Go 节点合同仍由另一任务持有，等待稳定后独立补齐观察；本单不复制生产执行语义。

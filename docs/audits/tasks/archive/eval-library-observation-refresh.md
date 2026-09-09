@@ -73,4 +73,4 @@
 - 冻结：83 tasks、75 L1、11 worlds、13 fixtures，共 107 JSON；observability_blocker 为 0。完整 taskSetHash：`1283d72edd0ed6a9ffb7dcd36f63c7652e14ea8eb3a8e1fc1c7e97c57041a258`；L1：`0adae988aa519bc2ab6c0ae256150d0da9b071dc0c30dba887d5a04c01145907`。
 - tasks/worlds/fixtures 的 JSON 按相对 evals 路径默认字典序排序，逐个输入 `path + NUL + rawBytes + NUL` 的聚合 SHA256：`974c857bb041d23d9065ed912781c8294a4938fc203c8b9de190a9ce5ad81bc7`。独立审核从原始 JSON 补 split、递归排序对象键并与 loader hash 交叉核对，上述身份一致。
 
-输入阻塞已解除，[开发基线](../eval-development-baseline.md) 开放待认领，仍须冻结用途清单、运行完整 k=3 并导出有效开发包。旧 A 与历史诊断分数没有补发资格；eval-skills 保留 owner，等待协调者安排新共同版本和窗口。当前没有自进化控制器交付，不宣称自进化已经开始运行。
+输入阻塞已解除，[开发基线](eval-development-baseline.md) 开放待认领，仍须冻结用途清单、运行完整 k=3 并导出有效开发包。旧 A 与历史诊断分数没有补发资格；eval-skills 保留 owner，等待协调者安排新共同版本和窗口。当前没有自进化控制器交付，不宣称自进化已经开始运行。

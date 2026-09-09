@@ -1,6 +1,6 @@
 # 任务：批准开发集合并采集可供 Miner 消费的冻结 L1 批次
 
-状态：认领
+状态：完成
 类型：证据
 认领者：capacity_baseline
 认领于：2026-09-09T00:50:10+08:00
@@ -8,13 +8,13 @@
 父账本：agent-self-harness.md
 完成后可拆：自进化组协调者按父章程发布固定实验与自动验证切片；不直接发布整个进化系统
 
-遵循 [Issue 协议](README.md)。前置解除并获确认认领后才开展任务调查或采证。
+遵循 [Issue 协议](../README.md)。前置解除并获确认认领后才开展任务调查或采证。
 
 2026-09-05 组织协调：本单是自进化组的一次性启动输入交付，承接原 P3 所需开发材料；数据用途审核由协调者完成，不能变成未来每轮人工选题或审簇。现有缺题目校正的阻塞不因改组消失。
 
 ## 问题来源
 
-[集合隔离机制](archive/eval-collection-isolation.md) 已在 `2ab85674` 交付，旧 run 没有其冻结身份，不能回填后冒充隔离采证。[eval-contract-alignment](archive/eval-contract-alignment.md) 曾冻结 L1 `task_hash=406dc178b7908384db08a836038c7b8809f0c05b0821b76d8345bd8a9a8db7fb`，后续仍发现输入缺口。自进化组须消费有效校正版本、登记场景分组并采集带身份的新开发批次，不能将旧题集误判直接归因为行为机制。
+[集合隔离机制](eval-collection-isolation.md) 已在 `2ab85674` 交付，旧 run 没有其冻结身份，不能回填后冒充隔离采证。[eval-contract-alignment](eval-contract-alignment.md) 曾冻结 L1 `task_hash=406dc178b7908384db08a836038c7b8809f0c05b0821b76d8345bd8a9a8db7fb`，后续仍发现输入缺口。自进化组须消费有效校正版本、登记场景分组并采集带身份的新开发批次，不能将旧题集误判直接归因为行为机制。
 
 ## 做成什么样
 
@@ -22,7 +22,7 @@
 
 ## 前置与并行
 
-- [独立观察刷新](archive/eval-library-observation-refresh.md) 已独立审核并提交，沿用其最新 task/world/fixture 身份；早期 [eval-contract-alignment](archive/eval-contract-alignment.md) 仅作历史依据。生产 Skill/runtime/harness 不随本单采证改变。
+- [独立观察刷新](eval-library-observation-refresh.md) 已独立审核并提交，沿用其最新 task/world/fixture 身份；早期 [eval-contract-alignment](eval-contract-alignment.md) 仅作历史依据。生产 Skill/runtime/harness 不随本单采证改变。
 - 本组协调者审核清单：当前公开题与已读轨迹按 exposed development 处理，同源 scene/source/origin 不跨用途。隐藏与独立验收材料未就绪时记录空集与缺口，不另贴标签宣称独立。
 - 真实 provider 凭据可用；固定候选代码 checkout、任务/world、Skill、壳、provider/model、推理参数、并发/预算与完整 trial 分母。协议已声明 dirty 工作树不能承担同 commit 比较时，使用独立固定 checkout，协调认领留在共享工作树。
 - 运行使用独立 `STORAGE_ROOT`，不得修改共享 provider 设置、DB、worker 或图片池/浏览器资源。记录预期 task/trial 数后再开跑，不事后降分母。
@@ -43,21 +43,21 @@
 
 ## 阻塞与交接
 
-- 当前实现依赖：[图观察权威](archive/eval-graph-observation-authority.md) 已交付。L1 graph-editing 的 apply/propose/discard 与写后读取走隔离 testdb 的 Go 宿主；catalog/intake 仍用 fixtures。付费 L1 需独立 `DATABASE_URL`（testdb 包建隔离库）与 `STORAGE_ROOT`，启动前通过 `TestEvalObservationFixtures`。协调者确认资源窗口并重新冻结集合前，不启动第四次付费全量采样。
+- 当前实现依赖：[图观察权威](eval-graph-observation-authority.md) 已交付。L1 graph-editing 的 apply/propose/discard 与写后读取走隔离 testdb 的 Go 宿主；catalog/intake 仍用 fixtures。付费 L1 需独立 `DATABASE_URL`（testdb 包建隔离库）与 `STORAGE_ROOT`，启动前通过 `TestEvalObservationFixtures`。协调者确认资源窗口并重新冻结集合前，不启动第四次付费全量采样。
 
-- 2026-09-05T21:25:56+08:00：第三批因结构 apply 缺失 Go 观察返回 `eval_unobservable` 而停止，CLI 及父进程已结束。协调者接管本文件未提交证据并释放执行占用；[不可测消费边界](archive/eval-unobservable-trial-boundary.md) 独立处理 trial 身份和开发导出。结构观察缺口仍需等待 Go 节点合同稳定后补齐。完整开发基线仍未完成，不导出第三批，不修改冻结产物。
+- 2026-09-05T21:25:56+08:00：第三批因结构 apply 缺失 Go 观察返回 `eval_unobservable` 而停止，CLI 及父进程已结束。协调者接管本文件未提交证据并释放执行占用；[不可测消费边界](eval-unobservable-trial-boundary.md) 独立处理 trial 身份和开发导出。结构观察缺口仍需等待 Go 节点合同稳定后补齐。完整开发基线仍未完成，不导出第三批，不修改冻结产物。
 
 - 当前：读取义务校正 `8cf6e08a` 及恢复测试 `32745610` 已完成，协调者检查占用后确认重新认领。第三批固定 `8cf6e08a50f62515a77d11e9037eff2068463358`，独立 checkout `/tmp/productflow-eval-development-20260905-r3`，产物根 `storage-dev/eval-development-20260905-r3`。83 道公开 development 题中 L1 75×3，旧两批不纳入；不修改共享 provider/DB/worker 或图编辑任务文件。
 
 - 2026-09-05T20:34:29+08:00：协调者确认第二批进程已结束，接管本文件及看板的未提交证据记录，释放执行占用以完成读取义务校正。旧两批产物与记录全部保留，不随修复单冒充基线交付。
 
-- 原因：删节点题意已修复；第二批发现 [澄清前无用必需读取](archive/eval-clarification-read-obligations.md) 将三个安全提问判失败，按合同再次停止。
+- 原因：删节点题意已修复；第二批发现 [澄清前无用必需读取](eval-clarification-read-obligations.md) 将三个安全提问判失败，按合同再次停止。
 - 解除条件：上述读取义务校正及同类离线复查完成并提交，再按新身份完整采证。
 - 跟进者：主代理-eval-quality-0905-1934。
 - 交接：本批进程已结束、原始产物保留，未改被测代码。2026-09-05T20:05:00+08:00 协调者接管本任务及看板的未提交证据记录，释放执行占用以先完成题意校正；记录不得删除或夹带为修复任务交付。
 
-- 输入阻塞已解除：[可见输入合同](archive/eval-observable-input-contract.md)、[生产素材读取合同](archive/agent-library-read-contract.md) 与 [独立观察刷新](archive/eval-library-observation-refresh.md) 已交付，12 条素材阻塞经独立审核移除。最新全量 taskSetHash 为 `1283d72edd0ed6a9ffb7dcd36f63c7652e14ea8eb3a8e1fc1c7e97c57041a258`；以观察归档的交付提交冻结执行代码，不使用旧合同 hash。
-- 本单已批准公开开发清单并启动 k=3，发现 [批量删节点题意歧义](archive/eval-graph-clear-intent.md) 后按合同停止。修复交付后重新冻结并完整采证；不得续接旧批次或回填 collection。`measurementEligible=false` 的诊断分数不得用于候选选择；`skill-ab-20260905` 的公开诊断批次不替代本单有效开发包。
+- 输入阻塞已解除：[可见输入合同](eval-observable-input-contract.md)、[生产素材读取合同](agent-library-read-contract.md) 与 [独立观察刷新](eval-library-observation-refresh.md) 已交付，12 条素材阻塞经独立审核移除。最新全量 taskSetHash 为 `1283d72edd0ed6a9ffb7dcd36f63c7652e14ea8eb3a8e1fc1c7e97c57041a258`；以观察归档的交付提交冻结执行代码，不使用旧合同 hash。
+- 本单已批准公开开发清单并启动 k=3，发现 [批量删节点题意歧义](eval-graph-clear-intent.md) 后按合同停止。修复交付后重新冻结并完整采证；不得续接旧批次或回填 collection。`measurementEligible=false` 的诊断分数不得用于候选选择；`skill-ab-20260905` 的公开诊断批次不替代本单有效开发包。
 - 跟进者：自进化组协调者消费 Agent 质量组已交付的固定校正版本；输入就绪后本组自行采证。
 - 认领复核：当前源码干净，图片池保留其浏览器/provider 设置占用，eval-skills 仍阻塞且无新 A/B；本单使用独立固定 checkout 与 STORAGE_ROOT，不修改共享设置或占用 PG/worker。独占本单文档及开发批次，不预研 Miner、不重用旧转录伪造完成证据。
 
@@ -104,7 +104,7 @@
 
 ## 第四批暂停证据
 
-固定a12e10ee与全部输入/Skill/harness/lock前后未变；run `20260907T215536Z-e24d4e7f` 完成39/75任务、117/225 trial，其中7个unobservable。`finalize_product_intake_v1` 对真实模型选择返回 `eval_unobservable: no Go observation fixture for this intake selection`，按合同停止。96条passed、21条failed仅为诊断计数，measurementEligible=false，未输出summary/history/latest或development包。原始117份转录与assessment保留于 `storage-dev/eval-development-0908-r4/agent-evals/`；主代理核对报告与子代理清理结果，宿主进程与pf_eval_development_0908前缀DB已释放。等待 [创建确认观察修复](archive/eval-intake-observation.md)；不得续接本run或把117作为新分母。
+固定a12e10ee与全部输入/Skill/harness/lock前后未变；run `20260907T215536Z-e24d4e7f` 完成39/75任务、117/225 trial，其中7个unobservable。`finalize_product_intake_v1` 对真实模型选择返回 `eval_unobservable: no Go observation fixture for this intake selection`，按合同停止。96条passed、21条failed仅为诊断计数，measurementEligible=false，未输出summary/history/latest或development包。原始117份转录与assessment保留于 `storage-dev/eval-development-0908-r4/agent-evals/`；主代理核对报告与子代理清理结果，宿主进程与pf_eval_development_0908前缀DB已释放。等待 [创建确认观察修复](eval-intake-observation.md)；不得续接本run或把117作为新分母。
 
 ## 第五次固定开发窗口
 
@@ -116,7 +116,7 @@
 
 run `20260908T003528Z-e48b5db4` 固定 326bf59a，记录 133/225 trial、45/75 题；111 passed / 22 failed 仅为诊断计数，其中 product-intake-negative-delete-images 的 trial 2/3 调用 propose_graph_change_set_v1 后无真实观察，2 条 unobservable，measurementEligible=false。按合同 SIGINT 停止（130），不续接或降分母，无 summary/development 导出。原始轨迹、stop 与清理记录保留于 `storage-dev/eval-development-0908-r5/agent-evals/evidence/`；新建五库已清理，与启动前清单一致，历史三库未动。执行者报告固定 checkout 干净；协调者已读取停止后指纹报告，all_match=true，固定提交、输入/Skill/harness/lock及133条原始记录均未变。
 
-[创建场景跨工具观察](archive/eval-intake-graph-observation.md) 承担新缺口；其检查需覆盖创建场景可调用的写工具，不再只按上一条成功路径补宿主。题目、评分、Skill 与原始五批保持冻结。完整开发包仍未交付。
+[创建场景跨工具观察](eval-intake-graph-observation.md) 承担新缺口；其检查需覆盖创建场景可调用的写工具，不再只按上一条成功路径补宿主。题目、评分、Skill 与原始五批保持冻结。完整开发包仍未交付。
 
 创建场景跨工具观察与多工作流种子已通过最终确定性回归；本单仍待新提交冻结与资源复核后恢复采证，旧五批不能用于完整开发包。
 
@@ -132,7 +132,7 @@ run `20260908T003528Z-e48b5db4` 固定 326bf59a，记录 133/225 trial、45/75 �
 
 root已读取 `storage-dev/eval-development-0908-r6/agent-evals/evidence/after-stop-identity-check.json`，same_identity=true，commit/题集/输入/Skill/harness/lock均未变。原始174条与转录保留；driver/CLI具体PID复查已终止，process-after-cleanup.txt记录无自有进程，前后独立DB前缀清单为空。post-stop-checks.txt早先owned_processes=1不单独作为最终进程证据。执行者交回材料后释放占用。
 
-[按作用域统一工具观察](archive/eval-scope-tool-observation.md)承担同类缺口，须在下一整批前覆盖所有实际暴露工具及冻结注入合同，不再逐Skill付费试跑发现接线缺失。跟进者root；该前置未验收前保持阻塞，不启动r7。
+[按作用域统一工具观察](eval-scope-tool-observation.md)承担同类缺口，须在下一整批前覆盖所有实际暴露工具及冻结注入合同，不再逐Skill付费试跑发现接线缺失。跟进者root；该前置未验收前保持阻塞，不启动r7。
 
 统一观察已完成确定性前置验收：75输入物化/最终读取无基础设施缺口，root真实PG与runner25项回归以及未finalize新增回归通过。下一批仍须冻结最终提交、独立资源、模型与完整225分母后再恢复认领；旧六批不续接或合并。当前阻塞只剩新采证窗口冻结与资源复核。
 
@@ -149,7 +149,7 @@ r7低负载准备已完成，root复核checkout干净且HEAD为9f3d25e7。集合
 
 ## 第七批停止与持久化操作评分前置
 
-r7固定9f3d25e7，run 20260908T125629Z-d80c35af，18/225 trial、6/75题后按合同停止。Go fixture前置和go-world 24项通过，但持久化评分缺discard分支，apply分支仅支持首节点rename/update，合法删除/断边/移动被错误计为意外变更。18份原始轨迹及stop-summary保留，无summary/development导出；专用Go host和pf_eval_r7库已清理。不能把所有persisted mismatch都提升为unknown，需分清业务不满足与观察器不支持。[持久化操作观察](archive/eval-persisted-operation-observation.md)修复完整操作语义并完成无模型正反覆盖前，禁止启动r8。旧七批不续接、不合并分母。
+r7固定9f3d25e7，run 20260908T125629Z-d80c35af，18/225 trial、6/75题后按合同停止。Go fixture前置和go-world 24项通过，但持久化评分缺discard分支，apply分支仅支持首节点rename/update，合法删除/断边/移动被错误计为意外变更。18份原始轨迹及stop-summary保留，无summary/development导出；专用Go host和pf_eval_r7库已清理。不能把所有persisted mismatch都提升为unknown，需分清业务不满足与观察器不支持。[持久化操作观察](eval-persisted-operation-observation.md)修复完整操作语义并完成无模型正反覆盖前，禁止启动r8。旧七批不续接、不合并分母。
 
 持久化观察与共用 global seed 修复已验收，见上述归档任务；原题/world/Expect 未改，当前观察 fixture 增加原题指定图的元数据。r8 尚未启动，须固定新交付版本与观察身份，并等待 e190 容量正式计时结束，不能复用 r7 批次。
 
@@ -173,7 +173,7 @@ root 已确认 runtime wire 的 document_action 空值语义，准许 capacity_b
 
 空 action 观察修复已完成 root 自审：仅两个 run 工具实际 null 归一化为空串，其它比较不变；13 项 grader 回归、TypeScript 检查及生成契约检查通过。离线 v2 直接导入固定 f9 旧 grader 和当前 grader，对同一 225 条持久化调用执行，write 失败 54→20，34 条差异均为该空值边界；原 161/225 不覆盖，不外推新能力通过率。v2 报告 `storage-dev/eval-development-0909-r8/agent-evals/evidence/r8-offline-grader-diagnostic-v2.json` 绑定 raw tree hash 50a8fd58d7534ecc432ff23d9d5309dc24468c7d5186e0cc2879c277c4c1177f 与两版 grader hash。哨兵模拟 v1 只保留作历史，不作为审核依据。
 
-本次提交冻结必要的观察器修复；本单仍未取得正式完整开发包，不立即开启下一批模型采样。归档选择故障已定位为评测把页面管理选择误装成附件，已由[输入装配修复](archive/agent-archived-asset-selection.md)处理，生产权限不放宽。后续固定运行须在启动前核对真实 Git provenance 和完整初始化合同。
+本次提交冻结必要的观察器修复；本单仍未取得正式完整开发包，不立即开启下一批模型采样。归档选择故障已定位为评测把页面管理选择误装成附件，已由[输入装配修复](agent-archived-asset-selection.md)处理，生产权限不放宽。后续固定运行须在启动前核对真实 Git provenance 和完整初始化合同。
 
 ## 待处理提案 fixture 缺口
 
@@ -196,3 +196,26 @@ capacity_baseline 继续持有本单，获准在 evalworld_test.go 与必要的�
 上述 metadata/intake 修复已在当前开发树完成主代理审核：product graph 在 pending/failed/recent seed 前对齐 title/revision，global 商品写入既有 world.Intake，context 在 metadata 对齐后读取。真实 PG 的 observation fixtures、pending scoped identity、四类 world、failed/running/global run 与 listed runs 回归通过（6.432s）；证据 storage-dev/eval-development-0909-current/evidence/seed-metadata-regression.md。既有 ProposalIDs 和 pending seed 保留，专用测试数据库已清理。本轮未执行 Node 跨语言整包或模型采样。
 
 执行者曾误在固定 f9 checkout 修改并测试同一文件，主代理已要求导出其独占 patch 留痕后仅恢复该文件；固定 f9 当前重新干净，原 225 未改。错误位置的测试不作为当前树证据，上述 6.432s 是在 /home/cot/ProductFlow 的适配代码重新执行所得。此修复提交不代表正式 development 基线验收。
+
+## r9 预检与 WSL 重启后恢复
+
+2026-09-09 root 确认 capacity_baseline 继续原认领。固定 checkout `/tmp/productflow-eval-development-0909-r9` 为干净 `94cb97439e6ce5a89bab06cc088c83230d27605d`；产物根 `storage-dev/eval-development-0909-r9`。公开 development 83 题、L1 75×3，其他用途为空。既有 Go seed 前置 37.456s、Node 321 passed / 32 skipped；源码未变时复用，不能视为真实模型采样结果。
+
+原 `agent-evals/evidence/before.json` 的 key_present=false、base URL 为空，root 判定实际调用配置尚未就绪，未释放付费采样窗口。执行者须保留原记录，核对已授权本地配置来源，另存实际运行配置身份和可执行命令；密钥不输出、不提交。不因 WSL 重启续接或合并历史试验。
+
+重启后 root 复核固定 checkout 仍存在且干净，PostgreSQL/Redis 容器健康，无产品 API/worker/dispatcher/Vite 进程。capacity_baseline 已重新收到任务；仅占用 r9 产物与已有专用数据库前缀，不启动共享应用栈或付费模型。其它 Agent 当前无未完成实现分配，不恢复无任务的并行执行。实际配置前置完成后交 root 审核，原题目、grader、Skill 和生产实现保持冻结。
+
+root 审核 WSL 恢复后的 runtime-ready 身份：固定代码/集合未变，实际 key 存在、base URL hash 已记录，推理覆盖显式清空。用户批准继续执行后，现释放 r9 一次完整 225 trial 模型窗口：固定 94cb9743、75×3、并发 3、12 轮、180 秒，不重采至通过；发生观察合同错误按既有协议停止并保留诊断。独立 pf_eval_r9 数据库与 r9 产物，禁止改动共享源码和设置。完成后导出 development 材料并复查起止 hash、分母、unknown 与资源清理，交 root 审核。本地队列设计与低负载确定性验证不承担本批模型耗时的性能比较。
+
+## r9 完整采证与主代理验收（2026-09-09）
+
+固定候选 `94cb97439e6ce5a89bab06cc088c83230d27605d`，run `20260909T031743Z-1af1fab5`。用途清单为公开 development 83 题，其中 L1 75 题 × 3 次，共 225 条；regression/acceptance 用途集合均为空。本批没有使用隐藏验收材料。模型 `openai/gpt-5.6-luna`，推理参数未显式设置，不能写为 max。
+
+- 原始记录 225、开发导出 225，199 passed、26 failed；unknown、unobservable 和 usage unavailable 均为 0，`measurementEligible=true`。总 tokens 9,222,009；4,333,867 ms 是 trial 用时之和，不是并发运行墙钟时长。
+- 公开 development 中的 regression suite（29 题）pass^1=0.862069、pass^3=0.724138，低于 0.95/0.90，质量门 FAIL；它不等于隐藏 regression 用途集合。全部题 pass^1=0.884444、pass^3=0.786667。不因失败而重采或缩分母。
+- 主代理独立重算三份 SHA-256、225 个唯一 task/trial、75 题各 3 次、通过数、tokens 和用时；逐条核对导出 record 与原记录相等，转录文件齐全，起止代码/输入/Skill/harness 身份一致、工作树干净。
+- 原始 trial SHA-256 `ecd752ac231546a895b40d49316e8a538495d60f97d30ab5fd20c630ba047def`；导出 SHA-256 `31299340f58f87e96a5d1377daf8f86bc4114849eb90e0ea7046eea8798e8ba3`。
+- 产物根 `storage-dev/eval-development-0909-r9/agent-evals/`；完整身份与运行记录在 `evidence/run-integrity.json`、`evidence/run-window-before.json`、`evidence/live-run.log`。WSL 重启后的实际配置记录在 `evidence/runtime-ready-after-wsl.json`，保留早期未加载凭据的 preflight，不混为实际运行配置。
+- `run-live` exit 1 对应真实任务失败；`export-development` exit 0。执行者已清理专用宿主/数据库，保留全部失败轨迹。主代理未重新调用模型。
+
+审核者 root（独立审核 capacity_baseline 交付）：有效开发采证完成；启动输入阻塞解除。未签收模型质量、自动诊断、自进化控制器或隐藏验收。旧 r1–r8 身份和结论不改写。交付定位随本任务提交；文档链接与看板一致性由 `just docs-check` 验证。

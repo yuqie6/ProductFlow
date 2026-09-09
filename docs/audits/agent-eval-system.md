@@ -30,8 +30,8 @@
 |---|---|---|
 | JSON 题集、L0 回归、生产 Pi runner、分层 grader、落盘与 report 已实现 | 静态覆盖只证明登记；题意、可见事实和执行反馈仍需验证 | `evals/contract.test.ts`、`loader.ts`、`live-runner.ts`、`report.ts` |
 | 可见输入、素材读取及观察、删节点题意、澄清读取义务已分别修复 | 历次校正改变测量输入，旧分数不可拼接或跨题集归因 | [可见输入](tasks/archive/eval-observable-input-contract.md)、[素材读取](tasks/archive/agent-library-read-contract.md)、[观察刷新](tasks/archive/eval-library-observation-refresh.md)、[删节点题意](tasks/archive/eval-graph-clear-intent.md)、[澄清义务](tasks/archive/eval-clarification-read-obligations.md) |
-| `report.ts:isUnobservableTrial` 与开发导出已阻断 unknown/unobservable 消费 | 图写入与 L1 intake 已由隔离 Go 宿主执行；catalog 保留 Go 生成快照。尚无按完整 intake 跨工具观察采的有效付费 L1 | [不可测边界](tasks/archive/eval-unobservable-trial-boundary.md)、[图观察权威](tasks/archive/eval-graph-observation-authority.md)、[intake 观察](tasks/archive/eval-intake-observation.md) |
-| 五批开发采证均留下原始记录 | 分别在54/225、90/225、59/225、117/225、133/225后停止；第五批两次跨工具提案不可测，没有有效完整开发包。创建场景跨工具真实反馈回归已补，完整重采仍由开发基线持有 | [开发基线](tasks/eval-development-baseline.md)，最新 run `20260908T003528Z-e48b5db4` |
+| `report.ts:isUnobservableTrial` 与开发导出已阻断 unknown/unobservable 消费 | 图写入与 L1 intake 已由隔离 Go 宿主执行；catalog 保留 Go 生成快照。r9 已形成完整可测的付费开发 L1，测量有效不表示能力门通过 | [不可测边界](tasks/archive/eval-unobservable-trial-boundary.md)、[图观察权威](tasks/archive/eval-graph-observation-authority.md)、[intake 观察](tasks/archive/eval-intake-observation.md) |
+| r9 完整有效开发采证已交付；旧批次原样保留 | 225 条记录与导出身份一致，199 通过、26 失败、0 不可测；公开 development 中 regression suite 仍未通过质量门，隐藏回归/验收用途为空 | [开发基线](tasks/archive/eval-development-baseline.md)，run `20260909T031743Z-1af1fab5` |
 | 人工 Skill 候选与旧 A 诊断批次已登记 | 新合同下 A/B、两次候选复跑与有效变异杀伤未完成；不能报告人工优化收益 | [eval-skills](tasks/eval-skills.md) |
 | L2/L3/L5 入口及观察回归存在 | 旧 L2 28/54 缺完整身份且含非终态；旧 L3 2/5、L5 ASR=0 受测量失真影响，只留作历史诊断 | [L2 采证](tasks/eval-state-live.md)、[可见输入校正](tasks/archive/eval-observable-input-contract.md) |
 | L4 标注与校准工具、L6 mine/export 已实现 | 标签未填、无有效 kappa；只有本地开发库 mine，缺生产样本与连续三晚报告 | [标签](tasks/eval-labels.md)、[生产回流](tasks/eval-production-mine.md) |
@@ -43,7 +43,7 @@
 
 1. **固定真实业务合同。** 节点合同与 Catalog/intake 快照已归档交付；继续按实际产品行为检查题意、三种表述、可见事实与预期效果。旧题或旧字段不能成为修复新实现的理由。
 2. **补足测量的真实反馈。** [图观察权威](tasks/archive/eval-graph-observation-authority.md) 已把 L1 图写入对齐隔离 Go/PG 执行、拒绝与写后读取。开发基线与 Skill 复验仍须由协调者冻结新身份后再采，不另开重复图观察实现。
-3. **建立完整可测基线。** 自进化组的 [开发基线任务](tasks/eval-development-baseline.md) 消费固定交付，完整运行并导出开发包；本组的 [人工候选任务](tasks/eval-skills.md) 按自身合同重建 A/B。可复用的证据必须同时满足双方用途和版本合同；不得以一个诊断包替代另一张任务的验收。
+3. **建立完整可测基线。** 自进化组的 [开发基线任务](tasks/archive/eval-development-baseline.md) 消费固定交付，完整运行并导出开发包；r9 已交付有效开发包，质量门仍未通过；本组的 [人工候选任务](tasks/eval-skills.md) 按自身合同重建 A/B。可复用的证据必须同时满足双方用途和版本合同；不得以一个诊断包替代另一张任务的验收。
 4. **修复有证据的行为失败。** 按影响和可复现性选择问题，在真实决策点修复，完成确定性回归、冻结候选、复跑及相应状态/安全检查。报告改善、退化、剩余失败和成本；局部修复完成不自动通过 D-03/D-08。
 5. **交付可独立消费的评测合同。** 本组维护题库、观察、grader、集合与证据语义；自进化组建设隔离调用、控制器和晋升流程，自行运行固定版本。T-08/M-06 记录所需跨组证据，不要求本组逐轮人工操作。
 

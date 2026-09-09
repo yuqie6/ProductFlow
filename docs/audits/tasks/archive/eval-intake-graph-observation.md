@@ -12,7 +12,7 @@
 
 ## 问题来源与边界
 
-第五批开发 run `20260908T003528Z-e48b5db4` 的 `product-intake-negative-delete-images` 两次真实调用 propose_graph_change_set_v1 不可观察。326bf59a 已覆盖 context/node/finalize，但创建场景中跨工具调用仍落回不可测路径。详见 [开发基线](../eval-development-baseline.md)。
+第五批开发 run `20260908T003528Z-e48b5db4` 的 `product-intake-negative-delete-images` 两次真实调用 propose_graph_change_set_v1 不可观察。326bf59a 已覆盖 context/node/finalize，但创建场景中跨工具调用仍落回不可测路径。详见 [开发基线](eval-development-baseline.md)。
 
 本任务只修改五个 eval 文件：agent-service/evals/go-world.ts、go-world.test.ts，go/internal/agent/eval_user_sim_host_test.go、evalworld_test.go、eval_persisted_writes_test.go。题集、world JSON、评分规则、Skill 与生产 runtime 不变；Go 写后观察的目标身份修正属于本次修改，不能表述为评分代码完全未动。真实4xx/409/成功/未知各自保留，不人工编造拒绝，不启动新付费225批次。
 

@@ -29,7 +29,6 @@
 |---|---|---|---|---|---|
 | [saas-multimerchant-capacity-baseline.md](saas-multimerchant-capacity-baseline.md) | 平台可靠性 | 证据 | 认领 | root | 2026-09-09T01:44:07+08:00 |
 | [image-quality-subject-preserve-live-smoke.md](image-quality-subject-preserve-live-smoke.md) | 图片质量 | 证据 | 认领 | sub-iq/image-quality-subject-preserve-live-smoke | 2026-09-07T19:35:00+08:00 |
-| [eval-development-baseline.md](eval-development-baseline.md) | Agent 自进化 | 证据 | 认领 | capacity_baseline | 2026-09-09T00:50:10+08:00 |
 | [eval-skills.md](eval-skills.md) | Agent 质量 | 实现 | 阻塞 | — | — |
 | [eval-labels.md](eval-labels.md) | Agent 质量 | 证据 | 阻塞 | — | — |
 | [eval-state-live.md](eval-state-live.md) | Agent 质量 | 证据 | 阻塞 | — | — |

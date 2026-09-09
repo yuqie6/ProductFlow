@@ -101,7 +101,7 @@
 | eval-skills | Agent 质量 | 阻塞；保留候选与冻结 A/B |
 | eval-labels / eval-state-live | Agent 质量证据 | 阻塞 |
 | eval-production-mine | Agent 质量 | 阻塞（无生产商户） |
-| eval-development-baseline | Agent 自进化启动输入 | 阻塞；见任务文件 |
+| eval-development-baseline | Agent 自进化启动输入 | 已交付有效开发包；见 [归档](tasks/archive/eval-development-baseline.md)，质量门未通过 |
 | image-eval-pool | 图片质量池 | 阻塞 |
 
 现有任务不因改组扩权或释放。原开发基线和图片采证待提交内容保持原归属，本次设计不代为验收。新任务仅发布为开放、未分配；未启动自动进化控制器实现或新的真实 provider 批次。
