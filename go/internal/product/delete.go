@@ -69,6 +69,20 @@ func (s Service) DeleteProduct(ctx context.Context, productID string) error {
 }
 
 func deleteRestrictChildren(ctx context.Context, tx *gorm.DB, productID string) error {
+	// 商品级联删除画布和图片前，解除两者之间的内部 RESTRICT 引用。
+	// 同时限定画布及图片归属，其他商品的引用继续由外键保护；失败随整笔删除回滚。
+	graphIDs := tx.Model(&schema.WorkflowGraphs{}).Select("id").Where("product_id = ?", productID)
+	assetIDs := tx.Model(&schema.ProductImageAssets{}).Select("id").Where("product_id = ?", productID)
+	if err := tx.WithContext(ctx).Model(&schema.WorkflowGraphNodes{}).
+		Where("graph_id IN (?) AND bound_image_asset_id IN (?)", graphIDs, assetIDs).
+		Update("bound_image_asset_id", nil).Error; err != nil {
+		return err
+	}
+	if err := tx.WithContext(ctx).Model(&schema.WorkflowGraphArtifacts{}).
+		Where("graph_id IN (?) AND product_image_asset_id IN (?)", graphIDs, assetIDs).
+		Update("product_image_asset_id", nil).Error; err != nil {
+		return err
+	}
 	if err := tx.WithContext(ctx).Where("product_id = ?", productID).Delete(&schema.DeliveryRenditionJobs{}).Error; err != nil {
 		return err
 	}
