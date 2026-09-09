@@ -403,3 +403,13 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 真实 PostgreSQL 回归覆盖正常完成、Busy、Later、失败及各自租约已被替换的八种情况；ImageSession 集成回归通过实际取消 provider，确认业务与 effect 保持 unknown、不可重试，信封 consumed 且清空租约，重复消费不再调用 Actor。两处定向 race 检查通过（queue 2.941s、ImageSession 3.851s）；旧 auth 包级库的身份迁移约束失败单列，新隔离库 auth 全包通过（24.406s）并已清理。全量 Go 检查已结束，除上述旧 auth 库迁移失败外其余包通过，不能将这次全量命令记为全绿。命令与检查日志保存在 `storage-dev/queue-cancel-finalize-0909/`。集成夹具最初受旧包级库积压影响未执行到 provider，已改为任务独立数据库，保留原失败日志。
 
 此结果覆盖 Actor 能返回时的取消收尾；进程被强制终止无法执行收尾，仍受原恢复扫描及闲置阈值约束，不据此宣称 90 分钟崩溃等待已经解决。
+
+## 2026-09-09 统一队列方案的机制验证
+
+设计与切换门由 [总纲第 16 节](../ROADMAP.md#16-统一后台任务队列选型与切换) 管理。当前仍运行 PG outbox/asynq 合同，未修改生产依赖、数据库或 Worker。
+
+独立 [队列探针](../../scripts/queue-evaluation/README.md) 固定 River 0.47.0、asynq 0.25.1 和 Go 1.26.5。2026-09-09 在隔离 PG 库与私有 Unix socket Redis 执行：GORM 外层事务、嵌套 savepoint 的业务行/job 共同回滚通过；共同提交后新客户端消费且可见业务行通过。实际 asynq 重试两次，合成执行器在 PG 记录 unknown 后第二次退出，模拟外部效果仅一次。
+
+原始失败是探针尚未归一化开发 DATABASE_URL 的 driver scheme，发生在建库前；修正后两项 PASS（0.656s），日志分别为 storage-dev/queue-choice-0909/probe.log 与 probe-r2.log。未调用真实供应商；不是进程崩溃、公平性、吞吐或五类生产适配证明。原始失败未覆盖，任务私有数据库和 Redis 子进程随测试清理。root 自审，不宣称独立审核或完整迁移完成。
+
+上述机制探针在仓库路径执行 race 检查通过（2.146s）。追加真实子进程 SIGKILL 验证：子 Worker 已调用独立 HTTP 假供应商但未落业务结果，杀进程后新 Worker 经 River rescue 重新领取（attempt≥2）并持久化 unknown，HTTP 请求数保持 1；PASS，21.972s，日志 storage-dev/queue-choice-0909/crash.log。阈值为测试专用 100ms job timeout、1s rescue，实际等待还包含 leader/维护周期；没有倒拨数据库时间，不将此耗时作为生产上限。相同 SIGKILL 场景 race 检查通过（21.410s，总测试耗时），日志 crash-race.log；现场复核 pf_queue_probe 数据库残留为 0，无私有 Redis 或子 Worker 进程。其它故障点、商家公平与五类业务适配仍开放。
