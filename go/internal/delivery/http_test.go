@@ -20,6 +20,7 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/config"
 	"github.com/yuqie6/productflow/internal/platform/httpx"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/product"
@@ -251,14 +252,8 @@ func TestDeliverySubmitExecuteAndRetryConflict(t *testing.T) {
 	if job.Status != "queued" {
 		t.Fatalf("status %s", job.Status)
 	}
-	var dispatchStatus string
-	if err := ds.pool.QueryRow(context.Background(), `
-		SELECT status FROM async_dispatches WHERE actor_name = 'run_delivery_rendition_job' AND aggregate_id = $1
-	`, job.ID).Scan(&dispatchStatus); err != nil {
-		t.Fatal(err)
-	}
-	if dispatchStatus != "pending" {
-		t.Fatalf("dispatch %s", dispatchStatus)
+	if got := riverTaskCount(t, ds.pool, queue.ActorDelivery, job.ID); got != 1 {
+		t.Fatalf("river jobs %d", got)
 	}
 
 	replay := ds.doJSON(t, http.MethodPost, "/api/v2/product-image-assets/"+assetID+"/renditions", map[string]any{

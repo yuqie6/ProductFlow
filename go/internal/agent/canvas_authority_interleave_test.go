@@ -316,7 +316,7 @@ func decodeAgentHTTP(resp *http.Response, dest any) error {
 func reclaimAgentGraphRun(t *testing.T, as *agentServer, runID string) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := as.pool.Exec(ctx, `DELETE FROM async_dispatches WHERE aggregate_id = $1`, runID); err != nil {
+	if _, err := as.pool.Exec(ctx, `DELETE FROM river_job WHERE args ->> 'aggregate_id' = $1`, runID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := as.pool.Exec(ctx, `

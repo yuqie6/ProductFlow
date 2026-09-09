@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/quota"
 )
@@ -35,10 +34,6 @@ func TestResultPersistenceFailurePreservesCauseWithoutProviderReplay(t *testing.
 			if _, err := restageLocalEditTask(ctx, db, taskID); err != nil {
 				t.Fatal(err)
 			}
-			var dispatchID string
-			if err := pool.QueryRow(ctx, "UPDATE async_dispatches SET status='sent',attempts=1 WHERE aggregate_id=$1 RETURNING id", taskID).Scan(&dispatchID); err != nil {
-				t.Fatal(err)
-			}
 			if _, err := pool.Exec(ctx, "ALTER TABLE product_image_assets ADD CONSTRAINT test_result_asset_failure CHECK (origin_type <> 'local_edit')"); err != nil {
 				t.Fatal(err)
 			}
@@ -48,7 +43,7 @@ func TestResultPersistenceFailurePreservesCauseWithoutProviderReplay(t *testing.
 				}
 			}
 			executor := Executor{DB: db, Media: es.media, Provider: provider}
-			err := queue.Consume(ctx, pool, dispatchID, taskID, map[string]queue.ActorFunc{queue.ActorLocalEdit: executor.Execute})
+			err := runLocalEditRiverWorker(t, ctx, pool, taskID, executor)
 			var pgErr *pgconn.PgError
 			if !errors.As(err, &pgErr) || pgErr.ConstraintName != "test_result_asset_failure" {
 				t.Fatalf("result persistence cause lost: %v", err)
@@ -56,16 +51,16 @@ func TestResultPersistenceFailurePreservesCauseWithoutProviderReplay(t *testing.
 			if terminalFailure && !strings.Contains(err.Error(), "test_result_terminal_failure") {
 				t.Fatalf("terminal failure lost: %v", err)
 			}
-			var status, dispatchStatus string
-			if err := pool.QueryRow(ctx, "SELECT t.status,d.status FROM local_image_edit_tasks t JOIN async_dispatches d ON d.aggregate_id=t.id WHERE t.id=$1", taskID).Scan(&status, &dispatchStatus); err != nil {
+			var status string
+			if err := pool.QueryRow(ctx, "SELECT status FROM local_image_edit_tasks WHERE id=$1", taskID).Scan(&status); err != nil {
 				t.Fatal(err)
 			}
 			expected := "unknown"
 			if terminalFailure {
 				expected = "running"
 			}
-			if status != expected || dispatchStatus != "pending" || provider.calls != 1 {
-				t.Fatalf("status=%s dispatch=%s calls=%d", status, dispatchStatus, provider.calls)
+			if status != expected || provider.calls != 1 {
+				t.Fatalf("status=%s calls=%d", status, provider.calls)
 			}
 			if terminalFailure {
 				if _, err := pool.Exec(ctx, "ALTER TABLE local_image_edit_tasks DROP CONSTRAINT test_result_terminal_failure"); err != nil {
@@ -82,17 +77,8 @@ func TestResultPersistenceFailurePreservesCauseWithoutProviderReplay(t *testing.
 			if holdStatus != quota.StatusPendingReconciliation {
 				t.Fatalf("hold=%s", holdStatus)
 			}
-			if _, err := pool.Exec(ctx, "UPDATE async_dispatches SET status='sent' WHERE id=$1", dispatchID); err != nil {
+			if err := runLocalEditRiverWorker(t, ctx, pool, taskID, executor); err != nil {
 				t.Fatal(err)
-			}
-			if err := queue.Consume(ctx, pool, dispatchID, taskID, map[string]queue.ActorFunc{queue.ActorLocalEdit: executor.Execute}); err != nil {
-				t.Fatal(err)
-			}
-			if err := pool.QueryRow(ctx, "SELECT status FROM async_dispatches WHERE id=$1", dispatchID).Scan(&dispatchStatus); err != nil {
-				t.Fatal(err)
-			}
-			if dispatchStatus != "consumed" {
-				t.Fatalf("redelivery=%s", dispatchStatus)
 			}
 			if provider.calls != 1 {
 				t.Fatalf("unknown result replayed provider %d times", provider.calls)

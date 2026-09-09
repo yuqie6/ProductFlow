@@ -33,7 +33,7 @@ var (
 
 // Pool 连到从 DATABASE_URL 派生的隔离测试库。不用线上 just-dev（productflow_dev）：
 // 夹具写在 <dbname>_gotest_<package>，避免跑着的 API/dispatcher 回收测试数据，
-// 也避免别的包留下的 async_dispatches 抢走 dispatcher claim。
+// 也避免别的包留下的 River 作业被当前测试 Worker 领取。
 // DATABASE_URL 未设或 Postgres 不可达会 Skip，不是 Fatal。
 func Pool(t *testing.T) *pgxpool.Pool {
 	t.Helper()

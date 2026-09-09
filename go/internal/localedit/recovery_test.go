@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/product"
 )
 
@@ -29,10 +30,10 @@ func TestRecoverUnfinishedLimitHasMoreAndIsolation(t *testing.T) {
 	if first.QueuedTasks != 1 || first.EnqueuedTasks != 1 || !first.HasMore {
 		t.Fatalf("first round %+v", first)
 	}
-	if pendingDispatchCount(t, es.pool, older) != 1 {
+	if riverTaskCount(t, es.pool, queue.ActorLocalEdit, older) != 1 {
 		t.Fatal("older task must commit before the rest of the batch")
 	}
-	if pendingDispatchCount(t, es.pool, newer) != 0 {
+	if riverTaskCount(t, es.pool, queue.ActorLocalEdit, newer) != 0 {
 		t.Fatal("newer task must wait for the next round")
 	}
 
@@ -43,7 +44,7 @@ func TestRecoverUnfinishedLimitHasMoreAndIsolation(t *testing.T) {
 	if second.QueuedTasks != 1 || second.EnqueuedTasks != 1 || second.HasMore {
 		t.Fatalf("second round %+v", second)
 	}
-	if pendingDispatchCount(t, es.pool, newer) != 1 {
+	if riverTaskCount(t, es.pool, queue.ActorLocalEdit, newer) != 1 {
 		t.Fatal("newer task must restage on the second round")
 	}
 }
@@ -75,7 +76,7 @@ func TestRecoverUnfinishedRequeuesClaimedAndMarksUnknown(t *testing.T) {
 	if claimedStatus != "queued" {
 		t.Fatalf("claimed status %s", claimedStatus)
 	}
-	if pendingDispatchCount(t, es.pool, claimedID) != 1 {
+	if riverTaskCount(t, es.pool, queue.ActorLocalEdit, claimedID) != 1 {
 		t.Fatal("claimed task must restage")
 	}
 
@@ -89,7 +90,7 @@ func TestRecoverUnfinishedRequeuesClaimedAndMarksUnknown(t *testing.T) {
 	if unknownStatus != "unknown" || retryable {
 		t.Fatalf("unknown status=%s retryable=%v", unknownStatus, retryable)
 	}
-	if pendingDispatchCount(t, es.pool, unknownID) != 0 {
+	if riverTaskCount(t, es.pool, queue.ActorLocalEdit, unknownID) != 0 {
 		t.Fatal("unknown task must not restage")
 	}
 }
@@ -119,7 +120,7 @@ func createQueuedLocalEdit(t *testing.T, es *editServer, created product.CreateR
 		"idempotency_key": key,
 	})
 	es.mustStatus(t, submitted, http.StatusAccepted)
-	es.dropDispatch(t, task.ID)
+	es.dropRiverJob(t, task.ID)
 	return task.ID
 }
 
@@ -173,12 +174,15 @@ func markStaleLocalEdit(t *testing.T, es *editServer, taskID, phase string) {
 	}
 }
 
-func pendingDispatchCount(t *testing.T, pool *pgxpool.Pool, aggregateID string) int {
+func riverTaskCount(t *testing.T, pool *pgxpool.Pool, actor, aggregateID string) int {
 	t.Helper()
 	var n int
 	if err := pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM async_dispatches WHERE aggregate_id = $1 AND status = 'pending'
-	`, aggregateID).Scan(&n); err != nil {
+		SELECT COUNT(*) FROM river_job
+		WHERE kind = 'productflow_task'
+		  AND args ->> 'actor' = $1
+		  AND args ->> 'aggregate_id' = $2
+	`, actor, aggregateID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -217,11 +221,11 @@ func TestRecoverUnfinishedSkipsLockedCandidatePrefix(t *testing.T) {
 			t.Fatalf("cycle %d enqueued %d tasks, want %d", i, summary.EnqueuedTasks, want)
 		}
 	}
-	if got := pendingDispatchCount(t, es.pool, ids[recoveryBatchLimit]); got != 1 {
-		t.Fatalf("unlocked task after %d locked candidates has %d dispatches after 3 cycles, want 1", recoveryBatchLimit, got)
+	if got := riverTaskCount(t, es.pool, queue.ActorLocalEdit, ids[recoveryBatchLimit]); got != 1 {
+		t.Fatalf("unlocked task after %d locked candidates has %d River jobs after 3 cycles, want 1", recoveryBatchLimit, got)
 	}
 	for _, id := range ids[:recoveryBatchLimit] {
-		if pendingDispatchCount(t, es.pool, id) != 0 {
+		if riverTaskCount(t, es.pool, queue.ActorLocalEdit, id) != 0 {
 			t.Fatal("locked task was restaged")
 		}
 	}

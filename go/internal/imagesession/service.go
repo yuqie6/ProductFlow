@@ -336,7 +336,7 @@ func (s Service) DeleteReference(ctx context.Context, sessionID, assetID string)
 	return s.Get(ctx, sessionID)
 }
 
-// Generate 创建 queued 生成任务并写入 PENDING dispatch；HTTP 不直接入队 broker。
+// Generate 创建 queued 生成任务并写入 River 作业；HTTP 不直接入队 broker。
 // 容量 admission 在 worker claim，入队不持 generation advisory、不增加 denied。
 // 提示词空/超长、尺寸或 tool 非法返回 Validation；会话或图片不存在返回 NotFound。
 // 额度不足返回 Conflict（可用额度不足），不静默跳过。
@@ -424,7 +424,7 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 		}).Error; err != nil {
 			return fmt.Errorf("touch session: %w", err)
 		}
-		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorImageSession, taskID, 0); err != nil {
+		if _, err := queue.StageTaskForActor(ctx, pgxTx, queue.ActorImageSession, taskID, 0); err != nil {
 			return fmt.Errorf("stage dispatch: %w", err)
 		}
 		return publishSession(ctx, pgxTx, sessionID)
@@ -435,7 +435,7 @@ func (s Service) Generate(ctx context.Context, sessionID string, req GenerateReq
 	return s.Get(ctx, sessionID)
 }
 
-// Retry 把可重试的 failed 任务重新标 queued 并补 PENDING dispatch；unknown 不会被当成失败重试。
+// Retry 把可重试的 failed 任务重新标 queued 并补 River 作业；unknown 不会被当成失败重试。
 // 终态失败后重新 Reserve（幂等键带 attempts），避免沿用已 Settle/Release 的旧 hold。
 func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
@@ -466,6 +466,7 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 		if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).Where("id = ?", taskID).Updates(map[string]any{
 			"billing_seq":              billingSeq,
 			"status":                   "queued",
+			"queue_execution_id":       clockid.New(),
 			"active_attempt_id":        nil,
 			"failure_reason":           nil,
 			"started_at":               nil,
@@ -480,7 +481,7 @@ func (s Service) Retry(ctx context.Context, sessionID, taskID string) (DetailRes
 		}).Error; err != nil {
 			return err
 		}
-		if _, err := queue.Requeue(ctx, pgxTx, queue.DeliveryKey(queue.ActorImageSession, taskID), queue.ActorImageSession, taskID, nil, nil, false); err != nil {
+		if _, err := queue.StageTaskForActor(ctx, pgxTx, queue.ActorImageSession, taskID, 0); err != nil {
 			return err
 		}
 		return publishSession(ctx, pgxTx, sessionID)

@@ -22,8 +22,8 @@ func TestGenerationSettlementRequiresQuotaHold(t *testing.T) {
 				pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_successhold_%d", time.Now().UnixNano()))
 				ss := newSessionServerWithDatabase(t, pool, db)
 				session, taskID := createQueuedGeneration(t, ss, map[string]any{"prompt": "hold contract", "size": "1024x1024"})
-				ctx := context.Background()
 				merchantID := auth.MustDevMerchantID(t, db)
+				ctx := auth.WithMerchantID(context.Background(), merchantID)
 				key := generationQuotaKey(taskID, 0)
 				if retry {
 					if _, _, err := (&quota.Service{DB: db}).Settle(ctx, merchantID, key, imageSessionQuotaUnits); err != nil {

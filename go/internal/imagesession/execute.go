@@ -83,7 +83,10 @@ func (e Executor) Execute(ctx context.Context, taskID string) error {
 			}
 			return nil
 		}
-		return e.finishFailed(persistCtx, taskID, attemptID, sessionID, err)
+		if finishErr := e.finishFailed(persistCtx, taskID, attemptID, sessionID, err); finishErr != nil {
+			return finishErr
+		}
+		return e.releaseIdle(persistCtx, taskID)
 	}
 	return nil
 }
@@ -96,7 +99,7 @@ var (
 
 const persistTimeout = 5 * time.Second
 
-// persistContext 在 asynq 取消 handler ctx 后仍允许把业务终态写入 PostgreSQL。
+// persistContext 在 River 取消 handler ctx 后仍允许把业务终态写入 PostgreSQL。
 func persistContext(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), persistTimeout)
 }
@@ -125,8 +128,8 @@ func tryLock(id string) (func(), bool) {
 	return func() { sessionTaskLocks.Delete(id) }, true
 }
 
-// claim FOR UPDATE 把 queued 标 running。行不存在返回 (false,"","",nil) 让信封 CONSUMED；
-// 容量满返回 ErrLater（回 PENDING）；别人已 running 返回 ErrBusy。
+// claim FOR UPDATE 把 queued 标 running。行不存在返回 (false,"","",nil) 让 River 完成本次作业；
+// 容量满返回 ErrLater（River snooze）；别人已 running 返回 ErrBusy。
 func (e Executor) claim(ctx context.Context, taskID string) (bool, string, string, error) {
 	var claimed bool
 	var attemptID, sessionID string
@@ -156,10 +159,22 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, strin
 		if err != nil {
 			return err
 		}
+		if err := queue.AssertExecution(ctx, pgxTx, queue.ActorImageSession, taskID); err != nil {
+			return err
+		}
 		sessionID = row.SessionID
 		if row.Status != "queued" {
 			return nil
 		}
+		merchantID, err := sessionMerchantID(ctx, pgxTx, row.SessionID)
+		if err != nil {
+			return err
+		}
+		turn, err := queue.GenerationTurn(ctx, pgxTx, merchantID)
+		if err != nil {
+			return err
+		}
+		ok = ok && turn
 		now := time.Now().UTC()
 		if !ok {
 			if err := pgxTx.Model(&schema.ImageSessionGenerationTasks{}).
@@ -211,7 +226,7 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, strin
 	return claimed, attemptID, sessionID, err
 }
 
-// releaseIdle 在 claim 不到 queued 行时决定信封命运：queued/running 表示别人持有，返回 ErrBusy；终态或缺行返回 nil，Consume 标 CONSUMED。
+// releaseIdle 在 claim 不到 queued 行时决定本次作业结果：queued/running 表示别人持有，返回 ErrBusy；终态或缺行返回 nil，River 完成作业。
 func (e Executor) releaseIdle(ctx context.Context, taskID string) error {
 	var row schema.ImageSessionGenerationTasks
 	err := e.DB.WithContext(ctx).Where("id = ?", taskID).Take(&row).Error
@@ -399,17 +414,13 @@ func (e Executor) yieldCompletedBatch(ctx context.Context, taskID, attemptID str
 		if result.RowsAffected != 1 {
 			return errStale
 		}
-		// The attempt-fenced checkpoint and its next envelope must commit together.
-		availableAt := time.Now().UTC().Add(time.Duration(queue.DefaultLaterRetrySeconds) * time.Second)
-		if _, err := queue.Requeue(ctx, gdb, queue.DeliveryKey(queue.ActorImageSession, taskID), queue.ActorImageSession, taskID, nil, &availableAt, true); err != nil {
-			return err
-		}
+		// The current River invocation snoozes after this checkpoint commits.
 		return notifyTaskSession(ctx, gdb, taskID)
 	})
 }
 
 // effectPersistenceError keeps a failed ledger write out of business retry classification.
-// The task remains running for recovery and the queue retains its envelope.
+// The task remains running for recovery and the queue retains its durable invocation.
 type effectPersistenceError struct{ error }
 
 func (e effectPersistenceError) Unwrap() error { return e.error }
@@ -767,10 +778,6 @@ func (e Executor) finishFailed(ctx context.Context, taskID, attemptID, sessionID
 					"progress_updated_at": now,
 					"is_retryable":        true,
 				}).Error; err != nil {
-				return err
-			}
-			_, err := queue.Requeue(ctx, pgxTx, queue.DeliveryKey(queue.ActorImageSession, taskID), queue.ActorImageSession, taskID, nil, nil, false)
-			if err != nil {
 				return err
 			}
 			return notifyTaskSession(ctx, pgxTx, taskID)

@@ -43,13 +43,13 @@ groups:
           severity: warning
         annotations:
           summary: 模型调用 usage 持续记为 unavailable
-      - alert: ProductFlowAgentDispatcherBacklog
-        expr: productflow_async_dispatches{status="queued"} > 25
+      - alert: ProductFlowQueueBacklog
+        expr: sum without (status) (productflow_queue_jobs{status=~"available|scheduled|retryable"}) > 25
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: dispatcher backlog 超过有界批次
+          summary: River 待执行作业持续超过 25 条
       - alert: ProductFlowAgentProviderHTTP5xx
         expr: increase(productflow_agent_service_provider_errors{status="5xx"}[15m]) > 0
         for: 5m

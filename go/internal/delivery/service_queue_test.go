@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/tx"
 	"gorm.io/gorm"
 )
@@ -35,12 +37,13 @@ func TestQueueAfterImageSuccessReturnsInsertAndStageErrors(t *testing.T) {
 	}
 
 	svc := Service{DB: ds.db, Media: ds.media}
+	merchantCtx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, ds.db))
 	// A readable source which is not a generated image remains an optional skip.
 	if err := ds.db.Exec("UPDATE workflow_graph_artifacts SET artifact_type='prompt' WHERE product_image_asset_id=?", assetID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := tx.WithGorm(context.Background(), ds.db, func(db *gorm.DB) error {
-		return svc.QueueAfterImageSuccess(context.Background(), db, nodeID, assetID)
+	if err := tx.WithGorm(merchantCtx, ds.db, func(db *gorm.DB) error {
+		return svc.QueueAfterImageSuccess(merchantCtx, db, nodeID, assetID)
 	}); err != nil {
 		t.Fatalf("non-generated source no longer skipped: %v", err)
 	}
@@ -54,8 +57,8 @@ func TestQueueAfterImageSuccessReturnsInsertAndStageErrors(t *testing.T) {
 	if err := ds.db.Exec("UPDATE workflow_graph_artifacts SET artifact_type='image' WHERE product_image_asset_id=?", assetID).Error; err != nil {
 		t.Fatal(err)
 	}
-	err = tx.WithGorm(context.Background(), ds.db, func(pgxTx *gorm.DB) error {
-		return svc.QueueAfterImageSuccess(context.Background(), pgxTx, nodeID, assetID)
+	err = tx.WithGorm(merchantCtx, ds.db, func(pgxTx *gorm.DB) error {
+		return svc.QueueAfterImageSuccess(merchantCtx, pgxTx, nodeID, assetID)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,18 +78,12 @@ func TestQueueAfterImageSuccessReturnsInsertAndStageErrors(t *testing.T) {
 	`, assetID).Scan(&jobID); err != nil {
 		t.Fatal(err)
 	}
-	var dispatchCount int
-	if err := ds.pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM async_dispatches WHERE actor_name = 'run_delivery_rendition_job' AND aggregate_id = $1
-	`, jobID).Scan(&dispatchCount); err != nil {
-		t.Fatal(err)
-	}
-	if dispatchCount != 1 {
-		t.Fatalf("dispatch %d", dispatchCount)
+	if got := riverTaskCount(t, ds.pool, queue.ActorDelivery, jobID); got != 1 {
+		t.Fatalf("river jobs %d", got)
 	}
 
-	missing := tx.WithGorm(context.Background(), ds.db, func(pgxTx *gorm.DB) error {
-		return svc.QueueAfterImageSuccess(context.Background(), pgxTx, clockid.New(), assetID)
+	missing := tx.WithGorm(merchantCtx, ds.db, func(pgxTx *gorm.DB) error {
+		return svc.QueueAfterImageSuccess(merchantCtx, pgxTx, clockid.New(), assetID)
 	})
 	if missing == nil {
 		t.Fatal("missing node should return error")

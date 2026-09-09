@@ -33,7 +33,7 @@ type Executor struct {
 	Products ProductGuard
 }
 
-// ExecuteRun 是 asynq worker 入口：同一 run 只允许一个 worker。
+// ExecuteRun 是 River worker 入口：同一 run 只允许一个 worker。
 //
 // 进程内互斥只做同进程重复提交的快速门禁；跨实例执行权由 GraphRun 行上的 token/expiry lease 决定。
 // lease 丢失时取消本次执行并返回 queue.ErrBusy，旧 worker 不能再收口 run 或晋升产物。
@@ -137,8 +137,8 @@ func (e Executor) logger() *zap.Logger {
 
 // executeLoop 是单次 GraphRun 的调度循环：从 snapshot 找上游 ready 的 queued 节点，claim 后并发 cook。
 // 只在 ExecuteRun 已持进程锁 + execution lease 之后调用。循环里再 fail 被挡住的 queued、检查终态。
-// 容量不足或另一商家已到期时返回 queue.ErrLater，让 queue 清掉 SENT/lease 交给 dispatcher 轮转；
-// 真正抢不到锁才把 queue.ErrBusy 抛给 asynq。
+// 容量不足或另一商家已到期时返回 queue.ErrLater，交给 River snooze 后重新领取；
+// 真正抢不到锁才把 queue.ErrBusy 抛给 River。
 // unknown 不停止 claim（noteNodeOutcome 把它当成功）；已证明失败才 stopClaiming。
 // 不要在这里打 broker，也不要把 missing run 当错误——当作已消费返回 nil。
 func (e Executor) executeLoop(ctx context.Context, runID string) error {

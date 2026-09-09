@@ -91,16 +91,21 @@ func newEditServerWithDatabase(t *testing.T, provider Provider, pool *pgxpool.Po
 	return es
 }
 
-func (es *editServer) dropDispatch(t *testing.T, taskID string) {
+func (es *editServer) dropRiverJob(t *testing.T, taskID string) {
 	t.Helper()
-	if _, err := es.pool.Exec(context.Background(), `DELETE FROM async_dispatches WHERE aggregate_id = $1`, taskID); err != nil {
+	if _, err := es.pool.Exec(context.Background(), `
+		DELETE FROM river_job
+		WHERE kind = 'productflow_task'
+		  AND args ->> 'actor' = 'run_local_image_edit_task'
+		  AND args ->> 'aggregate_id' = $1
+	`, taskID); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func (es *editServer) reclaimTask(t *testing.T, taskID string) {
 	t.Helper()
-	es.dropDispatch(t, taskID)
+	es.dropRiverJob(t, taskID)
 	if _, err := es.pool.Exec(context.Background(), `
 		UPDATE local_image_edit_tasks SET
 			status = 'queued', active_attempt_id = NULL, progress_phase = NULL,
@@ -270,14 +275,8 @@ func TestLocalEditCreateSubmitExecuteAndUnknown(t *testing.T) {
 	if task.Status != "queued" {
 		t.Fatalf("status %s", task.Status)
 	}
-	var dispatchStatus string
-	if err := es.pool.QueryRow(context.Background(), `
-		SELECT status FROM async_dispatches WHERE actor_name = 'run_local_image_edit_task' AND aggregate_id = $1
-	`, task.ID).Scan(&dispatchStatus); err != nil {
-		t.Fatal(err)
-	}
-	if dispatchStatus != "pending" && dispatchStatus != "sent" {
-		t.Fatalf("dispatch %s", dispatchStatus)
+	if got := riverTaskCount(t, es.pool, queue.ActorLocalEdit, task.ID); got != 1 {
+		t.Fatalf("river jobs %d", got)
 	}
 
 	es.executeLocally(t, task.ID, Executor{DB: es.db, Media: es.media, Provider: provider})

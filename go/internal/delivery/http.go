@@ -15,7 +15,7 @@ import (
 )
 
 // HTTP 是交付预设、派生任务与 ZIP 导出的 Gin 处理器集合。
-// 派生只写 PENDING dispatch，不在请求里打图像模型。不要和 GraphRun 生图搞混。
+// 派生只写 River 作业，不在请求里打图像模型。不要和 GraphRun 生图搞混。
 type HTTP struct {
 	Service Service // 必须注入；拥有提交/查询/重试/导出
 	// Settings 为 nil 时 RequireAdmin 视为不要求访问令牌。

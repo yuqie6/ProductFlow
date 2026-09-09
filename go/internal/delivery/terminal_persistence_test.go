@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/yuqie6/productflow/internal/platform/queue"
+	"github.com/yuqie6/productflow/internal/auth"
 )
 
 func TestFailurePersistenceDoesNotConsumeDelivery(t *testing.T) {
@@ -33,21 +33,17 @@ func TestFailurePersistenceDoesNotConsumeDelivery(t *testing.T) {
 	if _, err := restageDeliveryJob(ctx, ds.db, jobID); err != nil {
 		t.Fatal(err)
 	}
-	var dispatchID string
-	if err := ds.pool.QueryRow(ctx, "UPDATE async_dispatches SET status='sent',attempts=1 WHERE aggregate_id=$1 RETURNING id", jobID).Scan(&dispatchID); err != nil {
-		t.Fatal(err)
-	}
 	executor := Executor{DB: ds.db, Media: ds.media}
-	err := queue.Consume(ctx, ds.pool, dispatchID, jobID, map[string]queue.ActorFunc{queue.ActorDelivery: executor.Execute})
+	err := runDeliveryRiverWorker(t, ctx, ds.pool, jobID, executor)
 	if err == nil || !strings.Contains(err.Error(), constraint) {
 		t.Fatalf("want write error, got %v", err)
 	}
-	var status, dispatchStatus string
-	if err := ds.pool.QueryRow(ctx, "SELECT j.status,d.status FROM delivery_rendition_jobs j JOIN async_dispatches d ON d.aggregate_id=j.id WHERE j.id=$1", jobID).Scan(&status, &dispatchStatus); err != nil {
+	var status string
+	if err := ds.pool.QueryRow(ctx, "SELECT status FROM delivery_rendition_jobs WHERE id=$1", jobID).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
-	if status != "running" || dispatchStatus != "pending" {
-		t.Fatalf("job=%s dispatch=%s", status, dispatchStatus)
+	if status != "running" {
+		t.Fatalf("job=%s", status)
 	}
 }
 
@@ -75,12 +71,8 @@ func TestResultPersistencePreservesDeliveryCause(t *testing.T) {
 			if _, err := restageDeliveryJob(ctx, ds.db, jobID); err != nil {
 				t.Fatal(err)
 			}
-			var dispatchID string
-			if err := ds.pool.QueryRow(ctx, "UPDATE async_dispatches SET status='sent',attempts=1 WHERE aggregate_id=$1 RETURNING id", jobID).Scan(&dispatchID); err != nil {
-				t.Fatal(err)
-			}
 			executor := Executor{DB: ds.db, Media: ds.media}
-			err := queue.Consume(ctx, ds.pool, dispatchID, jobID, map[string]queue.ActorFunc{queue.ActorDelivery: executor.Execute})
+			err := runDeliveryRiverWorker(t, ctx, ds.pool, jobID, executor)
 			var pgErr *pgconn.PgError
 			if !errors.As(err, &pgErr) || pgErr.ConstraintName != "test_delivery_result_succeeded" {
 				t.Fatalf("original result cause lost: %v", err)
@@ -88,18 +80,18 @@ func TestResultPersistencePreservesDeliveryCause(t *testing.T) {
 			if failTerminal && !strings.Contains(err.Error(), "test_delivery_result_failed") {
 				t.Fatalf("terminal cause lost: %v", err)
 			}
-			var status, dispatchStatus string
+			var status string
 			var retryable bool
 			var resultID *string
-			if err := ds.pool.QueryRow(ctx, "SELECT j.status,j.is_retryable,j.result_asset_id,d.status FROM delivery_rendition_jobs j JOIN async_dispatches d ON d.aggregate_id=j.id WHERE j.id=$1", jobID).Scan(&status, &retryable, &resultID, &dispatchStatus); err != nil {
+			if err := ds.pool.QueryRow(ctx, "SELECT status,is_retryable,result_asset_id FROM delivery_rendition_jobs WHERE id=$1", jobID).Scan(&status, &retryable, &resultID); err != nil {
 				t.Fatal(err)
 			}
 			expected := "failed"
 			if failTerminal {
 				expected = "running"
 			}
-			if status != expected || resultID != nil || dispatchStatus != "pending" || (!failTerminal && !retryable) {
-				t.Fatalf("status=%s result=%v dispatch=%s retryable=%t", status, resultID, dispatchStatus, retryable)
+			if status != expected || resultID != nil || (!failTerminal && !retryable) {
+				t.Fatalf("status=%s result=%v retryable=%t", status, resultID, retryable)
 			}
 			var assets int
 			if err := ds.pool.QueryRow(ctx, "SELECT count(*) FROM product_image_assets WHERE parent_asset_id=$1", created.CreatedAssets[0].ID).Scan(&assets); err != nil {
@@ -118,7 +110,7 @@ func TestResultPersistencePreservesDeliveryCause(t *testing.T) {
 					t.Fatalf("recovery=%s err=%v", outcome, err)
 				}
 			} else {
-				if _, err := (Service{DB: ds.db}).Retry(ctx, jobID); err != nil {
+				if _, err := (Service{DB: ds.db}).Retry(auth.WithMerchantID(ctx, auth.MustDevMerchantID(t, ds.db)), jobID); err != nil {
 					t.Fatal(err)
 				}
 			}

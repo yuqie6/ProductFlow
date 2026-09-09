@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/notify"
@@ -74,7 +75,7 @@ func TestNewQuestionJournalClearsPreviousAnswerAndReplayKeepsCurrentAnswer(t *te
 	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, []EventAppendInput{first}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := as.svc.persistQuestionAnswer(context.Background(), nil, claimed.conversationID, claimed.turn.ID, "first-question", map[string]any{"text": "first answer"}); err != nil {
+	if _, err := as.svc.persistQuestionAnswer(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), nil, claimed.conversationID, claimed.turn.ID, "first-question", map[string]any{"text": "first answer"}); err != nil {
 		t.Fatal(err)
 	}
 	second := question(2, "second-question")
@@ -88,10 +89,10 @@ func TestNewQuestionJournalClearsPreviousAnswerAndReplayKeepsCurrentAnswer(t *te
 	if row.QuestionAnswerJSON != nil {
 		t.Fatalf("second question inherited previous answer: %s", *row.QuestionAnswerJSON)
 	}
-	if _, err := as.svc.persistQuestionAnswer(context.Background(), nil, claimed.conversationID, claimed.turn.ID, "first-question", map[string]any{"text": "late answer"}); err == nil {
+	if _, err := as.svc.persistQuestionAnswer(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), nil, claimed.conversationID, claimed.turn.ID, "first-question", map[string]any{"text": "late answer"}); err == nil {
 		t.Fatal("accepted an answer for the expired first question")
 	}
-	if _, err := as.svc.persistQuestionAnswer(context.Background(), nil, claimed.conversationID, claimed.turn.ID, "second-question", map[string]any{"text": "second answer"}); err != nil {
+	if _, err := as.svc.persistQuestionAnswer(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), nil, claimed.conversationID, claimed.turn.ID, "second-question", map[string]any{"text": "second answer"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := as.svc.AppendEvents(context.Background(), claimed.conversationID, claimed.lease.ExecutionID, "worker-1", claimed.lease.LeaseToken, []EventAppendInput{second}); err != nil {

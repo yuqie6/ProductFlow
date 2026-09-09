@@ -4,38 +4,10 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/yuqie6/productflow/internal/platform/testdb"
 )
-
-func TestRunOneShotRecoversThenDispatchesAndJoinsErrors(t *testing.T) {
-	recoveryErr := errors.New("recovery failed")
-	dispatchErr := errors.New("dispatch failed")
-	var order []string
-
-	err := runOneShot(
-		context.Background(),
-		func(context.Context) error {
-			order = append(order, "recovery")
-			return recoveryErr
-		},
-		func(context.Context) error {
-			order = append(order, "dispatch")
-			return dispatchErr
-		},
-	)
-
-	if !reflect.DeepEqual(order, []string{"recovery", "dispatch"}) {
-		t.Fatalf("order = %v", order)
-	}
-	if !errors.Is(err, recoveryErr) || !errors.Is(err, dispatchErr) {
-		t.Fatalf("error = %v, want both failures", err)
-	}
-}
 
 func TestRunRecoveryStepsContinuesAfterDomainFailure(t *testing.T) {
 	wantErr := errors.New("graph unavailable")
@@ -83,295 +55,40 @@ func TestRunRecoveryStepsContinuesAfterDomainFailure(t *testing.T) {
 	}
 }
 
-func TestRunWatchLoopsDispatchWakeIsNotBlockedByRecovery(t *testing.T) {
+func TestRecoveryDomainsProgressIndependentlyAndStop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	wake := make(chan struct{}, 1)
-	dispatched := make(chan struct{}, 3)
-	recoveryStarted := make(chan struct{})
-	var startOnce sync.Once
+	defer cancel()
+	entered := make(chan struct{})
 	done := make(chan struct{})
-
+	var count atomic.Int32
 	go func() {
-		defer close(done)
-		runWatchLoops(
-			ctx,
-			time.Hour,
-			time.Hour,
-			wake,
-			func(context.Context) error {
-				dispatched <- struct{}{}
-				return nil
-			},
-			[]recoveryStep{{run: func(ctx context.Context) error {
-				startOnce.Do(func() { close(recoveryStarted) })
-				<-ctx.Done()
-				return ctx.Err()
-			}}},
-			nil,
-			nil,
-		)
-	}()
-
-	waitForSignal(t, recoveryStarted, "initial recovery")
-	waitForSignal(t, dispatched, "initial dispatch")
-	wake <- struct{}{}
-	waitForSignal(t, dispatched, "woken dispatch while recovery is blocked")
-
-	cancel()
-	waitForSignal(t, done, "watch loops to stop")
-}
-
-func TestRunWatchLoopsDispatchTickerIsNotBlockedByRecovery(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	dispatched := make(chan struct{}, 3)
-	recoveryStarted := make(chan struct{})
-	var startOnce sync.Once
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-		runWatchLoops(
-			ctx,
-			10*time.Millisecond,
-			time.Hour,
-			nil,
-			func(context.Context) error {
-				dispatched <- struct{}{}
-				return nil
-			},
-			[]recoveryStep{{run: func(ctx context.Context) error {
-				startOnce.Do(func() { close(recoveryStarted) })
-				<-ctx.Done()
-				return ctx.Err()
-			}}},
-			nil,
-			nil,
-		)
-	}()
-
-	waitForSignal(t, recoveryStarted, "initial recovery")
-	waitForSignal(t, dispatched, "initial dispatch")
-	waitForSignal(t, dispatched, "ticked dispatch while recovery is blocked")
-
-	cancel()
-	waitForSignal(t, done, "watch loops to stop")
-}
-
-func TestForwardWakeCoalescesAndExitsWhenInputCloses(t *testing.T) {
-	in := make(chan int, 3)
-	in <- 1
-	in <- 2
-	in <- 3
-	close(in)
-	wake := make(chan struct{}, 1)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		forwardWake(in, wake)
-	}()
-	waitForSignal(t, done, "forwardWake to exit after input close")
-	select {
-	case <-wake:
-	default:
-		t.Fatal("expected a coalesced wake")
-	}
-	select {
-	case <-wake:
-		t.Fatal("wake flood should drop while a signal is already pending")
-	default:
-	}
-}
-
-func TestDrainWakeEmptiesPendingSignals(t *testing.T) {
-	wake := make(chan struct{}, 4)
-	wake <- struct{}{}
-	wake <- struct{}{}
-	wake <- struct{}{}
-	drainWake(wake)
-	select {
-	case <-wake:
-		t.Fatal("wake channel still has signals after drain")
-	default:
-	}
-	drainWake(nil)
-}
-
-func TestDispatchWhileHasMoreContinuesUntilCaughtUp(t *testing.T) {
-	var calls int
-	err := dispatchWhileHasMore(context.Background(), func(context.Context) (bool, error) {
-		calls++
-		return calls < 3, nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if calls != 3 {
-		t.Fatalf("calls = %d, want 3", calls)
-	}
-}
-
-func TestDispatchWhileHasMoreStopsOnError(t *testing.T) {
-	wantErr := errors.New("claim failed")
-	var calls int
-	err := dispatchWhileHasMore(context.Background(), func(context.Context) (bool, error) {
-		calls++
-		return true, wantErr
-	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("error = %v, want claim failure", err)
-	}
-	if calls != 1 {
-		t.Fatalf("calls = %d, want 1", calls)
-	}
-}
-
-func TestDispatchWhileHasMoreStopsOnCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	var calls int
-	err := dispatchWhileHasMore(ctx, func(context.Context) (bool, error) {
-		calls++
-		return true, nil
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("error = %v, want canceled", err)
-	}
-	if calls != 0 {
-		t.Fatalf("calls = %d, want 0", calls)
-	}
-}
-
-func TestRunWatchLoopsDispatchDrainsBacklogBeforeTicker(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	batches := make(chan int, 8)
-	remaining := 3
-	done := make(chan struct{})
-
-	go func() {
-		defer close(done)
-		runWatchLoops(
-			ctx,
-			time.Hour,
-			time.Hour,
-			nil,
-			func(ctx context.Context) error {
-				return dispatchWhileHasMore(ctx, func(context.Context) (bool, error) {
-					batches <- remaining
-					remaining--
-					return remaining > 0, nil
-				})
-			},
-			[]recoveryStep{{run: func(context.Context) error { return nil }}},
-			nil,
-			nil,
-		)
-	}()
-
-	for want := 3; want >= 1; want-- {
-		select {
-		case got := <-batches:
-			if got != want {
-				t.Fatalf("batch remaining = %d, want %d", got, want)
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("timed out waiting for backlog batch %d", want)
-		}
-	}
-
-	cancel()
-	waitForSignal(t, done, "watch loops to stop")
-}
-
-func TestStartDispatchWakeExitsOnCancel(t *testing.T) {
-	pool, _ := testdb.Open(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	wake, waitListen := startDispatchWake(ctx, pool, nil)
-	if wake == nil {
-		t.Fatal("LISTEN failed; cannot assert cancel unblocks the listener")
-	}
-	cancel()
-	done := make(chan struct{})
-	go func() {
-		waitListen()
+		runRecoveryLoops(ctx, 5*time.Millisecond, []recoveryStep{
+			{domain: "blocked", run: func(ctx context.Context) error { close(entered); <-ctx.Done(); return ctx.Err() }},
+			{domain: "healthy", run: func(context.Context) error { count.Add(1); return nil }},
+		}, nil)
 		close(done)
 	}()
 	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("dispatch LISTEN did not exit after cancel")
-	}
-}
-
-func waitForSignal(t *testing.T, ch <-chan struct{}, description string) {
-	t.Helper()
-	select {
-	case <-ch:
+	case <-entered:
 	case <-time.After(time.Second):
-		t.Fatalf("timed out waiting for %s", description)
+		t.Fatal("blocked domain not entered")
 	}
-}
-
-func TestRecoveryDomainTicksWhileAnotherDomainIsBlocked(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	started := make(chan struct{})
-	ticks := make(chan struct{}, 16)
-	failures := make(chan struct{}, 16)
-	var slowCalls atomic.Int32
-	done := make(chan struct{})
-	steps := []recoveryStep{
-		{domain: "slow", run: func(ctx context.Context) error {
-			if slowCalls.Add(1) == 1 {
-				close(started)
-			}
-			<-ctx.Done()
-			return ctx.Err()
-		}},
-		{domain: "healthy", run: func(context.Context) error {
-			select {
-			case ticks <- struct{}{}:
-			default:
-			}
-			return nil
-		}},
-		{domain: "failing", run: func(context.Context) error { return errors.New("domain failure") }},
+	deadline := time.Now().Add(time.Second)
+	for count.Load() < 3 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
 	}
-	go func() {
-		defer close(done)
-		runWatchLoops(ctx, time.Hour, 10*time.Millisecond, nil,
-			func(context.Context) error { return nil },
-			steps, nil, func(result recoveryStepResult) {
-				if result.domain == "failing" && result.err != nil {
-					select {
-					case failures <- struct{}{}:
-					default:
-					}
-				}
-			})
-	}()
-	t.Cleanup(func() { cancel(); waitForSignal(t, done, "all domain loops to stop") })
-	waitForSignal(t, started, "slow recovery to start")
-	for i := 0; i < 3; i++ {
-		waitForSignal(t, ticks, "healthy recovery to keep ticking")
-		waitForSignal(t, failures, "failed recovery to report and retry on its own schedule")
+	if count.Load() < 3 {
+		t.Fatal("healthy domain blocked")
 	}
-	if calls := slowCalls.Load(); calls != 1 {
-		t.Fatalf("blocked domain entered %d times, want 1", calls)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("recovery did not stop")
 	}
-}
-
-func TestScheduledLoopDoesNotStartAnotherBatchAfterCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	wake := make(chan struct{}, 1)
-	wake <- struct{}{}
-	calls := 0
-	runScheduledLoop(ctx, time.Nanosecond, wake, func(context.Context) error {
-		calls++
-		cancel()
-		return nil
-	}, nil)
-	if calls != 1 {
-		t.Fatalf("started %d batches despite cancellation", calls)
+	before := count.Load()
+	time.Sleep(10 * time.Millisecond)
+	if count.Load() != before {
+		t.Fatal("work after cancellation")
 	}
 }

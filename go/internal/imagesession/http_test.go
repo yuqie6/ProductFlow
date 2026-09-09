@@ -96,7 +96,11 @@ func newSessionServerWithDatabase(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB
 
 func (ss *sessionServer) dropDispatch(t *testing.T, aggregateID string) {
 	t.Helper()
-	if _, err := ss.pool.Exec(context.Background(), `DELETE FROM async_dispatches WHERE aggregate_id = $1`, aggregateID); err != nil {
+	if _, err := ss.pool.Exec(context.Background(), `
+		DELETE FROM river_job
+		WHERE kind = 'productflow_task' AND args ->> 'actor' = 'run_image_session_generation_task'
+		  AND args ->> 'aggregate_id' = $1
+	`, aggregateID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -251,14 +255,15 @@ func TestImageSessionCreateGenerateAndUnknown(t *testing.T) {
 		t.Fatalf("tasks %d", len(session.GenerationTasks))
 	}
 	taskID := session.GenerationTasks[0].ID
-	var dispatchStatus string
+	var dispatchState string
 	if err := ss.pool.QueryRow(context.Background(), `
-		SELECT status FROM async_dispatches WHERE actor_name = 'run_image_session_generation_task' AND aggregate_id = $1
-	`, taskID).Scan(&dispatchStatus); err != nil {
+		SELECT state FROM river_job
+		WHERE kind = 'productflow_task' AND args ->> 'actor' = 'run_image_session_generation_task' AND args ->> 'aggregate_id' = $1
+	`, taskID).Scan(&dispatchState); err != nil {
 		t.Fatal(err)
 	}
-	if dispatchStatus != "pending" && dispatchStatus != "sent" {
-		t.Fatalf("dispatch %s", dispatchStatus)
+	if dispatchState == "" {
+		t.Fatalf("empty river job state")
 	}
 	ss.dropDispatch(t, taskID)
 

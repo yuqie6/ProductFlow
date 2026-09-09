@@ -85,7 +85,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 
 ## 技术栈
 
-- 后端：Go 1.23（Gin、GORM、asynq）、`productflow-migrate`、Redis、PostgreSQL。
+- 后端：Go 1.26.5（Gin、GORM、River）、`productflow-migrate`、Redis、PostgreSQL。
 - Agent service：Node.js 22、Pi SDK、ProductFlow Tool adapter、JSONL session 文件和 JSON event 文件。
 - 前端：React 19、Vite、TypeScript、React Router、TanStack Query、XYFlow、Tailwind CSS 4。
 - 模型 SDK：Go 与 TypeScript 的 OpenAI-compatible adapter，以及 Google GenAI。
@@ -197,7 +197,7 @@ docker compose --env-file images.env --env-file .env \
 
 ### 1. 准备工具
 
-- Go 1.23+
+- Go 1.26.5+
 - Node.js 22.19+ 与 `pnpm`
 - Python 3（仓库脚本，如 `just docs-check`、`just wipe-dev-data`）
 - Docker / Docker Compose

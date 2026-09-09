@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 )
 
 func TestRecoverUnfinishedLimitHasMoreAndIsolation(t *testing.T) {
@@ -27,10 +28,10 @@ func TestRecoverUnfinishedLimitHasMoreAndIsolation(t *testing.T) {
 	if first.QueuedJobs != 1 || first.EnqueuedJobs != 1 || !first.HasMore {
 		t.Fatalf("first round %+v", first)
 	}
-	if pendingDispatchCount(t, ds.pool, older) != 1 {
+	if riverTaskCount(t, ds.pool, queue.ActorDelivery, older) != 1 {
 		t.Fatal("older job must commit before the rest of the batch")
 	}
-	if pendingDispatchCount(t, ds.pool, newer) != 0 {
+	if riverTaskCount(t, ds.pool, queue.ActorDelivery, newer) != 0 {
 		t.Fatal("newer job must wait for the next round")
 	}
 
@@ -41,7 +42,7 @@ func TestRecoverUnfinishedLimitHasMoreAndIsolation(t *testing.T) {
 	if second.QueuedJobs != 1 || second.EnqueuedJobs != 1 || second.HasMore {
 		t.Fatalf("second round %+v", second)
 	}
-	if pendingDispatchCount(t, ds.pool, newer) != 1 {
+	if riverTaskCount(t, ds.pool, queue.ActorDelivery, newer) != 1 {
 		t.Fatal("newer job must restage on the second round")
 	}
 }
@@ -81,7 +82,7 @@ func TestRecoverUnfinishedRequeuesStaleRunning(t *testing.T) {
 	if status != "queued" {
 		t.Fatalf("status %s", status)
 	}
-	if pendingDispatchCount(t, ds.pool, jobID) != 1 {
+	if riverTaskCount(t, ds.pool, queue.ActorDelivery, jobID) != 1 {
 		t.Fatal("stale running job must restage")
 	}
 }
@@ -115,12 +116,15 @@ func insertQueuedDeliveryJob(t *testing.T, ds *deliveryServer, productID, assetI
 	return jobID
 }
 
-func pendingDispatchCount(t *testing.T, pool *pgxpool.Pool, aggregateID string) int {
+func riverTaskCount(t *testing.T, pool *pgxpool.Pool, actor, aggregateID string) int {
 	t.Helper()
 	var n int
 	if err := pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM async_dispatches WHERE aggregate_id = $1 AND status = 'pending'
-	`, aggregateID).Scan(&n); err != nil {
+		SELECT COUNT(*) FROM river_job
+		WHERE kind = 'productflow_task'
+		  AND args ->> 'actor' = $1
+		  AND args ->> 'aggregate_id' = $2
+	`, actor, aggregateID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -158,11 +162,11 @@ func TestRecoverUnfinishedSkipsLockedCandidatePrefix(t *testing.T) {
 			t.Fatalf("cycle %d enqueued %d jobs, want %d", i, summary.EnqueuedJobs, want)
 		}
 	}
-	if got := pendingDispatchCount(t, ds.pool, ids[recoveryBatchLimit]); got != 1 {
-		t.Fatalf("unlocked job after %d locked candidates has %d dispatches after 3 cycles, want 1", recoveryBatchLimit, got)
+	if got := riverTaskCount(t, ds.pool, queue.ActorDelivery, ids[recoveryBatchLimit]); got != 1 {
+		t.Fatalf("unlocked job after %d locked candidates has %d River jobs after 3 cycles, want 1", recoveryBatchLimit, got)
 	}
 	for _, id := range ids[:recoveryBatchLimit] {
-		if pendingDispatchCount(t, ds.pool, id) != 0 {
+		if riverTaskCount(t, ds.pool, queue.ActorDelivery, id) != 0 {
 			t.Fatal("locked job was restaged")
 		}
 	}

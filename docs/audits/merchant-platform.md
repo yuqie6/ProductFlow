@@ -84,7 +84,7 @@
 | HTTP 注册 | `go/cmd/productflow-api/register.go` 挂载含 `brand`（及既有 auth/settings/product/…/visualsystem/localedit/agent） | **业务路由 223**：相对冻结枚举 214 + Brand B0 的 4 条 + 价格目录 2 条 + Brand B1 的 2 条（`GET/PUT /api/v3/products/:id/brand-selection`）+ unknown resolve 1 条（`POST /api/ops/merchants/:id/quota/holds/resolve`）；其余分区仍以 register.go 为准 |
 | Schema 模型 | `rg 'TableName\(\)' go/internal/platform/db/schema/*.go` | **71 表**（冻结枚举曾只计 `models.go`=57；现含 identity 5 + MP-C B0 `merchant_quota_*` 3 + Brand B0 `brands` 1 + 价格目录 `quota_price_*` 2） |
 | Agent tool | `rg 'name: "' agent-service/src/tool-manifest.ts` | **25 工具名**（含 skill/ask/context_injection） |
-| 异步 Actor | `go/internal/platform/queue/actors.go` | 信封 `run_async_dispatch`；Actor：`run_workflow_graph_run`、`run_image_session_generation_task`、`run_delivery_rendition_job`、`run_local_image_edit_task`、`run_agent_turn_sync` |
+| 异步 Actor | `go/internal/platform/queue/actors.go` | River kind `productflow_task`；Actor：`run_workflow_graph_run`、`run_image_session_generation_task`、`run_delivery_rendition_job`、`run_local_image_edit_task`、`run_agent_turn_sync` |
 | 下载 | product/library/imagesession 的 `*/download`、商品 ZIP、delivery ZIP、internal `*/content`；变体经 `media.ServeVariant`（`?variant=`） | 见矩阵「下载/媒体」 |
 | SSE | graph run events、image-session events、agent turn events（product/global）、agent control events；notify 通道 `productflow_{control,run,turn,image_session,dispatch}` | 6 类浏览器/SSE 入口 + 5 notify 通道 |
 | 前端 query | `web/src` 中 `queryKey:`；订阅见 `EventSource`（agent conversation runtime、image-session、graph run） | 见矩阵「前端」列；商家切换时必须以 merchant 为 cache/SSE 边界前缀或整表清空 |
@@ -139,7 +139,7 @@
 | image_session_assets / rounds / generation_tasks / provider_effects | image_sessions | 下载按 asset→session→merchant |
 | agent_turn_*、agent_tool_mutations、agent_workflow_run_requests、agent_page_context_snapshots、agent_model_invocations | conversation/task→merchant | internal tool 只能触达合同商家 |
 | visual_system_version_references | visual_system_version | 随 Brand/商家 |
-| async_dispatches | Actor aggregate | **不**另开租户；载荷/aggregate 解析后校验商家快照（见队列规则） |
+| river_job | Actor aggregate + execution_id | **不**另开租户；领取时在业务行锁内校验持久化商家和执行身份 |
 
 ### 实例级（保留无商家字段；仅 Op/Sys）
 
@@ -157,7 +157,7 @@
 2. **根加载**：按 id 取根对象后比较 `root.merchant_id == auth.merchant_id`；找不到与跨商家统一对外表现为 404（防枚举）或契约固定的 403——实施批次内二选一并写测试，全站一致。
 3. **子引用**：绑定/移动/attach/from-product/from-session/recipe apply/workflow media sync 时，所有被引用 id 解析后商家必须相同；跨商家绑定 400/403，且不产生半写入。
 4. **角色**：写/消费类拒绝 Vw；成员与商家设置拒绝 Ed/Vw；settings/provider 拒绝全部商家角色。
-5. **队列**：受理时写入 `merchant_id` + `actor_user_id` + 权限快照到业务行或 dispatch 旁路元数据；worker 只信任持久快照，不信任 asynq 信封外带商家；重试/Restage 保持原商家。
+5. **队列**：受理时写入 `merchant_id` + `actor_user_id` + 权限快照到业务行或 dispatch 旁路元数据；worker 只信任持久快照，校验 River args 与业务持久化商家一致；重试/Restage 保持原商家。
 6. **SSE**：订阅建立时鉴权；游标只在已授权聚合内回放；成员撤销后拒绝续订与 after 重放。
 7. **媒体**：`download`/`content`/`ServeVariant` 在解析资产身份后鉴权；路径不可猜不能替代授权。
 8. **内部工具**：`requireInternal` 只证明 Pi；scope 以 conversation contract 的商家为准；工具参数中的 product/asset/run id 必须落入该商家。
@@ -207,7 +207,7 @@
 | C3 | runs submit/preview/list/get/cancel/retry | Ed+ 消费；Vw 可读 list/get | graph | — | **ActorGraphRun** + notify run | `graph/service.go`+recovery | `["graph-runs", …]` | **因果样例**见 C9 |
 | C4 | `GET .../runs/:run_id/events` SSE | Vw+ | run→graph→product→merchant | 游标∈run | notify ChannelRun | `graph/run_sse.go` | EventSource graph | 跨商 run SSE；撤销后断开 |
 | C5 | Graph provider effects / artifacts / node_runs | 经 run | 子表随 graph | — | 执行中写 | graph/execute | — | 归属随 run 商家快照 |
-| C6 | **因果路径**：`POST .../runs` → 建 WorkflowGraphRun + `async_dispatches`(ActorGraphRun) → dispatcher SENT → worker → events → SSE/GET run | Ed+ | 受理快照 merchant_id | — | outbox 不改商家 | graph+queue | workbench run UI | 正跑通；他商 cancel/retry/SSE 拒绝；Restage 保持商家。graph 包 20 路由均归 C1–C6 |
+| C6 | **因果路径**：`POST .../runs` → 同事务建 WorkflowGraphRun + River job(ActorGraphRun) → worker → events → SSE/GET run | Ed+ | 受理快照 merchant_id | — | outbox 不改商家 | graph+queue | workbench run UI | 正跑通；他商 cancel/retry/SSE 拒绝；Restage 保持商家。graph 包 20 路由均归 C1–C6 |
 
 ### D. 配方（6）
 
@@ -286,8 +286,8 @@
 
 | ID | 入口 | 角色 | 根所有权 | 子引用 | 队列/effect | 读写 owner | 前端 | 测试计划 |
 |---|---|---|---|---|---|---|---|---|
-| J1 | async_dispatches + 五 Actor | Sys worker | aggregate 商家快照 | — | Stage/Restage/Sent 对账 | `platform/queue`+各 recovery.go | — | **重试归属**；禁止信封改商 |
-| J2 | dispatcher / worker 进程 | Sys | — | — | ChannelDispatch | cmd/productflow-* | — | 多商混合队列不串权 |
+| J1 | river_job + 五 Actor | Sys worker | aggregate 商家快照 | — | 受理/恢复执行身份与原生 job 状态对账 | `platform/queue`+各 recovery.go | — | **重试归属**；禁止信封改商 |
+| J2 | dispatcher / worker 进程 | Sys | — | — | River 原生通知与轮询 | cmd/productflow-* | — | 多商混合队列不串权 |
 | J3 | notify 五通道 | Sys→SSE | payload=聚合 id，接收前再鉴权 | — | | `platform/notify` | | 唤醒不授予数据 |
 | J4 | 前端商家切换 | 用户 | — | — | 取消 EventSource；queryClient 按 merchant 隔离 | web App / docks | 所有 queryKey | 迟到响应不进新商 UI |
 | J5 | 缓存与 React Query | — | — | — | — | 各 Page | 见枚举 queryKey 清单 | 无跨商复用 `["products"]` 等；B8 统一门禁 |
@@ -362,3 +362,5 @@
 账户交付于2026-09-08取得真实隔离Go/PG、SMTP/IMAP与浏览器证据；四语界面35项mock、Web749测试和构建通过。改密/恢复失效全部旧会话和恢复码，退出失败可重试。见 [后端验收](tasks/archive/saas-account-team.md) 与 [页面验收](tasks/archive/saas-account-interface.md)。共享开发服务未重启，新增恢复表需运行迁移；该结果不代表整仓发行或完整后台通过。
 
 [语言资源按需加载](tasks/archive/saas-locale-loading.md)已交付：确认会话后只加载当前语言，四语各2418键原文完整保留；切换失败可重试，匿名主题不会取消语言选择，迟到加载与保存受账号世代约束。受控浏览器首屏响应总量减少79199–94474B，最终整树入口538704B/gzip157799B；781单测和当前29项概览集成通过。详细冻结资源、分轮浏览器与未验证项归属该交付记录。
+
+统一后台队列代码已交付，五类任务在同一事务持久化 River 作业，领取时核对商家与执行轮。隔离公平、故障和迁移证据见 [统一队列验收](tasks/archive/pg-queue-integration.md)。共享服务仍运行旧版本，不能把代码交付视为数据库已切换。

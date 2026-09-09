@@ -15,6 +15,7 @@ import psycopg
 
 from capacity_events import merge_events, snapshot_events, validate_event
 from capacity_identity import verify_identity
+from river_evidence import image_session_river_join, image_session_river_projection
 from run_contention import quota_report
 
 
@@ -80,14 +81,14 @@ class DBProbe:
     def task(self, task_id: str) -> dict[str, Any]:
         with self.connection.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT t.id, t.status, t.prompt, t.billing_seq, s.merchant_id,
                        t.created_at, t.started_at, t.finished_at,
                        COALESCE(t.progress_updated_at, t.finished_at, t.started_at, s.updated_at, t.created_at) AS updated_at,
-                       d.status AS dispatch_status, d.sent_at, d.attempts
+                       {image_session_river_projection()}
                 FROM image_session_generation_tasks t
                 JOIN image_sessions s ON s.id = t.session_id
-                LEFT JOIN async_dispatches d ON d.actor_name = 'run_image_session_generation_task' AND d.aggregate_id = t.id
+                {image_session_river_join()}
                 WHERE t.id = %s
                 """,
                 (task_id,),

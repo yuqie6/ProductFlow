@@ -61,7 +61,7 @@ var (
 // claimQueuedNodeRun 把 queued 节点标 running 并分配 attempt_id。
 // 先查容量（pg_advisory_xact_lock），再按 run → node 加 FOR UPDATE，避免与取消死锁。
 // roundClaimed 表示本次 ExecuteRun 已经成功 claim 过节点；此时若另一商家已有到期
-// generation PENDING，就让本次消费轮释放 SENT，交给 dispatcher 轮转。
+// generation 作业，就让当前 River 消费轮 snooze，等待下次容量分配。
 // 未抢到返回 false, ""（不当失败）；容量或商家轮转门禁返回 errWaitingCapacity。
 // 副作用：workflow_graph_node_runs + node.claimed / node.started 事件。不要先锁 node 再锁 run。
 func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string, roundClaimed bool) (bool, string, error) {
@@ -97,6 +97,17 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string, rou
 		}
 		if err := graphRunLeaseSchemaOwned(ctx, run); err != nil {
 			return err
+		}
+		merchantID, err := merchantIDForGraphRun(ctx, dbTx, run.ID)
+		if err != nil {
+			return err
+		}
+		turn, err := queue.GenerationTurn(ctx, dbTx, merchantID)
+		if err != nil {
+			return err
+		}
+		if !turn {
+			return errWaitingCapacity
 		}
 		if roundClaimed {
 			merchantID, err := merchantIDForGraphRun(ctx, dbTx, run.ID)
@@ -157,29 +168,8 @@ func claimQueuedNodeRun(ctx context.Context, gdb *gorm.DB, nodeRunID string, rou
 	return claimed, claimedAttemptID, err
 }
 
-// otherMerchantGenerationPending is evaluated while the shared generation
-// admission lock is held by claimQueuedNodeRun. A due PENDING envelope is
-// already a dispatcher-visible turn for another merchant, including one with
-// a live dispatcher lease that has not reached SENT yet.
 func otherMerchantGenerationPending(ctx context.Context, dbTx *gorm.DB, merchantID string, now time.Time) (bool, error) {
-	var row schema.AsyncDispatches
-	err := dbTx.WithContext(ctx).Model(&schema.AsyncDispatches{}).
-		Select("id").
-		Where("merchant_id IS NOT NULL AND merchant_id <> '' AND merchant_id <> ?", merchantID).
-		Where("actor_name IN ? AND status = ? AND available_at <= ?", []string{
-			queue.ActorGraphRun,
-			queue.ActorImageSession,
-		}, queue.StatusPending, now).
-		Order("available_at ASC, id ASC").
-		Limit(1).
-		Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return queue.OtherReadyGenerationMerchant(ctx, dbTx, merchantID, now)
 }
 
 func loadNodeRunStatuses(ctx context.Context, tx *gorm.DB, runID string) ([]string, []string, error) {

@@ -4,11 +4,11 @@
 // ChangeSet 的 config 不能引入未注册或退役 plan key。空画布合法，可编辑、撤销、配方预览。
 //
 // 调用时机：Web/Agent HTTP 改图走 [Service]；已有事务的跨包写入走 [WriteTx]；
-// asynq worker 执行走 [Executor.ExecuteRun]。
-// 提交运行只写 PENDING dispatch，不在 HTTP 请求里打 broker。
+// River worker 执行走 [Executor.ExecuteRun]。
+// 提交运行只写 River 作业，不在 HTTP 请求里打 broker。
 //
 // 副作用：改图写 workflow_graphs / 节点 / 边 / 分组 / 历史；跑图写 workflow_graph_runs、
-// workflow_graph_node_runs、workflow_graph_provider_effects、run events，并 Stage asynq。
+// workflow_graph_node_runs、workflow_graph_provider_effects、run events，并 Stage River。
 // 生成图通过 [GeneratedImageWriter] 写成 ProductImageAsset；交付通过 [DeliveryQueuer] 排队。
 //
 // 错误：同节点丢失更新、拓扑 revision 不匹配、已有 running、空 inverse 等返回 Conflict；缺图/缺 run 返回 NotFound。

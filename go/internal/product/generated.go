@@ -2,6 +2,7 @@ package product
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/storage"
@@ -32,6 +33,13 @@ func (s Service) Write(ctx context.Context, tx *gorm.DB, in graph.GeneratedImage
 type compensatingConnPool struct {
 	gorm.ConnPool
 	files []*storage.Compensation
+}
+
+// SQLTx exposes the existing transaction for River InsertTx. Commit/Rollback
+// still belong to this wrapper so generated-file compensation remains intact.
+func (c *compensatingConnPool) SQLTx() *sql.Tx {
+	tx, _ := c.ConnPool.(*sql.Tx)
+	return tx
 }
 
 // Commit 先提交事务，失败则回滚已 stage 的媒体文件。

@@ -32,6 +32,7 @@ class ContentionEvidenceTests(unittest.TestCase):
             "short": {
                 "a_accepted_by_http": 100, "a_reconciled_task_ids": 100,
                 "a_terminal_count": 100, "a_throughput_succeeded": 100,
+                "a_river_jobs_observed": 100,
                 "b_accepted_by_http": 20, "b_reconciled_task_ids": 20,
                 "target_b_p95_pass": True,
             },
@@ -46,20 +47,26 @@ class ContentionEvidenceTests(unittest.TestCase):
         report["short"]["a_accepted_by_http"] = 100
         self.assertFalse(contention_pass(report))
 
-    def test_redispatch_timestamp_is_not_reported_as_first_dispatch(self):
+        report["short"]["a_reconciled_task_ids"] = 100
+        self.assertTrue(contention_pass(report))
+        report["short"]["a_river_jobs_observed"] = 99
+        self.assertFalse(contention_pass(report))
+
+    def test_latest_attempt_timestamp_is_not_reported_as_first_attempt(self):
         result = phase_metrics(
             ["task"],
-            {"task": {"prompt": "queued", "sent_at": datetime.fromtimestamp(120, timezone.utc), "dispatch_attempts": 4}},
+            {"task": {"prompt": "queued", "river_state": "running", "river_attempted_at": datetime.fromtimestamp(120, timezone.utc), "river_attempt": 4}},
             {"request": {"prompt": "Current user request:\nqueued\n", "started_epoch": 122}},
             {"task": {"accepted_at": 100}},
         )[0]
-        self.assertEqual(result["dispatch_attempts"], 4)
-        self.assertEqual(result["accept_to_last_dispatch_ms"], 20000)
-        self.assertEqual(result["last_dispatch_to_provider_ms"], 2000)
+        self.assertEqual(result["river_attempt"], 4)
+        self.assertEqual(result["accept_to_latest_attempt_ms"], 20000)
+        self.assertEqual(result["latest_attempt_to_provider_ms"], 2000)
         self.assertEqual(result["accept_to_provider_ms"], 22000)
-        self.assertTrue(result["first_dispatch_observation"].startswith("unmeasured"))
-        self.assertNotIn("accept_to_dispatch_ms", result)
-        self.assertNotIn("dispatch_to_provider_ms", result)
+        self.assertTrue(result["first_attempt_observation"].startswith("unmeasured"))
+        self.assertTrue(result["river_job_observed"])
+        self.assertNotIn("accept_to_first_attempt_ms", result)
+        self.assertNotIn("first_attempt_to_provider_ms", result)
 
     def test_quota_account_accepts_postgres_numeric_aggregates(self):
         account = {

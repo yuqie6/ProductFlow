@@ -154,7 +154,7 @@ func TestWorkflowRequestConfirmCancelRace(t *testing.T) {
 			if err := db.Model(&schema.WorkflowGraphRuns{}).Where("graph_id=?", req.WorkflowID).Count(&runs).Error; err != nil {
 				t.Fatal(err)
 			}
-			if err := db.Model(&schema.AsyncDispatches{}).Where("actor_name=?", queue.ActorGraphRun).Count(&dispatches).Error; err != nil {
+			if err := db.Table("river_job").Where("args ->> 'actor'=?", queue.ActorGraphRun).Count(&dispatches).Error; err != nil {
 				t.Fatal(err)
 			}
 			if stored.Status == "cancelled" {

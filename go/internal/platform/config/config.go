@@ -19,7 +19,7 @@ type Config struct {
 	AppHost                           string   // env APP_HOST
 	AppPort                           int      // env APP_PORT
 	DatabaseURL                       string   // env DATABASE_URL，启动后不再读库
-	RedisURL                          string   // env REDIS_URL，asynq 用；Load 不强制非空
+	RedisURL                          string   // env REDIS_URL，认证限流使用；Load 不强制非空
 	LogLevel                          string   // env LOG_LEVEL
 	LogFormat                         string   // env LOG_FORMAT，console 或 json
 	LogDir                            string   // env LOG_DIR；空则 STORAGE_ROOT/logs

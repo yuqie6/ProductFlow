@@ -119,7 +119,8 @@ func (s Service) ListTurns(ctx context.Context, productID *string, conversationI
 	return out, err
 }
 
-// SubmitTurn 按幂等键预留 projection 并交给 Gateway；HTTP 只写 PENDING dispatch。Gateway 未配置或同步入队失败返回 Unavailable。输入非法返回 Validation；conversation 不存在返回 NotFound；状态不允许或幂等键冲突返回 Conflict。
+// SubmitTurn 同事务预留 projection 与 River 作业，提交后尝试绑定 Gateway。
+// Gateway 失败仍保留已受理的后台同步；输入或入队失败回滚业务受理。
 func (s Service) SubmitTurn(ctx context.Context, productID *string, conversationID string, in startTurnInput) (SubmitTurnResponse, error) {
 	if s.Gateway == nil {
 		return SubmitTurnResponse{}, apperr.Unavailable("Agent 服务尚未配置或暂时不可用")
@@ -133,7 +134,8 @@ func (s Service) SubmitTurn(ctx context.Context, productID *string, conversation
 		}
 		created = wasCreated
 		projectionID = row.ID
-		return nil
+		_, err = queue.StageTaskForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0)
+		return err
 	})
 	if err != nil {
 		return SubmitTurnResponse{}, err
@@ -141,16 +143,6 @@ func (s Service) SubmitTurn(ctx context.Context, productID *string, conversation
 	bound, err := s.bindGatewayTurn(ctx, productID, conversationID, projectionID, true)
 	if err != nil {
 		return SubmitTurnResponse{}, err
-	}
-	err = tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
-		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		_ = s.recordStartError(ctx, productID, conversationID, projectionID, "Agent Turn 已创建，但后台同步任务暂时无法入队")
-		return SubmitTurnResponse{}, apperr.Unavailable("Agent Turn 已创建，但状态同步暂时不可用；请重试当前请求")
 	}
 	return SubmitTurnResponse{Created: created, Turn: bound}, nil
 }
@@ -238,7 +230,7 @@ func controlTurnTx(ctx context.Context, pgxTx *gorm.DB, s Service, productID *st
 	if err := s.applyTurnState(ctx, pgxTx, productID, conversationID, projectionID, state); err != nil {
 		return TurnResponse{}, err
 	}
-	if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0); err != nil {
+	if _, err := queue.StageTaskForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0); err != nil {
 		return TurnResponse{}, err
 	}
 	loaded, err := loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
@@ -292,6 +284,7 @@ func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, c
 			Where("id = ? AND status = 'requires_input' AND question_json->>'id' = ?", projectionID, questionID).
 			Where("question_answer_json IS NULL OR question_answer_json::jsonb = ?::jsonb", string(answerJSON)).
 			Updates(map[string]any{
+				"queue_execution_id":   gorm.Expr("CASE WHEN question_answer_json IS NULL THEN gen_random_uuid()::text ELSE queue_execution_id END"),
 				"question_answer_json": string(answerJSON),
 				"resume_required":      false,
 				"sync_error":           gorm.Expr("NULL"),
@@ -303,7 +296,7 @@ func (s Service) persistQuestionAnswer(ctx context.Context, productID *string, c
 		if result.RowsAffected != 1 {
 			return apperr.NotPending("当前 Agent 问题已过期或已保存不同答案")
 		}
-		if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0); err != nil {
+		if _, err := queue.StageTaskForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0); err != nil {
 			return err
 		}
 		row, err = loadTurn(ctx, pgxTx, productID, conversationID, projectionID)
@@ -402,7 +395,7 @@ func (s Service) resumeLiveQuestion(ctx context.Context, productID *string, conv
 		}).Error; err != nil {
 			return err
 		}
-		_, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0)
+		_, err := queue.StageTaskForActor(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID, 0)
 		return err
 	})
 	if err != nil {

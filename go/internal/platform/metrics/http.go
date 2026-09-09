@@ -102,8 +102,10 @@ func snapshot(db *gorm.DB) (string, error) {
 	}{
 		{&schema.AgentTurnProjections{}, &turns},
 		{&schema.WorkflowGraphRuns{}, &runs},
-		{&schema.AsyncDispatches{}, &dispatches},
 		{&schema.AgentModelInvocations{}, &invocations},
+	}
+	if err := db.Table("river_job").Select("state AS status, COUNT(*) AS count").Group("state").Scan(&dispatches).Error; err != nil {
+		return "", err
 	}
 	if err := db.Model(&schema.AgentTurnEffectReconciliations{}).
 		Select("reconciliation_state AS status, COUNT(*) AS count").Group("reconciliation_state").Scan(&reconciliations).Error; err != nil {
@@ -159,8 +161,8 @@ func snapshot(db *gorm.DB) (string, error) {
 			WHERE p.resume_required = FALSE
 			  AND (p.status IN ('queued', 'running', 'cancel_requested') OR (p.status = 'requires_input' AND p.question_answer_json IS NOT NULL))
 			  AND NOT EXISTS (
-				SELECT 1 FROM async_dispatches d
-				WHERE d.delivery_key = 'run_agent_turn_sync:' || p.id AND d.status IN ('pending', 'sent', 'dead')
+				SELECT 1 FROM river_job d
+				WHERE d.kind = 'productflow_task' AND d.args ->> 'actor' = 'run_agent_turn_sync' AND d.args ->> 'aggregate_id' = p.id AND d.state <> 'completed' AND d.args ->> 'execution_id' = p.queue_execution_id
 			  )
 			UNION ALL
 			SELECT 'graph' AS domain
@@ -178,24 +180,24 @@ func snapshot(db *gorm.DB) (string, error) {
 			FROM image_session_generation_tasks t
 			WHERE t.is_retryable = TRUE AND t.status = 'queued'
 			  AND NOT EXISTS (
-				SELECT 1 FROM async_dispatches d
-				WHERE d.delivery_key = 'run_image_session_generation_task:' || t.id AND d.status IN ('pending', 'sent', 'dead')
+				SELECT 1 FROM river_job d
+				WHERE d.kind = 'productflow_task' AND d.args ->> 'actor' = 'run_image_session_generation_task' AND d.args ->> 'aggregate_id' = t.id AND d.state <> 'completed' AND d.args ->> 'execution_id' = t.queue_execution_id
 			  )
 			UNION ALL
 			SELECT 'delivery' AS domain
 			FROM delivery_rendition_jobs j
 			WHERE j.is_retryable = TRUE AND j.status = 'queued'
 			  AND NOT EXISTS (
-				SELECT 1 FROM async_dispatches d
-				WHERE d.delivery_key = 'run_delivery_rendition_job:' || j.id AND d.status IN ('pending', 'sent', 'dead')
+				SELECT 1 FROM river_job d
+				WHERE d.kind = 'productflow_task' AND d.args ->> 'actor' = 'run_delivery_rendition_job' AND d.args ->> 'aggregate_id' = j.id AND d.state <> 'completed' AND d.args ->> 'execution_id' = j.queue_execution_id
 			  )
 			UNION ALL
 			SELECT 'local_image_edit' AS domain
 			FROM local_image_edit_tasks t
 			WHERE t.is_retryable = TRUE AND t.status = 'queued'
 			  AND NOT EXISTS (
-				SELECT 1 FROM async_dispatches d
-				WHERE d.delivery_key = 'run_local_image_edit_task:' || t.id AND d.status IN ('pending', 'sent', 'dead')
+				SELECT 1 FROM river_job d
+				WHERE d.kind = 'productflow_task' AND d.args ->> 'actor' = 'run_local_image_edit_task' AND d.args ->> 'aggregate_id' = t.id AND d.state <> 'completed' AND d.args ->> 'execution_id' = t.queue_execution_id
 			  )
 		) candidates
 		GROUP BY domain
@@ -287,9 +289,8 @@ func snapshot(db *gorm.DB) (string, error) {
 	fmt.Fprintf(&b, "productflow_notify_listener_connections %d\n", notify.ListenerConnections.Load())
 	writeStatusCounts(&b, "productflow_agent_turns", "Agent Turns by durable status.", turns)
 	writeStatusCounts(&b, "productflow_graph_runs", "Workflow runs by durable status.", runs)
-	// PENDING→SENT enqueue 只发生在 dispatcher。worker 与 API 共用本 snapshot 的
-	// productflow_async_dispatches 状态计数，不另造进程内 enqueue counter。
-	writeStatusCounts(&b, "productflow_async_dispatches", "Async dispatch records by durable status.", dispatches)
+	// Worker 与 API 共用原生 River 状态计数，不把 job 完成投影为业务成功。
+	writeStatusCounts(&b, "productflow_queue_jobs", "River jobs by durable state.", dispatches)
 	writeStatusCounts(&b, "productflow_agent_model_invocations", "Model invocations by durable status.", invocations)
 	writeStatusCounts(&b, "productflow_agent_effect_reconciliations", "Effect reconciliations by bounded state.", reconciliations)
 	writeStatusCounts(&b, "productflow_agent_executions", "Agent executions by phase.", executions)

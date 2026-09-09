@@ -50,11 +50,6 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $enum$;`,
 	`DO $enum$ BEGIN
-CREATE TYPE asyncdispatchstatus AS ENUM ('pending', 'sent', 'consumed', 'dead');
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $enum$;`,
-	`DO $enum$ BEGIN
 CREATE TYPE copystatus AS ENUM ('draft', 'confirmed');
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
@@ -502,21 +497,6 @@ WHEN duplicate_table THEN NULL;
 END $c$;`,
 	`DO $c$ BEGIN
 ALTER TABLE agent_workflow_run_requests ADD CONSTRAINT uq_agent_workflow_run_requests_conversation_key UNIQUE (conversation_id, idempotency_key);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE async_dispatches ADD CONSTRAINT ck_async_dispatches_non_negative_attempts CHECK (attempts >= 0);
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE async_dispatches ADD CONSTRAINT ck_async_dispatches_status CHECK (status = ANY (ARRAY['pending'::asyncdispatchstatus, 'sent'::asyncdispatchstatus, 'consumed'::asyncdispatchstatus, 'dead'::asyncdispatchstatus]));
-EXCEPTION WHEN duplicate_object THEN NULL;
-WHEN duplicate_table THEN NULL;
-END $c$;`,
-	`DO $c$ BEGIN
-ALTER TABLE async_dispatches ADD CONSTRAINT uq_async_dispatches_delivery_key UNIQUE (delivery_key);
 EXCEPTION WHEN duplicate_object THEN NULL;
 WHEN duplicate_table THEN NULL;
 END $c$;`,
@@ -1695,8 +1675,6 @@ END $c$;`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_turn_projections_task_created ON public.agent_turn_projections USING btree (task_id, created_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_workflow_run_requests_conversation_status_updated ON public.agent_workflow_run_requests USING btree (conversation_id, status, updated_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_agent_workflow_run_requests_task_status_updated ON public.agent_workflow_run_requests USING btree (task_id, status, updated_at, id);`,
-	`CREATE INDEX IF NOT EXISTS ix_async_dispatches_lease_expiry ON public.async_dispatches USING btree (status, lease_expires_at, id);`,
-	`CREATE INDEX IF NOT EXISTS ix_async_dispatches_status_available ON public.async_dispatches USING btree (status, available_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_delivery_rendition_jobs_product_status_created ON public.delivery_rendition_jobs USING btree (product_id, status, created_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_delivery_rendition_jobs_source_created ON public.delivery_rendition_jobs USING btree (source_asset_id, created_at, id);`,
 	`CREATE INDEX IF NOT EXISTS ix_image_session_assets_media_object_id ON public.image_session_assets USING btree (media_object_id);`,

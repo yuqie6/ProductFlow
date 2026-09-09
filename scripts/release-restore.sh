@@ -265,7 +265,7 @@ cat <<EOF
 3. login with the restored ADMIN_ACCESS_KEY from .env
 4. probe media download is not missing_file / verification_status=missing
 5. provider profile has_api_key true when backup contained keys (PG plaintext)
-6. async_dispatches / task rows match restore policy; Redis emptiness is OK (re-dispatch from PG)
+6. river_job / business task rows match restore policy; Redis only holds authentication rate limits
 7. agent /healthz and publisher/session materials under /data are explainable
 8. unknown provider outcomes remain unknown (not auto-failed)
 

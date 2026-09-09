@@ -60,7 +60,7 @@ func (e Executor) Execute(ctx context.Context, jobID string) error {
 	return nil
 }
 
-// releaseIdle 在 claim 不到 queued 行时决定信封命运：别人正在跑则 ErrBusy；业务已终态或行不存在则 nil，让 Consume 标 CONSUMED，避免 dispatcher 无限重投。
+// releaseIdle 在 claim 不到 queued 行时决定本次作业结果：别人正在跑则 ErrBusy；业务已终态或行不存在则 nil，让 River 完成作业。
 func (e Executor) releaseIdle(ctx context.Context, jobID string) error {
 	var row schema.DeliveryRenditionJobs
 	err := e.DB.WithContext(ctx).Where("id = ?", jobID).Take(&row).Error
@@ -92,6 +92,9 @@ type claim struct {
 func (e Executor) claim(ctx context.Context, jobID, attemptID string) (claim, error) {
 	var out claim
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		if err := queue.AssertExecution(ctx, pgxTx, queue.ActorDelivery, jobID); err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		res := pgxTx.Model(&schema.DeliveryRenditionJobs{}).
 			Where("id = ? AND status = ?", jobID, "queued").

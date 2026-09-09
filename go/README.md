@@ -18,11 +18,13 @@ Session cookie 名是 `session`，签名用 Go cookie store。
 
 JSON 日志写滚动文件，终端默认是可读行。默认目录是 `STORAGE_ROOT/logs`（本地即 `storage-dev/logs/`）：`productflow-api.log`、`productflow-worker.log`、`productflow-dispatcher.log`。可用 `LOG_DIR` 改路径；`LOG_FORMAT=json` 让 stderr 也输出 JSON；`LOG_MAX_BYTES` / `LOG_BACKUP_COUNT` / `LOG_RETENTION_DAYS` 控制滚动与按天清理。空闲 dispatcher 周期、`/healthz` 和 Agent heartbeat 只进文件（Debug），终端默认不刷。
 
-HTTP 只写业务行和 `async_dispatches` PENDING，不在请求里打 broker。dispatcher 先标 SENT 再 asynq 投递；worker `MaxRetry=0`。无法证明的供应商结果标 `unknown`，不自动当失败重试。
+HTTP 在同一 GORM 事务中写业务行与 River 作业。Worker 直接从 PostgreSQL 领取；River 负责延迟、snooze 和有限基础设施重试。业务执行身份及 attempt 围栏决定是否允许外部调用，无法证明的供应商结果保持 `unknown`，不能因队列重试再次调用。Redis 保留认证限流用途，不参与任务投递。
 
-Compose 默认启动三个 Go 进程，占用 `APP_HOST_PORT`（默认 29280）。Go dispatcher 是唯一 durable scanner。
+Compose 默认启动三个 Go 进程，占用 `APP_HOST_PORT`（默认 29280）。Go dispatcher 仅扫描五类业务恢复与额度待对账过期；River 自身维护任务状态。
 
-worker 由进程入口统一接收 SIGINT/SIGTERM，使用 asynq `Start` 后等待 `Shutdown` 返回，避免两个信号处理者并发关闭时提前退出。关闭仍受 asynq 的等待预算约束；强制终止后的闲置恢复阈值不因此改变。`go test ./cmd/productflow-worker` 的信号回归使用本机 `redis-server`、临时 Unix socket 和独立子进程，无需开发数据库或共享 Redis；缺少该二进制时该回归跳过。
+Worker 接收 SIGINT/SIGTERM 后停止领取并等待当前任务完成；30 秒等待超时后取消运行上下文，额外等待最多 10 秒，期间保留数据库连接供终态保存。River job timeout 为 30 分钟、rescue 阈值为 35 分钟；Graph 执行租约为 35 分钟，每 5 分钟续租。连续生图崩溃后的业务闲置恢复默认仍为 90 分钟，队列 rescue 不等于允许再次生图。River 日志经 zapslog 写入现有 Worker 日志。
+
+Go 工具链为 1.26.5，River 固定 0.47.0。`productflow-migrate` 是唯一 schema 入口：River 原生迁移按版本提交，业务 schema 在独立事务中建表、补列及约束，整个过程由既有 advisory lock 串行化。PostgreSQL enum 的版本变更不能把 River 全历史放进单个事务；迁移失败后重跑从已提交版本继续。业务受理和 job 插入的同事务原子性不受此限制。迁移检测到旧队列 pending/sent/dead 会拒绝切换，须停写并核对业务及停止记录后处理；不能通过清空队列跳过 unknown 或 dead 的处置。
 
 ## 配方列表排障
 

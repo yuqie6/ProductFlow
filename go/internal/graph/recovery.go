@@ -25,7 +25,7 @@ const (
 type RecoverySummary struct {
 	QueuedRuns       int `json:"queued_runs"`        // 仍 active、需补 dispatch 的 run 数
 	StaleRunningRuns int `json:"stale_running_runs"` // 过期 running 节点被重新 queued
-	EnqueuedRuns     int `json:"enqueued_runs"`      // RestageIfIdle 实际补回 PENDING 的次数
+	EnqueuedRuns     int `json:"enqueued_runs"`      // RestageTaskIfIdle 实际补回 River 作业 的次数
 	// UnknownRuns 是过期且已打 provider、被标 unknown 的 run 数；unknown 不可经 RetryRun 重试。
 	UnknownRuns int  `json:"unknown_runs"`
 	HasMore     bool `json:"has_more"` // unlocked snapshot 仍有未处理候选
@@ -38,7 +38,7 @@ type graphRunRecoverResult struct {
 	unknown bool
 }
 
-// RecoverUnfinishedGraphRuns 把仍 active 的图运行补回 PENDING dispatch。过期且已打 provider 的节点标 unknown。
+// RecoverUnfinishedGraphRuns 把仍 active 的图运行补回 River 作业。过期且已打 provider 的节点标 unknown。
 // GORM 打开或写库失败原样返回。无法证明的供应商结果标 unknown，不得当失败自动重试。
 // 单条聚合失败计入返回 error，不回滚本轮已提交的其它 run。
 func RecoverUnfinishedGraphRuns(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration, products ProductGuard) (RecoverySummary, error) {
@@ -179,13 +179,13 @@ func graphRunningRecoveryScope(tx *gorm.DB, cutoff time.Time) *gorm.DB {
 						)
 					)
 					AND NOT EXISTS (
-						SELECT 1 FROM async_dispatches d
-						WHERE d.delivery_key = ? || ':' || workflow_graph_runs.id
-						  AND d.status IN ?
+						SELECT 1 FROM river_job d
+						WHERE d.kind = 'productflow_task' AND d.args ->> 'actor' = ? AND d.args ->> 'aggregate_id' = workflow_graph_runs.id
+ AND d.state <> 'completed' AND d.args ->> 'execution_id' = workflow_graph_runs.queue_execution_id
 					)
 				)
 			)`, RunStatusRunning, NodeRunRunning, cutoff, NodeRunRunning, NodeRunQueued,
-		[]string{NodeRunQueued, NodeRunRunning}, queue.ActorGraphRun, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead})
+		[]string{NodeRunQueued, NodeRunRunning}, queue.ActorGraphRun)
 }
 
 func recoverGraphRunState(ctx context.Context, products ProductGuard, gdb *gorm.DB, runID string, cutoff time.Time) (graphRunRecoverResult, error) {
@@ -321,7 +321,7 @@ func restageGraphRun(ctx context.Context, gdb *gorm.DB, runID string) (bool, err
 		}
 		restageCtx := auth.WithMerchantID(ctx, merchantID)
 		var restageErr error
-		changed, restageErr = queue.RestageIfIdle(restageCtx, pgxTx, queue.ActorGraphRun, runID, nil)
+		changed, restageErr = queue.RestageTaskIfIdle(restageCtx, pgxTx, queue.ActorGraphRun, runID, nil)
 		return restageErr
 	})
 	return changed, err

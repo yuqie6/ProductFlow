@@ -17,7 +17,7 @@ func ForUpdateOfSkipLocked(table string) clause.Expression {
 	return clause.Locking{Strength: "UPDATE", Table: clause.Table{Name: table}, Options: "SKIP LOCKED"}
 }
 
-// SkipLocked 是 FOR UPDATE SKIP LOCKED，锁主表且跳过已被别人锁的行。dispatcher claim PENDING 必须用这个，不要用普通 ForUpdate 堵死其它进程。
+// SkipLocked 是 FOR UPDATE SKIP LOCKED，锁主表且跳过已被别人锁的行。用于允许跳过其它事务已锁定行的批量领取。
 func SkipLocked() clause.Expression {
 	return clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}
 }

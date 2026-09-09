@@ -164,7 +164,7 @@ func TestLocalEditCancelReleasesQuotaBeforeProvider(t *testing.T) {
 	`, task.ID, attemptID); err != nil {
 		t.Fatal(err)
 	}
-	es.dropDispatch(t, task.ID)
+	es.dropRiverJob(t, task.ID)
 
 	cancel := es.doJSON(t, http.MethodPost, "/api/v3/products/"+created.Product.ID+"/image-edits/"+task.ID+"/cancel", map[string]any{})
 	es.mustStatus(t, cancel, http.StatusOK)

@@ -62,7 +62,7 @@ func TestGraphUnknownProjectsRequestAndTask(t *testing.T) {
 				path = "/api/v2/products/" + *task.ProductID + "/agent-conversations/" + *task.ConversationID + "/workflow-run-request"
 			}
 			var dispatchBefore int64
-			if err := gdb.Model(&schema.AsyncDispatches{}).Count(&dispatchBefore).Error; err != nil {
+			if err := gdb.Table("river_job").Count(&dispatchBefore).Error; err != nil {
 				t.Fatal(err)
 			}
 			for _, command := range []bool{false, true} {
@@ -79,7 +79,7 @@ func TestGraphUnknownProjectsRequestAndTask(t *testing.T) {
 				}
 			}
 			var dispatchAfter int64
-			if err := gdb.Model(&schema.AsyncDispatches{}).Count(&dispatchAfter).Error; err != nil {
+			if err := gdb.Table("river_job").Count(&dispatchAfter).Error; err != nil {
 				t.Fatal(err)
 			}
 			if dispatchBefore != dispatchAfter {

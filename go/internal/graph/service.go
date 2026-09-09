@@ -16,7 +16,7 @@ import (
 )
 
 // Service 是 schema-v3 图的应用入口：空画布、ChangeSet、提案、文稿候选与 GraphRun。
-// 改图走 WriteTx（只 flush）；跑图走 SubmitRun 写 PENDING dispatch，不在请求里打 broker。
+// 改图走 WriteTx（只 flush）；跑图走 SubmitRun 写 River 作业，不在请求里打 broker。
 // 必须注入 ProductGuard。本包不得 import product。
 type Service struct {
 	DB   *gorm.DB      // 命令事务入口；改图与提交运行都走 tx.WithGorm

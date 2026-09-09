@@ -4,6 +4,10 @@
 
 | Issue | 关闭结果 | 说明 |
 |---|---|---|
+| [pg-queue-integration.md](pg-queue-integration.md) | 完成 | River 统一队列代码与隔离验收；共享环境未切换 |
+| [river-capacity-tools.md](river-capacity-tools.md) | 完成 | River 统一队列代码与隔离验收；共享环境未切换 |
+| [river-delivery-localedit-tests.md](river-delivery-localedit-tests.md) | 完成 | River 统一队列代码与隔离验收；共享环境未切换 |
+| [river-imagesession-tests.md](river-imagesession-tests.md) | 完成 | River 统一队列代码与隔离验收；共享环境未切换 |
 | [eval-development-baseline.md](eval-development-baseline.md) | 完成 | r9 完整 225 条有效开发记录与导出；199 通过、26 失败，质量门未通过 |
 | [generation-merchant-fairness.md](generation-merchant-fairness.md) | 完成 | 有限生成预取与Graph轮转；真实混合执行通过，固定A100/B20等待p95 3.596s、全部完成及额度一致 |
 | [agent-archived-asset-selection.md](agent-archived-asset-selection.md) | 完成 | 全局管理选择不再误装为模型附件；假模型真实启动恢复到待确认，商品附件及PG权限回归通过 |

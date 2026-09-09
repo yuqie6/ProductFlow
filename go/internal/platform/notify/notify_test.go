@@ -96,35 +96,11 @@ func TestSubscribeSharesOneListenerAcrossChannels(t *testing.T) {
 	}
 }
 
-func TestPublishListenDispatchChannel(t *testing.T) {
-	if !ValidChannel(ChannelDispatch) {
-		t.Fatal("ChannelDispatch must be in the closed channel set")
-	}
-	pool, gdb := testdb.Open(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	notes, err := Listen(ctx, pool, ChannelDispatch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := Publish(ctx, gdb, ChannelDispatch, "dispatch-1"); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case n := <-notes:
-		if n.Channel != ChannelDispatch || n.Payload != "dispatch-1" {
-			t.Fatalf("note %+v", n)
-		}
-	case <-ctx.Done():
-		t.Fatal("did not receive dispatch notify")
-	}
-}
-
 func TestListenExitsOnCancel(t *testing.T) {
 	pool, _ := testdb.Open(t)
 	baseline := ListenerConnections.Load()
 	ctx, cancel := context.WithCancel(context.Background())
-	notes, err := Listen(ctx, pool, ChannelDispatch)
+	notes, err := Listen(ctx, pool, ChannelRun)
 	if err != nil {
 		t.Fatal(err)
 	}

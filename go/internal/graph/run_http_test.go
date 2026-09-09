@@ -60,13 +60,13 @@ func TestSubmitRunStagesPendingDispatch(t *testing.T) {
 	}
 	var dispatchStatus string
 	err := gs.pool.QueryRow(context.Background(), `
-		SELECT status FROM async_dispatches
-		WHERE actor_name = 'run_workflow_graph_run' AND aggregate_id = $1
+		SELECT state FROM river_job
+		WHERE args ->> 'actor' = 'run_workflow_graph_run' AND args ->> 'aggregate_id' = $1
 	`, run.ID).Scan(&dispatchStatus)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dispatchStatus != "pending" {
+	if dispatchStatus != "available" {
 		t.Fatalf("dispatch %s", dispatchStatus)
 	}
 
@@ -378,8 +378,8 @@ func TestSubmitNodeRunQueuesWhenPromptArtifactMissing(t *testing.T) {
 	}
 	var n int
 	if err := gs.pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM async_dispatches
-		WHERE actor_name = 'run_workflow_graph_run' AND aggregate_id = $1
+		SELECT COUNT(*) FROM river_job
+		WHERE args ->> 'actor' = 'run_workflow_graph_run' AND args ->> 'aggregate_id' = $1
 	`, run.ID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}

@@ -18,7 +18,7 @@ import (
 )
 
 // HTTP 是连续生图会话的 Gin 处理器集合，不是 WorkflowGraphRun 也不是 AgentTask。
-// 路由挂 /api/image-sessions；attach 在 /api/v2。生成只写 PENDING dispatch，不在请求里打 broker。
+// 路由挂 /api/image-sessions；attach 在 /api/v2。生成只写 River 作业，不在请求里打 broker。
 type HTTP struct {
 	Service Service // 必须注入；拥有会话/生成/attach
 	// Settings 为 nil 时 RequireAdmin 视为不要求访问令牌。

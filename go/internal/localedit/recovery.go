@@ -20,14 +20,14 @@ const recoveryBatchLimit = 25
 
 // RecoverySummary 统计 dispatcher 本轮补回或标 unknown 的局部编辑任务。
 type RecoverySummary struct {
-	QueuedTasks       int  `json:"queued_tasks"`        // 本轮 queued 并补回 PENDING 的数量
+	QueuedTasks       int  `json:"queued_tasks"`        // 本轮 queued 并补回 River 作业 的数量
 	StaleRunningTasks int  `json:"stale_running_tasks"` // 过期 claimed 被重排队
-	EnqueuedTasks     int  `json:"enqueued_tasks"`      // 成功补回 PENDING dispatch 的数量
+	EnqueuedTasks     int  `json:"enqueued_tasks"`      // 成功补回 River 作业 的数量
 	UnknownTasks      int  `json:"unknown_tasks"`       // 已过 provider 边界、标 unknown
 	HasMore           bool `json:"has_more"`            // 跳过锁定行后仍有超过本批额度的候选
 }
 
-// RecoverUnfinished 把 queued 任务补回 PENDING；过期且已打 provider 的 running 标 unknown。
+// RecoverUnfinished 把 queued 任务补回 River 作业；过期且已打 provider 的 running 标 unknown。
 // pool 为 nil 或写库失败时返回 error；已过 provider 边界标 unknown，不得当失败自动重试。
 // 单条任务失败计入返回 error，不回滚本轮已提交的其它任务。
 func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration) (RecoverySummary, error) {
@@ -110,12 +110,12 @@ func localEditRecoveryScope(tx *gorm.DB, cutoff time.Time) *gorm.DB {
 	return tx.Model(&schema.LocalImageEditTasks{}).Where(`
 			is_retryable = ? AND (
 				(status = ? AND NOT EXISTS (
-					SELECT 1 FROM async_dispatches d
-					WHERE d.delivery_key = ? || ':' || local_image_edit_tasks.id
-					  AND d.status IN ?
+					SELECT 1 FROM river_job d
+					WHERE d.kind = 'productflow_task' AND d.args ->> 'actor' = ? AND d.args ->> 'aggregate_id' = local_image_edit_tasks.id
+ AND d.state <> 'completed' AND d.args ->> 'execution_id' = local_image_edit_tasks.queue_execution_id
 				))
 				OR (status = ? AND (started_at IS NULL OR started_at <= ?))
-			)`, true, "queued", queue.ActorLocalEdit, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}, "running", cutoff)
+			)`, true, "queued", queue.ActorLocalEdit, "running", cutoff)
 }
 
 func recoverLocalEditState(ctx context.Context, gdb *gorm.DB, taskID string, staleAfter time.Duration, now time.Time) (string, error) {
@@ -149,14 +149,14 @@ func restageLocalEditTask(ctx context.Context, gdb *gorm.DB, taskID string) (boo
 		}
 		restageCtx := auth.WithMerchantID(ctx, merchantID)
 		var restageErr error
-		changed, restageErr = queue.RestageIfIdle(restageCtx, pgxTx, queue.ActorLocalEdit, task.ID, payloadFor(taskFromModel(task)))
+		changed, restageErr = queue.RestageTaskIfIdle(restageCtx, pgxTx, queue.ActorLocalEdit, task.ID, payloadFor(taskFromModel(task)))
 		return restageErr
 	})
 	return changed, err
 }
 
 // recoverOne 处理一条 queued/running 任务的状态。queued 只确认仍 queued；running 过期且尚未打 provider 可重排队；
-// 已过 provider 边界只能标 unknown。RestageIfIdle 由调用方在状态事务提交后另开 outbox 事务。
+// 已过 provider 边界只能标 unknown。RestageTaskIfIdle 由调用方在状态事务提交后另开入队事务。
 // resetStale=false 时只观察不改行。SKIP LOCKED 跳过仍被 live worker 持有的行。
 // unknown 与该 attempt 的额度状态在同一事务提交。
 func recoverOne(ctx context.Context, pgxTx *gorm.DB, taskID string, resetStale bool, staleAfter time.Duration, now time.Time) (string, error) {

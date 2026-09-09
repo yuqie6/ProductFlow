@@ -63,7 +63,7 @@ func submitGraphRun(ctx context.Context, products ProductGuard, tx *gorm.DB, pro
 	}
 	if active != nil {
 		if sameInFlightRun(*active, scope, targetNodeID, nodeIDs, force, mode, section, row.Revision) {
-			if _, err := queue.StageForActor(ctx, tx, queue.ActorGraphRun, active.ID, 0); err != nil {
+			if _, err := queue.StageTaskForActor(ctx, tx, queue.ActorGraphRun, active.ID, 0); err != nil {
 				return graphRunSubmission{}, err
 			}
 			full, err := loadGraphRun(ctx, products, tx, productID, graphID, active.ID)
@@ -127,7 +127,7 @@ func submitGraphRun(ctx context.Context, products ProductGuard, tx *gorm.DB, pro
 }
 
 // startGraphRun 在没有 running/残留 queued 时立刻开跑：按当时 live 图快照、选出节点、写 running 行。
-// 副作用：workflow_graph_runs（running）、workflow_graph_node_runs（queued）、run.started、Stage asynq。
+// 副作用：workflow_graph_runs（running）、workflow_graph_node_runs（queued）、run.started、Stage River。
 // 23505 表示并发已有 running，返回 Conflict。不要在这里忽略 FIFO queued——那是 submitGraphRun 的职责。
 func startGraphRun(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, graphID string, row graphRow, req GraphRunRequest) (graphRunSubmission, error) {
 	scope := req.Scope
@@ -190,7 +190,7 @@ func startGraphRun(ctx context.Context, products ProductGuard, tx *gorm.DB, prod
 	}); err != nil {
 		return graphRunSubmission{}, err
 	}
-	if _, err := queue.StageForActor(ctx, tx, queue.ActorGraphRun, runID, 0); err != nil {
+	if _, err := queue.StageTaskForActor(ctx, tx, queue.ActorGraphRun, runID, 0); err != nil {
 		return graphRunSubmission{}, err
 	}
 	full, err := loadGraphRun(ctx, products, tx, productID, graphID, runID)
@@ -201,7 +201,7 @@ func startGraphRun(ctx context.Context, products ProductGuard, tx *gorm.DB, prod
 }
 
 // insertQueuedGraphRun 写入 FIFO queued 行。snapshot 只放 schema_version 占位；真正快照在 activate 时按当时 live 图重做。
-// 不 Stage asynq、不插 node_runs。写 run.queued 事件。改占位 JSON 时须保持 activateQueuedRun 能覆盖它。
+// 不 Stage River、不插 node_runs。写 run.queued 事件。改占位 JSON 时须保持 activateQueuedRun 能覆盖它。
 func insertQueuedGraphRun(ctx context.Context, tx *gorm.DB, row graphRow, scope string, targetNodeID *string, nodeIDs []string, force bool, mode, section string) (schema.WorkflowGraphRuns, error) {
 	now := time.Now().UTC()
 	meta, _ := json.Marshal(runProgressMeta(scope, targetNodeID, nodeIDs, force, mode, section))
@@ -367,7 +367,7 @@ func validateGraphRunRequest(req GraphRunRequest) error {
 	return nil
 }
 
-// activateQueuedRun 把 queued 行升成 running：按当前 live 图重做 snapshot 与选点，再 Stage asynq。
+// activateQueuedRun 把 queued 行升成 running：按当前 live 图重做 snapshot 与选点，再 Stage River。
 // 选点失败把该 queued 标 failed+retryable，不挡住后续 promote。23505 表示已有 running，返回 nil。
 // 须已 FOR UPDATE 住该 run。不要复用入队时的占位 snapshot。
 func activateQueuedRun(ctx context.Context, products ProductGuard, tx *gorm.DB, productID, runID string) error {
@@ -446,7 +446,7 @@ func activateQueuedRun(ctx context.Context, products ProductGuard, tx *gorm.DB, 
 	}); err != nil {
 		return err
 	}
-	_, err = queue.StageForActor(ctx, tx, queue.ActorGraphRun, runID, 0)
+	_, err = queue.StageTaskForActor(ctx, tx, queue.ActorGraphRun, runID, 0)
 	return err
 }
 

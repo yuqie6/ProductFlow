@@ -40,13 +40,13 @@ func TestGenerationCommandsRollBackQuotaWithDispatch(t *testing.T) {
 			if err := ss.pool.QueryRow(ctx, "SELECT count(*) FROM merchant_quota_holds WHERE merchant_id=$1", merchantID).Scan(&holdsBefore); err != nil {
 				t.Fatal(err)
 			}
-			// NOT VALID leaves other fixtures intact; this isolated package database rejects new dispatches only.
-			const constraint = "test_imagesession_command_dispatch"
-			if _, err := ss.pool.Exec(ctx, "ALTER TABLE async_dispatches ADD CONSTRAINT "+constraint+" CHECK (actor_name <> 'run_image_session_generation_task') NOT VALID"); err != nil {
+			// NOT VALID leaves other fixtures intact; this isolated package database rejects new River jobs only.
+			const constraint = "test_imagesession_command_river_job"
+			if _, err := ss.pool.Exec(ctx, "ALTER TABLE river_job ADD CONSTRAINT "+constraint+" CHECK (COALESCE(args ->> 'actor', '') <> 'run_image_session_generation_task') NOT VALID"); err != nil {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() {
-				if _, err := ss.pool.Exec(context.Background(), "ALTER TABLE async_dispatches DROP CONSTRAINT IF EXISTS "+constraint); err != nil {
+				if _, err := ss.pool.Exec(context.Background(), "ALTER TABLE river_job DROP CONSTRAINT IF EXISTS "+constraint); err != nil {
 					t.Error(err)
 				}
 			})
@@ -65,7 +65,7 @@ func TestGenerationCommandsRollBackQuotaWithDispatch(t *testing.T) {
 			if before.AvailableUnits != after.AvailableUnits || before.ReservedUnits != after.ReservedUnits {
 				t.Fatal("quota balances partially committed")
 			}
-			var holdsAfter, tasks, dispatches int
+			var holdsAfter, tasks, riverJobs int
 			if err := ss.pool.QueryRow(ctx, "SELECT count(*) FROM merchant_quota_holds WHERE merchant_id=$1", merchantID).Scan(&holdsAfter); err != nil {
 				t.Fatal(err)
 			}
@@ -82,11 +82,11 @@ func TestGenerationCommandsRollBackQuotaWithDispatch(t *testing.T) {
 			if tasks != wantTasks {
 				t.Fatalf("failed command left %d tasks", tasks)
 			}
-			if err := ss.pool.QueryRow(ctx, "SELECT count(*) FROM async_dispatches WHERE aggregate_id=$1", taskID).Scan(&dispatches); err != nil {
+			if err := ss.pool.QueryRow(ctx, "SELECT count(*) FROM river_job WHERE args ->> 'aggregate_id'=$1", taskID).Scan(&riverJobs); err != nil {
 				t.Fatal(err)
 			}
-			if dispatches != 0 {
-				t.Fatalf("partial dispatches=%d", dispatches)
+			if riverJobs != 0 {
+				t.Fatalf("partial river jobs=%d", riverJobs)
 			}
 			if retry {
 				var status string
@@ -98,7 +98,7 @@ func TestGenerationCommandsRollBackQuotaWithDispatch(t *testing.T) {
 					t.Fatalf("partial retry status=%s billing=%d", status, billingSeq)
 				}
 			}
-			if _, err := ss.pool.Exec(ctx, "ALTER TABLE async_dispatches DROP CONSTRAINT "+constraint); err != nil {
+			if _, err := ss.pool.Exec(ctx, "ALTER TABLE river_job DROP CONSTRAINT "+constraint); err != nil {
 				t.Fatal(err)
 			}
 			if err := invoke(); err != nil {
@@ -191,11 +191,11 @@ func TestConcurrentRetryRetainsWinningReservation(t *testing.T) {
 	if n := countQuotaEvents(t, ss.db, merchantID, quota.EventRelease, key); n != 0 {
 		t.Fatalf("losing retry released winning hold: events=%d", n)
 	}
-	var dispatches int
-	if err := ss.pool.QueryRow(ctx, "SELECT count(*) FROM async_dispatches WHERE aggregate_id=$1", taskID).Scan(&dispatches); err != nil {
+	var riverJobs int
+	if err := ss.pool.QueryRow(ctx, "SELECT count(*) FROM river_job WHERE args ->> 'aggregate_id'=$1", taskID).Scan(&riverJobs); err != nil {
 		t.Fatal(err)
 	}
-	if dispatches != 1 {
-		t.Fatalf("dispatches=%d", dispatches)
+	if riverJobs != 1 {
+		t.Fatalf("river jobs=%d", riverJobs)
 	}
 }

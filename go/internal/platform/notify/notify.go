@@ -23,9 +23,7 @@ const (
 	ChannelTurn = "productflow_turn"
 	// ChannelImageSession 是连续生图会话唤醒通道。
 	ChannelImageSession = "productflow_image_session"
-	// ChannelDispatch 是 dispatcher 出队唤醒通道。载荷只作唤醒（dispatch id），不当工作项，不授予商家数据。
-	ChannelDispatch = "productflow_dispatch"
-	maxPayload      = 7900
+	maxPayload          = 7900
 )
 
 // ErrNoPool 表示 Listen 收到了 nil pgx 池。调用方应改走轮询，不要 panic。
@@ -46,7 +44,7 @@ type Notification struct {
 // 调用时机：Publish/Listen 入参校验。拼 SQL 标识符前还要过 safeIdent，不要只信本函数。
 func ValidChannel(name string) bool {
 	switch name {
-	case ChannelControl, ChannelRun, ChannelTurn, ChannelImageSession, ChannelDispatch:
+	case ChannelControl, ChannelRun, ChannelTurn, ChannelImageSession:
 		return true
 	default:
 		return false

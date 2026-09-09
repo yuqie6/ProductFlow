@@ -55,26 +55,23 @@ func TestGraphProjectionFailureRetainsDispatchWithoutRepeatingProvider(t *testin
 				provider.MockImageProvider.Err = graph.ErrProviderUnknown()
 			}
 			exec := graph.Executor{DB: gs.db, Products: product.GraphGuard{}, AfterRunStatus: agent.SyncGraphRunToTasks, Deps: graph.Dependencies{Prompt: graph.MockPromptProvider{}, Image: provider, Assets: product.Service{DB: gs.db, Media: gs.media}}}
-			var dispatchID string
-			if err := gs.pool.QueryRow(ctx, "UPDATE async_dispatches SET status='sent',attempts=1 WHERE actor_name=$1 AND aggregate_id=$2 RETURNING id", queue.ActorGraphRun, run.ID).Scan(&dispatchID); err != nil {
-				t.Fatal(err)
-			}
-			actors := map[string]queue.ActorFunc{queue.ActorGraphRun: exec.ExecuteRun}
-			err := queue.Consume(ctx, gs.pool, dispatchID, run.ID, actors)
+			job := loadGraphJob(t, gs, run.ID)
+			worker := queue.NewWorker(map[string]queue.ActorFunc{queue.ActorGraphRun: exec.ExecuteRun})
+			err := worker.Work(ctx, job)
 			var pgErr *pgconn.PgError
 			if !errors.As(err, &pgErr) || pgErr.Code != "23514" || pgErr.ConstraintName != "test_graph_projection_failure" {
 				t.Errorf("projection error consumed: %v", err)
 			}
-			var runStatus, requestStatus, dispatchStatus string
+			var runStatus, requestStatus string
 			read := func() {
 				t.Helper()
-				if err := gs.pool.QueryRow(ctx, `SELECT r.status,q.status,d.status FROM workflow_graph_runs r JOIN agent_workflow_run_requests q ON q.graph_run_id=r.id JOIN async_dispatches d ON d.aggregate_id=r.id WHERE r.id=$1 AND d.id=$2`, run.ID, dispatchID).Scan(&runStatus, &requestStatus, &dispatchStatus); err != nil {
+				if err := gs.pool.QueryRow(ctx, `SELECT r.status,q.status FROM workflow_graph_runs r JOIN agent_workflow_run_requests q ON q.graph_run_id=r.id WHERE r.id=$1`, run.ID).Scan(&runStatus, &requestStatus); err != nil {
 					t.Fatal(err)
 				}
 			}
 			read()
-			if runStatus != terminal || requestStatus != "confirmed" || dispatchStatus != "pending" {
-				t.Fatalf("run=%s request=%s dispatch=%s", runStatus, requestStatus, dispatchStatus)
+			if runStatus != terminal || requestStatus != "confirmed" {
+				t.Fatalf("run=%s request=%s", runStatus, requestStatus)
 			}
 			before := loadQuotaAccount(t, gs.db, merchantID)
 			calls := provider.calls.Load()
@@ -82,10 +79,7 @@ func TestGraphProjectionFailureRetainsDispatchWithoutRepeatingProvider(t *testin
 				t.Fatal("provider was never invoked")
 			}
 			// Repeated delivery while the fault persists must still fail, even for an already-terminal run.
-			if err := gs.db.Exec("UPDATE async_dispatches SET status='sent' WHERE id=?", dispatchID).Error; err != nil {
-				t.Fatal(err)
-			}
-			err = queue.Consume(ctx, gs.pool, dispatchID, run.ID, actors)
+			err = worker.Work(ctx, job)
 			pgErr = nil
 			if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
 				t.Fatalf("terminal replay ignored projection failure: %v", err)
@@ -93,15 +87,12 @@ func TestGraphProjectionFailureRetainsDispatchWithoutRepeatingProvider(t *testin
 			if err := gs.db.Exec("ALTER TABLE agent_workflow_run_requests DROP CONSTRAINT test_graph_projection_failure").Error; err != nil {
 				t.Fatal(err)
 			}
-			if err := gs.db.Exec("UPDATE async_dispatches SET status='sent' WHERE id=?", dispatchID).Error; err != nil {
-				t.Fatal(err)
-			}
-			if err := queue.Consume(ctx, gs.pool, dispatchID, run.ID, actors); err != nil {
+			if err := worker.Work(ctx, job); err != nil {
 				t.Fatal(err)
 			}
 			read()
-			if runStatus != terminal || requestStatus != terminal || dispatchStatus != "consumed" {
-				t.Fatalf("recovery run=%s request=%s dispatch=%s", runStatus, requestStatus, dispatchStatus)
+			if runStatus != terminal || requestStatus != terminal {
+				t.Fatalf("recovery run=%s request=%s", runStatus, requestStatus)
 			}
 			after := loadQuotaAccount(t, gs.db, merchantID)
 			if provider.calls.Load() != calls || after.AvailableUnits != before.AvailableUnits || after.ReservedUnits != before.ReservedUnits {

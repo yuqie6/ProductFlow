@@ -62,7 +62,7 @@ func TestRestagePendingMatchesWorkerEligibility(t *testing.T) {
 	}
 	for _, row := range rows {
 		var count int
-		if err := as.pool.QueryRow(ctx, `SELECT COUNT(*) FROM async_dispatches WHERE actor_name=$1 AND aggregate_id=$2`, queue.ActorAgentTurnSync, row.ID).Scan(&count); err != nil {
+		if err := as.pool.QueryRow(ctx, `SELECT COUNT(*) FROM river_job WHERE args ->> 'actor'=$1 AND args ->> 'aggregate_id'=$2`, queue.ActorAgentTurnSync, row.ID).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if (count == 1) != turnNeedsSync(row) || count > 1 {
@@ -88,7 +88,7 @@ func TestRestageRechecksBindingAfterDiscovery(t *testing.T) {
 	if submitted.Turn.HarnessTurnID != nil {
 		t.Fatal("fixture already bound")
 	}
-	if _, err := as.pool.Exec(ctx, `UPDATE async_dispatches SET status='consumed' WHERE actor_name=$1 AND aggregate_id=$2`, queue.ActorAgentTurnSync, submitted.Turn.ID); err != nil {
+	if _, err := as.pool.Exec(ctx, `UPDATE river_job SET state='completed', finalized_at=NOW() WHERE args ->> 'actor'=$1 AND args ->> 'aggregate_id'=$2`, queue.ActorAgentTurnSync, submitted.Turn.ID); err != nil {
 		t.Fatal(err)
 	}
 	bound := false
@@ -109,7 +109,7 @@ func TestRestageRechecksBindingAfterDiscovery(t *testing.T) {
 		t.Fatalf("enqueued=%d pending=%d more=%v bound=%v err=%v", n, pending, more, bound, err)
 	}
 	var status string
-	if err := as.pool.QueryRow(ctx, `SELECT status FROM async_dispatches WHERE actor_name=$1 AND aggregate_id=$2`, queue.ActorAgentTurnSync, submitted.Turn.ID).Scan(&status); err != nil || status != queue.StatusConsumed {
+	if err := as.pool.QueryRow(ctx, `SELECT state FROM river_job WHERE args ->> 'actor'=$1 AND args ->> 'aggregate_id'=$2`, queue.ActorAgentTurnSync, submitted.Turn.ID).Scan(&status); err != nil || status != "completed" {
 		t.Fatalf("dispatch=%s err=%v", status, err)
 	}
 }

@@ -34,7 +34,7 @@ Implementation sub-agents receive one claimed board task at a time, with outcome
 Each executor self-reviews its complete task diff and reports evidence; the primary agent reviews every sub-agent delivery and coordinates integration. Sub-agents stop for assignment after delivery and must not push, reset, revert, or declare the overall program complete. The primary agent continues necessary work within the user's authorized objective. For new work requiring delegation or shared ownership, adjust or publish its board task and confirm ownership and dependencies before proceeding. Internal steps of direct work can continue after checking conflicts; a completed slice does not end the primary agent's responsibility for the assigned outcome. New objectives or actions beyond existing authorization require user approval.
 
 ## Project Structure & Module Organization
-ProductFlow uses User/Merchant boundaries. Operator bootstrap precedes SMTP-backed public registration; each ordinary account owns one merchant. Workspace switching and team UI are outside the current scope. Platform administrators manage products through explicit merchant-targeted read/edit/delete APIs; the complete administration UI remains planned. The live business backend is `go/internal/` (Gin HTTP, GORM on pgx, asynq). Schema authority is `go/cmd/productflow-migrate`. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Package rules live in `go/AGENTS.md` and `web/AGENTS.md`; consult `go/README.md` for Go setup or runtime questions. The retired FastAPI tree is on `retired/python`; do not merge it back.
+ProductFlow uses User/Merchant boundaries. Operator bootstrap precedes SMTP-backed public registration; each ordinary account owns one merchant. Workspace switching and team UI are outside the current scope. Platform administrators manage products through explicit merchant-targeted read/edit/delete APIs; the complete administration UI remains planned. The live business backend is `go/internal/` (Gin HTTP, GORM on pgx, River). Schema authority is `go/cmd/productflow-migrate`. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Package rules live in `go/AGENTS.md` and `web/AGENTS.md`; consult `go/README.md` for Go setup or runtime questions. The retired FastAPI tree is on `retired/python`; do not merge it back.
 
 ## Build, Test, and Development Commands
 Use the root `justfile` whenever possible:
@@ -42,8 +42,8 @@ Use the root `justfile` whenever possible:
 - `docker compose up -d productflow-postgres productflow-redis` — start local PostgreSQL and Redis.
 - `just go-migrate` — apply GORM `CreateTable`/`AddColumn` plus ExtraDDL with dev env vars. AutoMigrate is not used.
 - `just go-api` — run the Go business API (default local runtime).
-- `just go-worker` — run the Go asynq worker.
-- `just go-dispatcher` — run the Go async dispatcher.
+- `just go-worker` — run the Go River worker.
+- `just go-dispatcher` — run the Go business recovery scanner.
 - `just go-test` — run the full Go suite with dev env vars and serial package execution.
 - `just agent-service-install` — install the Node.js/Pi Agent dependencies from the lockfile.
 - `just agent-service-run` — run the Node.js/Pi workflow Agent service.

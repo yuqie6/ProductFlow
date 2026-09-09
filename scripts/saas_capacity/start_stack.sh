@@ -69,7 +69,8 @@ docker run --detach --name "$pg_name" --hostname "$pg_name" --network "$network_
     --publish 127.0.0.1:30183:5432 \
     --volume "$artifact_root/postgres:/var/lib/postgresql/data" \
     postgres:16 \
-    postgres -c max_connections=100 -c shared_buffers=256MB >/dev/null
+    postgres -c max_connections=100 -c shared_buffers=256MB \
+    -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all >/dev/null
 
 until docker exec "$pg_name" pg_isready -U productflow -d productflow >/dev/null 2>&1; do
     sleep 1
@@ -148,7 +149,7 @@ docker run --detach --name "$dispatcher_name" --hostname "$dispatcher_name" --ne
     --env DISPATCHER_METRICS_ADDR=0.0.0.0:29285 \
     --publish 127.0.0.1:30185:29285 \
     --volume "$artifact_root:/app/storage" \
-    "$image_name" productflow-dispatcher --watch --interval 1 --recovery-interval 10 >/dev/null
+    "$image_name" productflow-dispatcher --watch --recovery-interval 10 >/dev/null
 
 for attempt in $(seq 1 60); do
     if curl --fail --silent http://127.0.0.1:30182/healthz >/dev/null 2>&1; then

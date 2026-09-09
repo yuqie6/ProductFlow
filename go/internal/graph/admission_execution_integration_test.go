@@ -2,284 +2,114 @@ package graph_test
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/graph"
-	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/generation"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/product"
 )
 
-// TestQueueConsumeGraphAdmissionUsesRealRuns exercises the worker boundary with
-// two actual graph snapshots and dispatch rows. The first run must yield after
-// one node when the other merchant has an available generation envelope; the
-// second run then gets a real dispatcher turn, and the first run can continue
-// after its retry delay is advanced by the test.
-func TestQueueConsumeGraphAdmissionUsesRealRuns(t *testing.T) {
+func TestRiverGraphAdmissionUsesRealRuns(t *testing.T) {
 	gs := newIsolatedGraphServer(t)
 	fixture := auth.SeedDualMerchants(t, gs.db, gs.client, gs.srv.URL)
-	mustSeedMerchantQuota(t, gs.db, fixture.MerchantAID, 10_000)
-	mustSeedMerchantQuota(t, gs.db, fixture.MerchantBID, 10_000)
-	if _, err := gs.pool.Exec(context.Background(), `
-		UPDATE app_settings
-		SET value = '1', updated_at = NOW()
-		WHERE key = $1
-	`, generation.MaxConcurrentSettingKey); err != nil {
+	mustSeedMerchantQuota(t, gs.db, fixture.MerchantAID, 10000)
+	mustSeedMerchantQuota(t, gs.db, fixture.MerchantBID, 10000)
+	if err := gs.db.Exec("UPDATE app_settings SET value='1' WHERE key=?", generation.MaxConcurrentSettingKey).Error; err != nil {
 		t.Fatal(err)
 	}
-
-	originalCookies := gs.cookies
+	original := gs.cookies
 	gs.cookies = fixture.CookiesA
-	productA, graphA := gs.createDirectGraphWithImageTypes(t, `[{"key":"hero","quantity":1},{"key":"detail","quantity":1},{"key":"scene","quantity":1}]`)
-	runA := submitAdmissionGraphRun(t, gs, productA, graphA)
-	if len(runA.NodeRuns) < 2 {
-		t.Fatalf("real graph fixture must have multiple node runs, got %d", len(runA.NodeRuns))
+	a, ga := gs.createDirectGraphWithImageTypes(t, `[{"key":"hero","quantity":1},{"key":"detail","quantity":1},{"key":"scene","quantity":1}]`)
+	ra := submitAdmissionGraphRun(t, gs, a, ga)
+	gs.cookies = fixture.CookiesB
+	b, gb := gs.createDirectGraphWithImageTypes(t, `[{"key":"hero","quantity":1}]`)
+	rb := submitAdmissionGraphRun(t, gs, b, gb)
+	gs.cookies = original
+	ja, jb := loadGraphJob(t, gs, ra.ID), loadGraphJob(t, gs, rb.ID)
+	if ja.Args.MerchantID != fixture.MerchantAID || jb.Args.MerchantID != fixture.MerchantBID {
+		t.Fatal("job merchant snapshot drift")
 	}
-
-	dispatchA := loadGraphAdmissionDispatch(t, gs, runA.ID)
-	if dispatchA.MerchantID != fixture.MerchantAID || dispatchA.AggregateID != runA.ID {
-		t.Fatalf("A dispatch identity merchant=%q aggregate=%q run=%q", dispatchA.MerchantID, dispatchA.AggregateID, runA.ID)
-	}
-	summary, err := queue.RunDispatcherOnce(context.Background(), gs.pool, nil, 1)
+	provider := &projectionImageProvider{}
+	executor := graph.Executor{DB: gs.db, Products: product.GraphGuard{}, Deps: graph.Dependencies{Prompt: graph.MockPromptProvider{}, Image: provider, Assets: product.Service{DB: gs.db, Media: gs.media}}}
+	worker, err := queue.NewClient(gs.pool, map[string]queue.ActorFunc{queue.ActorGraphRun: executor.ExecuteRun}, queue.WorkerConfig{GenerationWorkers: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Sent != 1 {
-		t.Fatalf("dispatcher did not send A: %+v", summary)
+	if err := worker.Start(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	dispatchA = loadGraphAdmissionDispatch(t, gs, runA.ID)
-	if dispatchA.Status != queue.StatusSent {
-		t.Fatalf("A dispatch status after dispatcher=%q", dispatchA.Status)
-	}
-
-	gs.cookies = fixture.CookiesB
-	productB, graphB := gs.createDirectGraphWithImageTypes(t, `[{"key":"hero","quantity":1},{"key":"detail","quantity":1},{"key":"scene","quantity":1}]`)
-	runB := submitAdmissionGraphRun(t, gs, productB, graphB)
-	dispatchB := loadGraphAdmissionDispatch(t, gs, runB.ID)
-	if dispatchB.MerchantID != fixture.MerchantBID || dispatchB.AggregateID != runB.ID {
-		t.Fatalf("B dispatch identity merchant=%q aggregate=%q run=%q", dispatchB.MerchantID, dispatchB.AggregateID, runB.ID)
-	}
-	if dispatchB.Status != queue.StatusPending {
-		t.Fatalf("B must wait in PENDING before A yields: %q", dispatchB.Status)
-	}
-	gs.cookies = originalCookies
-
-	executor := graph.Executor{
-		DB:       gs.db,
-		Products: product.GraphGuard{},
-		Deps: graph.Dependencies{
-			Prompt: graph.MockPromptProvider{},
-			Image:  graph.MockImageProvider{},
-			Assets: product.Service{DB: gs.db, Media: gs.media},
-		},
-	}
-	allRunIDs := []string{runA.ID, runB.ID}
-	allDispatchIDs := []string{dispatchA.ID, dispatchB.ID}
-	beforeA := loadGraphAdmissionProgress(t, gs, runA.ID)
-	beforeB := loadGraphAdmissionProgress(t, gs, runB.ID)
-	started := time.Now()
-	var firstActorErr error
-	if err := queue.Consume(context.Background(), gs.pool, dispatchA.ID, runA.ID, map[string]queue.ActorFunc{
-		queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
-			firstActorErr = executor.ExecuteRun(ctx, aggregateID)
-			return firstActorErr
-		},
-	}); err != nil {
-		t.Fatalf("A queue consume: %v", err)
-	}
-	if !errors.Is(firstActorErr, queue.ErrLater) {
-		t.Fatalf("A must yield through ExecuteRun ErrLater, got %v", firstActorErr)
-	}
-	if elapsed := time.Since(started); elapsed > 5*time.Second {
-		t.Fatalf("A yield did not terminate promptly: %s", elapsed)
-	}
-	afterA := loadGraphAdmissionProgress(t, gs, runA.ID)
-	afterB := loadGraphAdmissionProgress(t, gs, runB.ID)
-	t.Logf("round=0 dispatch=%s actor_error=%v A before=%+v after=%+v B before=%+v after=%+v", dispatchA.ID, firstActorErr, beforeA, afterA, beforeB, afterB)
-	if !progressChanged(beforeA, afterA) {
-		t.Fatalf("A made no progress before yielding: before=%+v after=%+v", beforeA, afterA)
-	}
-	assertGraphAdmissionProgress(t, gs, runA.ID, true)
-	dispatchA = loadGraphAdmissionDispatch(t, gs, runA.ID)
-	if dispatchA.Status != queue.StatusPending || dispatchA.SentAt != nil || dispatchA.LeaseToken != nil {
-		t.Fatalf("A ErrLater must clear SENT/lease: status=%q sent_at=%v lease=%v", dispatchA.Status, dispatchA.SentAt, dispatchA.LeaseToken)
-	}
-
-	// ReleaseForRetry uses a one-second delay. Advancing only these test rows'
-	// availability makes each next dispatcher turn deterministic without
-	// waiting or changing business timestamps on either run. The dispatcher
-	// still chooses which real merchant gets the next SENT envelope.
-	const maxRounds = 32
-	for round := 1; round <= maxRounds; round++ {
-		if graphAdmissionComplete(t, gs, allRunIDs) {
-			break
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := worker.Stop(ctx); err != nil {
+			t.Error(err)
 		}
-		advanceGraphAdmissionDispatches(t, gs, allDispatchIDs)
-		beforeA = loadGraphAdmissionProgress(t, gs, runA.ID)
-		beforeB = loadGraphAdmissionProgress(t, gs, runB.ID)
-		summary, err := queue.RunDispatcherOnce(context.Background(), gs.pool, nil, 1)
-		if err != nil {
+	})
+	bProgressedBeforeAFinished := false
+	deadline := time.Now().Add(25 * time.Second)
+	for time.Now().Before(deadline) {
+		var countB int64
+		if err := gs.db.Table("workflow_graph_node_runs").Where("graph_run_id=? AND attempt_count>0", rb.ID).Count(&countB).Error; err != nil {
 			t.Fatal(err)
 		}
-		if summary.Sent != 1 {
-			t.Fatalf("round %d dispatcher made no progress: %+v A=%+v B=%+v", round, summary, beforeA, beforeB)
+		var stateA string
+		if err := gs.db.Table("workflow_graph_runs").Select("status").Where("id=?", ra.ID).Scan(&stateA).Error; err != nil {
+			t.Fatal(err)
 		}
-		sent, sentRunID := findSentGraphAdmissionDispatch(t, gs, allRunIDs)
-		var actorErr error
-		if err := queue.Consume(context.Background(), gs.pool, sent.ID, sentRunID, map[string]queue.ActorFunc{
-			queue.ActorGraphRun: func(ctx context.Context, aggregateID string) error {
-				actorErr = executor.ExecuteRun(ctx, aggregateID)
-				return actorErr
-			},
-		}); err != nil {
-			t.Fatalf("round %d consume run %s: %v", round, sentRunID, err)
+		if countB > 0 && stateA != "succeeded" {
+			bProgressedBeforeAFinished = true
 		}
-		afterA = loadGraphAdmissionProgress(t, gs, runA.ID)
-		afterB = loadGraphAdmissionProgress(t, gs, runB.ID)
-		t.Logf("round=%d dispatch=%s run=%s actor_error=%v A before=%+v after=%+v B before=%+v after=%+v", round, sent.ID, sentRunID, actorErr, beforeA, afterA, beforeB, afterB)
-		if actorErr != nil && !errors.Is(actorErr, queue.ErrLater) {
-			t.Fatalf("round %d actor error for run %s: %v", round, sentRunID, actorErr)
+		if loadGraphJob(t, gs, ra.ID).State == rivertype.JobStateCompleted && loadGraphJob(t, gs, rb.ID).State == rivertype.JobStateCompleted {
+			if !bProgressedBeforeAFinished {
+				t.Fatal("B waited behind the entire A graph")
+			}
+			for _, id := range []string{ra.ID, rb.ID} {
+				var bad int64
+				if err := gs.db.Table("workflow_graph_node_runs").Where("graph_run_id=? AND (status<>'succeeded' OR attempt_count<>1)", id).Count(&bad).Error; err != nil {
+					t.Fatal(err)
+				}
+				if bad != 0 {
+					t.Fatalf("run %s unfinished/repeated nodes=%d", id, bad)
+				}
+			}
+			if provider.calls.Load() != 4 {
+				t.Fatalf("provider calls=%d want4", provider.calls.Load())
+			}
+			return
 		}
-		if !progressChanged(beforeA, afterA) && !progressChanged(beforeB, afterB) && !graphAdmissionComplete(t, gs, allRunIDs) {
-			t.Fatalf("round %d made no graph progress: A before=%+v after=%+v B before=%+v after=%+v", round, beforeA, afterA, beforeB, afterB)
-		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if !graphAdmissionComplete(t, gs, allRunIDs) {
-		t.Fatalf("graph admission did not converge within %d rounds: A=%+v dispatch=%+v B=%+v dispatch=%+v", maxRounds, loadGraphAdmissionProgress(t, gs, runA.ID), loadGraphAdmissionDispatch(t, gs, runA.ID), loadGraphAdmissionProgress(t, gs, runB.ID), loadGraphAdmissionDispatch(t, gs, runB.ID))
-	}
-	assertGraphAdmissionComplete(t, gs, allRunIDs)
+	t.Fatalf("graph jobs did not finish: A=%s B=%s", loadGraphJob(t, gs, ra.ID).State, loadGraphJob(t, gs, rb.ID).State)
 }
 
 func submitAdmissionGraphRun(t *testing.T, gs *graphServer, productID, graphID string) graph.GraphRunResponse {
 	t.Helper()
-	resp := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{
-		"scope": graph.RunScopeGraph,
-	})
+	resp := gs.doJSON(t, http.MethodPost, "/api/v3/products/"+productID+"/workflows/"+graphID+"/runs", map[string]any{"scope": graph.RunScopeGraph})
 	gs.mustStatus(t, resp, http.StatusCreated)
 	var run graph.GraphRunResponse
 	gs.decode(t, resp, &run)
-	if run.Status != graph.RunStatusRunning || len(run.NodeRuns) == 0 {
-		t.Fatalf("submitted graph run %+v", run)
-	}
 	return run
 }
-
-func loadGraphAdmissionDispatch(t *testing.T, gs *graphServer, runID string) schema.AsyncDispatches {
+func loadGraphJob(t *testing.T, gs *graphServer, runID string) *river.Job[queue.TaskArgs] {
 	t.Helper()
-	var dispatch schema.AsyncDispatches
-	if err := gs.db.Where("actor_name = ? AND aggregate_id = ?", queue.ActorGraphRun, runID).Take(&dispatch).Error; err != nil {
-		t.Fatalf("load dispatch for run %s: %v", runID, err)
+	var row struct {
+		ID    int64
+		State rivertype.JobState
+		Args  []byte
 	}
-	return dispatch
-}
-
-type graphAdmissionProgress struct {
-	RunStatus string
-	Total     int
-	Terminal  int
-	Queued    int
-	Running   int
-	Succeeded int
-}
-
-func loadGraphAdmissionProgress(t *testing.T, gs *graphServer, runID string) graphAdmissionProgress {
-	t.Helper()
-	var progress graphAdmissionProgress
-	if err := gs.pool.QueryRow(context.Background(), `
-		SELECT r.status,
-		       COUNT(*),
-		       COUNT(*) FILTER (WHERE n.status IN ('succeeded', 'skipped', 'failed', 'unknown', 'cancelled')),
-		       COUNT(*) FILTER (WHERE n.status = 'queued'),
-		       COUNT(*) FILTER (WHERE n.status = 'running'),
-		       COUNT(*) FILTER (WHERE n.status IN ('succeeded', 'skipped'))
-		FROM workflow_graph_runs r
-		LEFT JOIN workflow_graph_node_runs n ON n.graph_run_id = r.id
-		WHERE r.id = $1
-		GROUP BY r.status
-	`, runID).Scan(&progress.RunStatus, &progress.Total, &progress.Terminal, &progress.Queued, &progress.Running, &progress.Succeeded); err != nil {
-		t.Fatalf("load graph progress %s: %v", runID, err)
+	if err := gs.db.Table("river_job").Select("id,state,args").Where("args ->> 'actor'=? AND args ->> 'aggregate_id'=?", queue.ActorGraphRun, runID).Order("id DESC").Take(&row).Error; err != nil {
+		t.Fatal(err)
 	}
-	return progress
-}
-
-func assertGraphAdmissionProgress(t *testing.T, gs *graphServer, runID string, mustRemainQueued bool) {
-	t.Helper()
-	progress := loadGraphAdmissionProgress(t, gs, runID)
-	if progress.Succeeded == 0 {
-		t.Fatalf("run %s made no node progress: %+v", runID, progress)
+	var args queue.TaskArgs
+	if err := json.Unmarshal(row.Args, &args); err != nil {
+		t.Fatal(err)
 	}
-	if mustRemainQueued && progress.Queued == 0 {
-		t.Fatalf("run %s did not yield with queued work: %+v", runID, progress)
-	}
-	if mustRemainQueued && progress.RunStatus != graph.RunStatusRunning {
-		t.Fatalf("run %s must remain running while capacity is deferred: %+v", runID, progress)
-	}
-}
-
-func progressChanged(before, after graphAdmissionProgress) bool {
-	return before != after
-}
-
-func advanceGraphAdmissionDispatches(t *testing.T, gs *graphServer, dispatchIDs []string) {
-	t.Helper()
-	for _, dispatchID := range dispatchIDs {
-		if _, err := gs.pool.Exec(context.Background(), `
-			UPDATE async_dispatches SET available_at = NOW(), updated_at = NOW()
-			WHERE id = $1 AND status = 'pending'
-		`, dispatchID); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func findSentGraphAdmissionDispatch(t *testing.T, gs *graphServer, runIDs []string) (schema.AsyncDispatches, string) {
-	t.Helper()
-	var found schema.AsyncDispatches
-	foundRunID := ""
-	for _, runID := range runIDs {
-		dispatch := loadGraphAdmissionDispatch(t, gs, runID)
-		if dispatch.Status != queue.StatusSent {
-			continue
-		}
-		if foundRunID != "" {
-			t.Fatalf("multiple SENT graph dispatches: %s and %s", foundRunID, runID)
-		}
-		found = dispatch
-		foundRunID = runID
-	}
-	if foundRunID == "" {
-		t.Fatalf("dispatcher reported SENT but no graph dispatch is SENT for runs %v", runIDs)
-	}
-	return found, foundRunID
-}
-
-func graphAdmissionComplete(t *testing.T, gs *graphServer, runIDs []string) bool {
-	t.Helper()
-	for _, runID := range runIDs {
-		progress := loadGraphAdmissionProgress(t, gs, runID)
-		dispatch := loadGraphAdmissionDispatch(t, gs, runID)
-		if progress.RunStatus != graph.RunStatusSucceeded || progress.Terminal != progress.Total || dispatch.Status != queue.StatusConsumed {
-			return false
-		}
-	}
-	return true
-}
-
-func assertGraphAdmissionComplete(t *testing.T, gs *graphServer, runIDs []string) {
-	t.Helper()
-	for _, runID := range runIDs {
-		progress := loadGraphAdmissionProgress(t, gs, runID)
-		dispatch := loadGraphAdmissionDispatch(t, gs, runID)
-		if progress.RunStatus != graph.RunStatusSucceeded || progress.Total == 0 || progress.Terminal != progress.Total || progress.Queued != 0 || progress.Running != 0 {
-			t.Fatalf("run %s did not finish all nodes: progress=%+v", runID, progress)
-		}
-		if dispatch.Status != queue.StatusConsumed {
-			t.Fatalf("dispatch for run %s status=%q want consumed", runID, dispatch.Status)
-		}
-	}
+	return &river.Job[queue.TaskArgs]{JobRow: &rivertype.JobRow{ID: row.ID, State: row.State}, Args: args}
 }

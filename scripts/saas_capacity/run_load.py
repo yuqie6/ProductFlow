@@ -19,6 +19,7 @@ import psycopg
 
 from capacity_events import merge_events, prompt_matches_prefix, snapshot_events, validate_event
 from capacity_identity import verify_identity
+from river_evidence import image_session_river_join, image_session_river_projection
 
 
 READ_ROUTES = ("products", "media", "session_status", "quota")
@@ -127,15 +128,14 @@ class DBProbe:
     def _task_rows(self, task_ids: list[str]) -> dict[str, dict[str, Any]]:
         with self.connection.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT t.id, t.status, t.prompt,
                        COALESCE(t.progress_updated_at, t.finished_at, t.started_at, s.updated_at, t.created_at) AS updated_at,
                        t.created_at, t.started_at, t.finished_at,
-                       d.sent_at
+                       {image_session_river_projection()}
                 FROM image_session_generation_tasks t
                 JOIN image_sessions s ON s.id = t.session_id
-                LEFT JOIN async_dispatches d
-                  ON d.actor_name = 'run_image_session_generation_task' AND d.aggregate_id = t.id
+                {image_session_river_join()}
                 WHERE t.id = ANY(%s)
                 """,
                 (task_ids,),
@@ -769,6 +769,9 @@ async def run_round(args: argparse.Namespace) -> dict[str, Any]:
     missing_task_rows = [
         str(task_id) for task_id in expected_task_ids if str(task_id) not in generation_rows
     ]
+    missing_river_jobs = [
+        str(task_id) for task_id, row in generation_rows.items() if row.get("river_state") is None
+    ]
     provider_attribution_issues: list[dict[str, Any]] = []
     for task_id, row in generation_rows.items():
         prompt = str(row.get("prompt") or "")
@@ -785,6 +788,7 @@ async def run_round(args: argparse.Namespace) -> dict[str, Any]:
         not generation_errors
         and not provider_wait_failures
         and not missing_task_rows
+        and not missing_river_jobs
         and len(expected_task_ids) == len(set(expected_task_ids))
         and provider["requests_started"] == len(expected_task_ids)
         and provider["requests_completed"] == len(expected_task_ids)
@@ -876,6 +880,7 @@ async def run_round(args: argparse.Namespace) -> dict[str, Any]:
             "sse_complete": sse_observation_complete,
             "sse_failures": sse_observation_failures,
             "missing_task_rows": missing_task_rows,
+            "missing_river_jobs": missing_river_jobs,
             "provider_wait_failures": provider_wait_failures,
             "generation_errors": generation_errors,
         },

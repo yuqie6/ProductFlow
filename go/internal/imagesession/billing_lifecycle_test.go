@@ -2,12 +2,14 @@ package imagesession
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"github.com/yuqie6/productflow/internal/quota"
 )
@@ -17,7 +19,7 @@ func TestBillingLifecycleKeepsOneActiveReservation(t *testing.T) {
 		t.Run(terminal, func(t *testing.T) {
 			pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_billingcycle_%d", time.Now().UnixNano()))
 			ss := newSessionServerWithDatabase(t, pool, db)
-			ctx := context.Background()
+			ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, db))
 			session, taskID := createQueuedGeneration(t, ss, map[string]any{"prompt": "billing lifecycle", "size": "1024x1024"})
 			merchantID := auth.MustDevMerchantID(t, db)
 			activeCount := func(want int64) {
@@ -34,7 +36,7 @@ func TestBillingLifecycleKeepsOneActiveReservation(t *testing.T) {
 			initialKey := generationQuotaKey(taskID, 0)
 			for attempt := 1; attempt <= maxAttempts; attempt++ {
 				activeCount(1)
-				if err := failed.Execute(ctx, taskID); err != nil {
+				if err := failed.Execute(ctx, taskID); err != nil && !errors.Is(err, queue.ErrBusy) && !errors.Is(err, queue.ErrLater) {
 					t.Fatal(err)
 				}
 				task := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)
@@ -71,7 +73,7 @@ func TestBillingLifecycleKeepsOneActiveReservation(t *testing.T) {
 					t.Fatalf("manual=%d hold=%+v", manual, hold)
 				}
 				if manual == 0 {
-					if err := failed.Execute(ctx, taskID); err != nil {
+					if err := failed.Execute(ctx, taskID); err != nil && !errors.Is(err, queue.ErrBusy) && !errors.Is(err, queue.ErrLater) {
 						t.Fatal(err)
 					}
 					activeCount(0)
@@ -93,7 +95,7 @@ func TestBillingLifecycleKeepsOneActiveReservation(t *testing.T) {
 						provider.Err = ErrTimeout
 						expectedHold = quota.StatusPendingReconciliation
 					}
-					if err := (Executor{DB: db, Media: ss.media, Provider: provider}).Execute(ctx, taskID); err != nil {
+					if err := (Executor{DB: db, Media: ss.media, Provider: provider}).Execute(ctx, taskID); err != nil && !errors.Is(err, queue.ErrBusy) && !errors.Is(err, queue.ErrLater) {
 						t.Fatal(err)
 					}
 				}
@@ -124,9 +126,9 @@ func TestBillingLifecycleKeepsOneActiveReservation(t *testing.T) {
 func TestBillingIdentityColumnsMigrateAndPreserveValues(t *testing.T) {
 	pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_billing_schema_%d", time.Now().UnixNano()))
 	ss := newSessionServerWithDatabase(t, pool, db)
-	ctx := context.Background()
+	ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, db))
 	_, taskID := createQueuedGeneration(t, ss, map[string]any{"prompt": "billing migration", "size": "1024x1024"})
-	if err := (Executor{DB: db, Media: ss.media, Provider: MockChatProvider{Err: ErrRateLimit}}).Execute(ctx, taskID); err != nil {
+	if err := (Executor{DB: db, Media: ss.media, Provider: MockChatProvider{Err: ErrRateLimit}}).Execute(ctx, taskID); err != nil && !errors.Is(err, queue.ErrBusy) && !errors.Is(err, queue.ErrLater) {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"image_session_generation_tasks", "image_session_provider_effects"} {

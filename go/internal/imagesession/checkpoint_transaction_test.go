@@ -1,98 +1,125 @@
 package imagesession
 
 import (
-	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/riverqueue/river"
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
+	"github.com/yuqie6/productflow/internal/quota"
 	"gorm.io/gorm"
 )
 
 func TestImageCheckpointTransactionBoundaries(t *testing.T) {
-	for _, mode := range []string{"rollback", "stale_consumer"} {
+	for _, mode := range []string{"rollback", "continuation"} {
 		t.Run(mode, func(t *testing.T) {
 			pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_cptx_%d", time.Now().UnixNano()))
 			ss := newSessionServerWithDatabase(t, pool, db)
 			session, taskID := createQueuedGeneration(t, ss, map[string]any{"prompt": mode, "size": "1024x1024", "generation_count": 2})
-			ctx := context.Background()
-			var dispatch queue.Dispatch
-			if err := db.Transaction(func(tx *gorm.DB) error {
-				var err error
-				dispatch, err = queue.StageForActor(ctx, tx, queue.ActorImageSession, taskID, 0)
-				return err
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := queue.RunDispatcherOnce(ctx, pool, func(string, string) error { return nil }, 10); err != nil {
-				t.Fatal(err)
-			}
-			oldToken, ok, err := queue.ClaimForConsumption(ctx, pool, dispatch.ID, taskID, queue.DefaultConsumerLeaseSeconds)
-			if err != nil || !ok {
-				t.Fatalf("claim old: %t %v", ok, err)
-			}
+			job := stageImageSessionJob(t, db, taskID)
+			ctx := imageSessionQueueContext(t, db)
 			executor := Executor{DB: db, Media: ss.media, Provider: MockChatProvider{}}
-			claimed, attempt, _, err := executor.claim(ctx, taskID)
-			if err != nil || !claimed {
-				t.Fatalf("claim task: %t %v", claimed, err)
-			}
 			if mode == "rollback" {
-				injected := errors.New("checkpoint envelope write failed")
-				const callback = "test:checkpoint-envelope-failure"
+				injected := errors.New("checkpoint queue write failed")
+				const callback = "test:checkpoint-queue-write-failure"
 				if err := db.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
-					if tx.Statement.Table == "async_dispatches" {
+					values, ok := tx.Statement.Dest.(map[string]any)
+					if ok && tx.Statement.Table == "image_session_generation_tasks" && values["status"] == "queued" {
 						tx.AddError(injected)
 					}
 				}); err != nil {
 					t.Fatal(err)
 				}
-				t.Cleanup(func() { db.Callback().Update().Remove(callback) })
-				err := executor.runGeneration(ctx, taskID, attempt, session.ID)
-				if !errors.Is(err, injected) {
+				t.Cleanup(func() { _ = db.Callback().Update().Remove(callback) })
+				if err := executeImageSessionJob(ctx, job, executor); !errors.Is(err, injected) {
 					t.Fatalf("checkpoint error=%v", err)
 				}
-				task := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)
 				var row schema.ImageSessionGenerationTasks
 				if err := db.Where("id = ?", taskID).Take(&row).Error; err != nil {
 					t.Fatal(err)
 				}
-				var envelope schema.AsyncDispatches
-				if err := db.Where("id = ?", dispatch.ID).Take(&envelope).Error; err != nil {
-					t.Fatal(err)
+				if row.Status != "running" || row.CompletedCandidates != 1 || row.ActiveAttemptID == nil {
+					t.Fatalf("checkpoint not rolled back: %+v", row)
 				}
-				if task.Status != "running" || task.CompletedCandidates != 1 || row.ActiveAttemptID == nil || *row.ActiveAttemptID != attempt || envelope.Status != queue.StatusSent || envelope.LeaseToken == nil || *envelope.LeaseToken != oldToken {
-					t.Fatalf("checkpoint not rolled back: task=%+v envelope=%+v", task, envelope)
+				if riverImageSessionJobCount(t, ss, taskID) != 1 {
+					t.Fatalf("queue jobs=%d", riverImageSessionJobCount(t, ss, taskID))
 				}
 				return
 			}
-			if err := executor.runGeneration(ctx, taskID, attempt, session.ID); !errors.Is(err, queue.ErrLater) {
-				t.Fatalf("yield: %v", err)
+
+			if err := executeImageSessionJob(ctx, job, executor); err == nil {
+				t.Fatal("first candidate must yield")
+			} else {
+				var snooze *river.JobSnoozeError
+				if !errors.As(err, &snooze) {
+					t.Fatalf("yield: %v", err)
+				}
 			}
-			time.Sleep(time.Duration(queue.DefaultLaterRetrySeconds) * time.Second)
-			if summary, err := queue.RunDispatcherOnce(ctx, pool, func(string, string) error { return nil }, 10); err != nil || summary.Sent != 1 {
-				t.Fatalf("redelivery=%+v err=%v", summary, err)
-			}
-			newToken, ok, err := queue.ClaimForConsumption(ctx, pool, dispatch.ID, taskID, queue.DefaultConsumerLeaseSeconds)
-			if err != nil || !ok || newToken == oldToken {
-				t.Fatalf("claim new: %t %v", ok, err)
-			}
-			if changed, err := queue.ReleaseForRetry(ctx, pool, dispatch.ID, taskID, oldToken, 0); err != nil || changed {
-				t.Fatalf("old release changed=%t err=%v", changed, err)
-			}
-			if changed, err := queue.MarkConsumed(ctx, pool, dispatch.ID, taskID, oldToken); err != nil || changed {
-				t.Fatalf("old consume changed=%t err=%v", changed, err)
-			}
-			var envelope schema.AsyncDispatches
-			if err := db.Where("id = ?", dispatch.ID).Take(&envelope).Error; err != nil {
+			if err := executeImageSessionJob(ctx, job, executor); err != nil {
 				t.Fatal(err)
 			}
-			if envelope.Status != queue.StatusSent || envelope.LeaseToken == nil || *envelope.LeaseToken != newToken {
-				t.Fatalf("new lease changed: %+v", envelope)
+			task := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)
+			if task.Status != "succeeded" || task.CompletedCandidates != 2 || task.Attempts != 1 {
+				t.Fatalf("continuation task=%+v", task)
 			}
 		})
+	}
+}
+
+func TestImageSessionOldRiverJobCannotExecuteAfterExplicitRetry(t *testing.T) {
+	ss := newSessionServer(t)
+	ctx := imageSessionQueueContext(t, ss.db)
+	session, taskID := createQueuedGeneration(t, ss, map[string]any{"prompt": "old river job", "size": "1024x1024"})
+	oldJob := stageImageSessionJob(t, ss.db, taskID)
+	if _, err := ss.pool.Exec(ctx, `
+		UPDATE image_session_generation_tasks
+		SET status='failed', attempts=1, is_retryable=TRUE
+		WHERE id=$1
+	`, taskID); err != nil {
+		t.Fatal(err)
+	}
+	merchantID := auth.MustDevMerchantID(t, ss.db)
+	if _, _, err := (&quota.Service{DB: ss.db}).Release(ctx, merchantID, generationQuotaKey(taskID, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ss.svc.Retry(ctx, session.ID, taskID); err != nil {
+		t.Fatal(err)
+	}
+	if err := executeImageSessionJob(ctx, oldJob, Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{}}); err != nil {
+		t.Fatalf("old job should be acknowledged as superseded: %v", err)
+	}
+	var status, executionID string
+	if err := ss.pool.QueryRow(ctx, `SELECT status, queue_execution_id FROM image_session_generation_tasks WHERE id=$1`, taskID).Scan(&status, &executionID); err != nil {
+		t.Fatal(err)
+	}
+	if status != "queued" || executionID == oldJob.Args.ExecutionID {
+		t.Fatalf("old job changed current execution: status=%s execution=%s old=%s", status, executionID, oldJob.Args.ExecutionID)
+	}
+	var raw []byte
+	var newID int64
+	if err := ss.pool.QueryRow(ctx, `
+		SELECT id, args FROM river_job
+		WHERE kind='productflow_task' AND args ->> 'actor'=$1 AND args ->> 'aggregate_id'=$2
+		  AND args ->> 'execution_id'=$3
+		ORDER BY id DESC LIMIT 1
+	`, queue.ActorImageSession, taskID, executionID).Scan(&newID, &raw); err != nil {
+		t.Fatal(err)
+	}
+	var args queue.TaskArgs
+	if err := json.Unmarshal(raw, &args); err != nil {
+		t.Fatal(err)
+	}
+	newJob := queue.RiverJob{ID: newID, Args: args}
+	if err := executeImageSessionJob(ctx, newJob, Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID); got.Status != "succeeded" {
+		t.Fatalf("new retry status=%s", got.Status)
 	}
 }

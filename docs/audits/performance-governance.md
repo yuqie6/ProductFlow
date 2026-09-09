@@ -33,7 +33,7 @@
 
 | 路径 | 当前实现与 owner | 需要避免的误读 |
 |---|---|---|
-| 接受和投递 | 业务命令事务写业务行与 PENDING outbox；`platform/queue` claim 后先 SENT 再 enqueue；dispatcher 满批续投 | asynq 信封不代表业务成功；测试中信封各一次不能推广为 broker 永远 exactly-once |
+| 接受和投递 | 业务命令同事务写业务行与 River job；原生 Worker 领取 | River job 完成不代表业务成功；业务执行身份与 attempt 围栏负责副作用 |
 | Graph 执行 | `graph/lease.go` 用 token/expiry CAS、续租和写入检查约束 worker；`graph/durability.go` 负责节点生图 admission | 进程 mutex 只处理本进程重复入口；生图容量锁与执行 lease 是不同职责 |
 | Agent 在线写入 | `agent/execution.go` 校验 lease、批量写 PG journal、fold 投影；Node `journal-publisher.ts` 合帧并等待结构屏障 | WAL、Pi session 和浏览器内存都不能替代 PG 业务权威 |
 | Agent 重启 | `turn-runtime.ts:recoverDurableHandoff` 先确认 PG 前缀，再按条件 claim、提交可证明的未发布事件；Go `agent/recovery.go` 收敛丢失执行 | confirm 接口本身不 claim/续租；整个 handoff 流程可以 claim，不能概括为“Node 重启只读” |
@@ -60,10 +60,10 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | Graph 执行状态 | `run -> node -> effect`；自动采用涉及 live graph 时 `run -> graph -> node` | `graph/lock_order_test.go`；事件 helper 要求调用方已持 run 锁 |
 | 生图 admission | Graph `capacity advisory -> run -> node`；ImageSession `capacity advisory -> task`，拿 task 锁后重查状态 | `graph/durability.go`、`imagesession/execute.go` |
 | Agent 执行与投影 | `projection -> execution -> task`；Draft 确认先持关联 projection，再写 Task | `agent/execution.go`、`agent/draft_confirm_lock_order_test.go` |
-| worker / Graph lease | task timeout 30 分钟，consumer lease 为其加 5 分钟；Graph lease 复用该时长，每 5 分钟续租 | `platform/queue/asynq.go`、`actors.go`、`graph/lease.go` |
+| worker / Graph lease | River timeout 30 分钟、rescue 阈值 35 分钟；独立 Graph lease 35 分钟，每 5 分钟续租 | `platform/queue/river_client.go`、`graph/lease.go` |
 | dispatcher | dispatch 空闲间隔 1s，recovery 间隔 10s；默认 claim 100，满批立即再查 | `go/cmd/productflow-dispatcher/main.go`、`coordinator.go` |
-| 连续生图闲置恢复 | 默认 90 分钟无 progress heartbeat 后重排队或 `unknown`；asynq `TaskTimeout` 30 分钟取消时 worker 直接写 `unknown` | `imagesession/recovery.go`、`execute.go`；`recovery_test.go`、`execute_test.go` |
-| 并发 | asynq worker 4；Node Turn 默认 3/进程；全库生图槽默认 3，可设 1-20 | worker `main.go`、Node `config.ts`、`platform/generation` |
+| 连续生图闲置恢复 | 默认 90 分钟无 progress heartbeat 后重排队或 `unknown`；River 30 分钟取消时 worker 尝试持久化 `unknown` | `imagesession/recovery.go`、`execute.go`；`recovery_test.go`、`execute_test.go` |
+| 并发 | River 单进程 generation/delivery/local_edit/agent 为 3/2/2/2；Node Turn 默认 3/进程；全库生图槽默认 3，可设 1-20 | worker `main.go`、Node `config.ts`、`platform/generation` |
 | journal batch | 20ms / 64 events / 768KiB 三个批次上限；结构事件有 flush barrier | `agent-service/src/journal-publisher.ts` |
 
 这些是当前机制，不是用户等待时间的承诺。35 分钟 lease 不能直接解释为“重启很快恢复”；恢复时间要计入 lease 剩余时间、扫描 cadence、积压和副作用对账。是否调整须用故障现场和晚到 writer 回归共同证明。
@@ -156,7 +156,7 @@ Go 路径相对 `go/internal/`，dispatcher 入口为 `go/cmd/productflow-dispat
 | 改动或问题 | 必要验证入口 | 判定重点 |
 |---|---|---|
 | Graph 锁、lease、取消与自动采用 | `go test -C go ./internal/graph`；锁序和 lease 测试按场景重复/race | 无死锁、迟到 writer 拒绝、用户文稿与产物状态一致 |
-| 投递、恢复、admission | queue/dispatcher/受影响领域包；`just go-test-dispatch-latency`；`just go-test-staging-field` 按隔离资源执行 | PG 状态与信封对账、延期不提前、恢复不重复副作用；投递门含单/双副本、空/慢恢复四场景，PENDING→SENT p95 <1s；进程测试不替代容器拓扑 |
+| 投递、恢复、admission | queue/受影响领域包；原生 River 双客户端轮询回归；`just go-test-staging-field` 按隔离资源执行 | 业务与 job 同事务、延期不提前、双消费者领取、恢复不重复副作用；原 PENDING→SENT 指标随旧投递层退役，统一队列门按路线 §16 验证受理到实际 provider 的等待；进程测试不替代容器拓扑 |
 | Graph 读取 | `just go-test-graph-query-plan`、`just http-ab-gates`、`just web-e2e-workbench-performance`、`just web-build` | 实际 SQL、响应字段/字节、TTI、按需请求、active-run fixture |
 | 共享展示队列总览 | `just go-test-queue-overview-load`、generation 快照交错回归 | 25k runs / 100k nodes，活动 run 为 25k/100/0；running 优先、终态父 run 排除、实际 SQL 计划与总览读取 p95 <300ms。本地回归预算不构成 HTTP 或生产 SLO |
 | ImageSession 读取 | `just go-test-imagesession-query-plan`、`just go-test-imagesession-http-load`、包内 HTTP/SSE 回归 | 详情、历史、Status 各自的数据形状；静态页面 gate 不覆盖活动 SSE 成本 |
@@ -209,10 +209,10 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 | 单元 | 镜像/构建 | 进程命令 | 角色 |
 |---|---|---|---|
 | `productflow-postgres` | 上游 `postgres:16` | 官方入口 | 业务权威库 |
-| `productflow-redis` | 上游 `redis:7`，`appendonly yes` | `redis-server` | asynq broker；非业务权威 |
+| `productflow-redis` | 上游 `redis:7`，`appendonly yes` | `redis-server` | 认证限流；不承担任务队列 |
 | `productflow-migrate` | `go/Dockerfile` 多二进制之一 | `productflow-migrate` | 启动前 schema：`CreateTable`/`AddColumn` + ExtraDDL；`restart: "no"` |
 | `productflow-go-api` | 同上 | `productflow-api` | HTTP、媒体读写、设置、internal Agent API |
-| `productflow-go-worker` | 同上 | `productflow-worker` | asynq 消费；metrics 可选 |
+| `productflow-go-worker` | 同上 | `productflow-worker` | River 消费；metrics 可选 |
 | `productflow-go-dispatcher` | 同上 | `productflow-dispatcher --watch` | PENDING→SENT→enqueue；域恢复 |
 | `productflow-agent-service` | `agent-service/Dockerfile` | `node dist/main.js` | Pi 适配器；`AGENT_DATA_ROOT=/data` |
 | `productflow-web` | `web/Dockerfile`，构建参数 `VITE_API_BASE_URL=""` | nginx | 静态前端；`/api/` 反代 |
@@ -258,7 +258,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 | 媒体与日志 | `productflow-storage` 或 `STORAGE_HOST_PATH` → `/app/storage`：`media/{uuid前2位}/{uuid}{ext}`、同目录 `.variants/`、`logs/` | 字节权威在磁盘；DB `media_objects.storage_path` 引用 | **必备**原图；变体可重建但恢复后缺原图会 `missing_file`/`verification_status=missing` |
 | Pi / Agent 本地 | `productflow-agent-data` → `/data`：`publisher.json`、`agent-service.lock`、`runs/`、`sessions/`、`workspaces/` | **非**业务权威；模型 loop / handoff 材料（运行目录，不是用户工作区或切换状态） | **必备**（总纲与任务合同）；缺则重启后 lease owner / 会话续跑材料受损，PG journal 仍在 |
 | 演化轨迹 | `productflow-agent-traces`；默认 `AGENT_EVOLUTION_TRACES=0` | 诊断，非业务 | 可选；开启则纳入备份清单 |
-| Redis AOF | `productflow-redis-data` | 可丢 broker | 建议纳入一致点以免残留信封；**恢复后以 PG `async_dispatches` 再投递为准**，不把 Redis 当业务真相 |
+| Redis AOF | `productflow-redis-data` | 认证限流计数 | 备份策略按认证限流连续性要求确定；任务恢复以 PostgreSQL 业务行与 River 作业为准 |
 | 启动密钥文件 | 部署者持有的 `.env`（勿入库） | 启动与会话 | **必备**；与 PG 同代 |
 
 一致备份点（合同；**B3 已提供脚本**，完整 D3 实跑见 B4）：（1）停止或排空 worker/dispatcher/Agent 接受新作业（`CONSISTENCY_MODE=drain`），或接受崩溃一致并记录在途 risk（`crash`）；（2）同窗口备份 PG + storage + agent-data + `.env`；（3）可选 Redis；（4）记录镜像 digest/源码 commit、迁移命令身份、备份起止时间。运行中作业：持有 lease 的 Graph/ImageSession/Agent/Delivery/LocalEdit 在恢复后按既有 recovery 合同收敛；不可证明供应商结果保持 `unknown`，不自动当失败重放。
@@ -274,7 +274,7 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 
 | 单元 | 配置输入 | 持久 | 备份项 | 恢复动作 | 业务断言（演练时） |
 |---|---|---|---|---|---|
-| postgres | `POSTGRES_*` / `DATABASE_URL` | PG 数据目录 | `pg_dump` 或停写快照 | 新卷 restore → migrate 幂等成功 | 商品/资产行、设置、`async_dispatches`、Agent journal 可读 |
+| postgres | `POSTGRES_*` / `DATABASE_URL` | PG 数据目录 | `pg_dump` 或停写快照 | 新卷 restore → migrate 幂等成功 | 商品/资产行、设置、`river_job`、Agent journal 可读 |
 | redis | `REDIS_URL` | AOF | 可选同代 | 空 Redis 亦可 | dispatcher 能把 PENDING/需重投条目送回队列 |
 | migrate | `DATABASE_URL` | 无自有卷 | — | 失败则依赖服务不启动 | exit 0；指纹稳定（现有 head 测） |
 | go-api | 全套 go-env + `STORAGE_ROOT` | storage 卷 | 与媒体同备 | 挂同代 storage + `.env` | `/healthz`；登录；媒体下载非 missing |
@@ -406,10 +406,14 @@ G-01 至 G-07 保留为发布合同，状态绑定候选而非永久关闭。S1-
 
 ## 2026-09-09 统一队列方案的机制验证
 
-设计与切换门由 [总纲第 16 节](../ROADMAP.md#16-统一后台任务队列选型与切换) 管理。当前仍运行 PG outbox/asynq 合同，未修改生产依赖、数据库或 Worker。
+设计与切换门由 [总纲第 16 节](../ROADMAP.md#16-统一后台任务队列选型与切换) 管理。候选代码已接入 River，独立验收记录由统一队列任务维护；共享开发服务切换须另核运行资源及旧停止记录。
 
 独立 [队列探针](../../scripts/queue-evaluation/README.md) 固定 River 0.47.0、asynq 0.25.1 和 Go 1.26.5。2026-09-09 在隔离 PG 库与私有 Unix socket Redis 执行：GORM 外层事务、嵌套 savepoint 的业务行/job 共同回滚通过；共同提交后新客户端消费且可见业务行通过。实际 asynq 重试两次，合成执行器在 PG 记录 unknown 后第二次退出，模拟外部效果仅一次。
 
 原始失败是探针尚未归一化开发 DATABASE_URL 的 driver scheme，发生在建库前；修正后两项 PASS（0.656s），日志分别为 storage-dev/queue-choice-0909/probe.log 与 probe-r2.log。未调用真实供应商；不是进程崩溃、公平性、吞吐或五类生产适配证明。原始失败未覆盖，任务私有数据库和 Redis 子进程随测试清理。root 自审，不宣称独立审核或完整迁移完成。
 
 上述机制探针在仓库路径执行 race 检查通过（2.146s）。追加真实子进程 SIGKILL 验证：子 Worker 已调用独立 HTTP 假供应商但未落业务结果，杀进程后新 Worker 经 River rescue 重新领取（attempt≥2）并持久化 unknown，HTTP 请求数保持 1；PASS，21.972s，日志 storage-dev/queue-choice-0909/crash.log。阈值为测试专用 100ms job timeout、1s rescue，实际等待还包含 leader/维护周期；没有倒拨数据库时间，不将此耗时作为生产上限。相同 SIGKILL 场景 race 检查通过（21.410s，总测试耗时），日志 crash-race.log；现场复核 pf_queue_probe 数据库残留为 0，无私有 Redis 或子 Worker 进程。其它故障点、商家公平与五类业务适配仍开放。
+
+## 2026-09-09 River 五类任务交付
+
+[统一队列验收](tasks/archive/pg-queue-integration.md)记录固定 ff23c2aa 的实现与隔离证据：A100/B20 全部成功、B 等待 p95 4.749s、无重复效果及结算；972 次业务读取成功，PG 连接峰值 32，公平选择 SQL 平均 0.562ms。真实 SIGKILL、短暂 PG 不可用、无通知双客户端、停机、迁移及发布构建已取得证据。最终全包执行仅旧告警名断言失败，更新断言后的 metrics 回归通过；原失败日志保留。该交付支持统一 PG/River，不替代完整多商家容量基线，也未验收生产恢复 SLA。共享服务切换须处置旧停止信封和未收敛业务。

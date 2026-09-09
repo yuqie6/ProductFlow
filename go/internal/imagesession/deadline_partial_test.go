@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 )
 
@@ -49,7 +50,7 @@ func TestExecuteDeadlinePreservesCompletedCandidate(t *testing.T) {
 		}
 		assetID = detail.Rounds[0].GeneratedAsset.ID
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, ss.db)), 5*time.Second)
 	defer cancel()
 	executor := Executor{DB: ss.db, Media: ss.media, Provider: provider}
 	if err := executor.Execute(ctx, taskID); !errors.Is(err, queue.ErrLater) {

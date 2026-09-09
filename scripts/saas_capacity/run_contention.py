@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure generation-slot contention and preserve accept/dispatch/provider timestamps."""
+"""Measure generation-slot contention and preserve accept/River/provider timestamps."""
 
 import argparse
 import asyncio
@@ -15,6 +15,7 @@ import psycopg
 
 from capacity_events import merge_events, snapshot_events, validate_event
 from capacity_identity import verify_identity
+from river_evidence import image_session_river_join, image_session_river_projection
 
 
 TERMINAL = {"succeeded", "failed", "unknown", "cancelled"}
@@ -30,15 +31,14 @@ class DBProbe:
             return {}
         with self.connection.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT t.id, t.status, t.prompt, t.created_at, t.started_at, t.finished_at,
                        t.session_id, s.merchant_id,
                        COALESCE(t.progress_updated_at, t.finished_at, t.started_at, s.updated_at, t.created_at) AS updated_at,
-                       d.sent_at, d.attempts AS dispatch_attempts
+                       {image_session_river_projection()}
                 FROM image_session_generation_tasks t
                 JOIN image_sessions s ON s.id = t.session_id
-                LEFT JOIN async_dispatches d
-                  ON d.actor_name = 'run_image_session_generation_task' AND d.aggregate_id = t.id
+                {image_session_river_join()}
                 WHERE t.id = ANY(%s)
                 """,
                 (task_ids,),
@@ -514,7 +514,7 @@ def phase_metrics(
         event, event_matches = provider_event_for_task(row, events)
         submission = submissions.get(task_id, {})
         accepted_at = submission.get("accepted_at")
-        sent = row.get("sent_at")
+        attempted_at = row.get("river_attempted_at")
         started = event.get("started_epoch")
         finished_provider = event.get("finished_epoch")
         finished_db = row.get("finished_at")
@@ -528,17 +528,20 @@ def phase_metrics(
                 "accepted_at_epoch": accepted_at,
                 "accepted_at_observation": "submit_response" if accepted_at is not None else "missing_in_original_report",
                 "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
-                "last_sent_at": sent.isoformat() if sent else None,
-                "dispatch_attempts": row.get("dispatch_attempts"),
-                "first_dispatch_observation": "unmeasured: sent_at is overwritten on redispatch",
+                "river_state": row.get("river_state"),
+                "river_attempt": row.get("river_attempt"),
+                "river_attempted_at": attempted_at.isoformat() if attempted_at else None,
+                "river_finalized_at": row.get("river_finalized_at").isoformat() if row.get("river_finalized_at") else None,
+                "first_attempt_observation": "unmeasured: river_job.attempted_at is overwritten for each retry",
                 "started_at": row.get("started_at").isoformat() if row.get("started_at") else None,
                 "finished_at": finished_db.isoformat() if finished_db else None,
                 "provider_request_id": event.get("request_id"),
-                "accept_to_last_dispatch_ms": ((sent.timestamp() - accepted_at) * 1000) if sent and accepted_at else None,
-                "last_dispatch_to_provider_ms": ((started - sent.timestamp()) * 1000) if started and sent else None,
+                "accept_to_latest_attempt_ms": ((attempted_at.timestamp() - accepted_at) * 1000) if attempted_at and accepted_at else None,
+                "latest_attempt_to_provider_ms": ((started - attempted_at.timestamp()) * 1000) if started and attempted_at else None,
                 "provider_to_persist_ms": ((finished_db.timestamp() - finished_provider) * 1000) if finished_db and finished_provider else None,
                 "accept_to_provider_ms": ((started - accepted_at) * 1000) if started and accepted_at else None,
                 "provider_event_matches": event_matches,
+                "river_job_observed": row.get("river_state") is not None,
             }
         )
     return result
@@ -554,6 +557,7 @@ def summarize_wait(items: list[dict[str, Any]], expected_count: int) -> dict[str
         "terminal_count": terminal_count,
         "provider_started": len(waits),
         "unique_provider_events": unique_provider_count,
+        "river_jobs_observed": sum(item.get("river_job_observed", False) for item in items),
         "missing_observations": expected_count - len(waits),
         "p50_ms": statistics.quantiles(waits, n=2, method="inclusive")[0] if len(waits) > 1 else (waits[0] if waits else None),
         "p95_ms": sorted(waits)[min(len(waits) - 1, int(round((len(waits) - 1) * 0.95)))] if waits else None,
@@ -569,6 +573,7 @@ def contention_pass(output: dict[str, Any]) -> bool:
         and output["submission_reconciliation"]["unresolved"] == 0
         and short["a_accepted_by_http"] == short["a_reconciled_task_ids"] == 100
         and short["a_terminal_count"] == short["a_throughput_succeeded"] == 100
+        and short["a_river_jobs_observed"] == 100
         and short["b_accepted_by_http"] == short["b_reconciled_task_ids"] == 20
         and short["target_b_p95_pass"]
         and output["provider_attribution_pass"]
@@ -647,6 +652,7 @@ def repair_existing(args: argparse.Namespace) -> dict[str, Any]:
         "a_throughput_succeeded": sum(item.get("status") == "succeeded" for item in a_items),
         "a_terminal_count": sum(item.get("status") in TERMINAL for item in a_items),
         "a_provider_observed_once": sum(item.get("provider_event_matches") == 1 for item in a_items),
+        "a_river_jobs_observed": sum(item.get("river_job_observed", False) for item in a_items),
         "a_phase_metrics": a_items,
         "b_phase_metrics": b_items,
         "target_b_p95_wait_ms": 10000,
@@ -656,6 +662,7 @@ def repair_existing(args: argparse.Namespace) -> dict[str, Any]:
             len(b_tasks) == 20
             and all(item.get("status") in TERMINAL for item in b_items)
             and all(item.get("provider_event_matches") == 1 for item in b_items)
+            and all(item.get("river_job_observed") for item in b_items)
             and summarize_wait(b_items, 20)["provider_started"] == 20
             and summarize_wait(b_items, 20)["p95_ms"] is not None
             and summarize_wait(b_items, 20)["p95_ms"] <= 10000
@@ -824,6 +831,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             "a_throughput_succeeded": sum(item.get("status") == "succeeded" for item in a_items),
             "a_terminal_count": sum(item.get("status") in TERMINAL for item in a_items),
             "a_provider_observed_once": sum(item.get("provider_event_matches") == 1 for item in a_items),
+            "a_river_jobs_observed": sum(item.get("river_job_observed", False) for item in a_items),
             "a_phase_metrics": a_items,
             "b_phase_metrics": b_items,
             "target_b_p95_wait_ms": 10000,
@@ -833,6 +841,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 len(b_tasks) == 20
                 and all(item.get("status") in TERMINAL for item in b_items)
                 and all(item.get("provider_event_matches") == 1 for item in b_items)
+                and all(item.get("river_job_observed") for item in b_items)
                 and summarize_wait(b_items, 20)["provider_started"] == 20
                 and summarize_wait(b_items, 20)["p95_ms"] is not None
                 and summarize_wait(b_items, 20)["p95_ms"] <= 10000

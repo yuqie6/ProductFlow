@@ -35,6 +35,9 @@ func (e Executor) Execute(ctx context.Context, projectionID string) error {
 func (s Service) SyncTurn(ctx context.Context, projectionID string) error {
 	var row turnRow
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
+		if err := queue.AssertExecution(ctx, pgxTx, queue.ActorAgentTurnSync, projectionID); err != nil {
+			return err
+		}
 		loaded, err := loadTurnByID(ctx, pgxTx, projectionID)
 		if err != nil {
 			if apperr.IsNotFound(err) {

@@ -103,7 +103,7 @@ func startGraphServer(t *testing.T, pool *pgxpool.Pool, gdb *gorm.DB) *graphServ
 
 func (gs *graphServer) dropRunDispatch(t *testing.T, runID string) {
 	t.Helper()
-	if _, err := gs.pool.Exec(context.Background(), `DELETE FROM async_dispatches WHERE aggregate_id = $1`, runID); err != nil {
+	if _, err := gs.pool.Exec(context.Background(), `DELETE FROM river_job WHERE args ->> 'aggregate_id' = $1`, runID); err != nil {
 		t.Fatal(err)
 	}
 }

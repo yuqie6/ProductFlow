@@ -490,13 +490,13 @@ func TestAgentTurnSubmitStagesDispatch(t *testing.T) {
 	}
 	var dispatchStatus string
 	err := as.pool.QueryRow(context.Background(), `
-		SELECT status FROM async_dispatches WHERE actor_name = $1 AND aggregate_id = $2
+		SELECT state FROM river_job WHERE args ->> 'actor' = $1 AND args ->> 'aggregate_id' = $2
 		ORDER BY created_at DESC LIMIT 1
 	`, queue.ActorAgentTurnSync, submitted.Turn.ID).Scan(&dispatchStatus)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dispatchStatus != queue.StatusPending {
+	if dispatchStatus != "available" {
 		t.Fatalf("dispatch %s", dispatchStatus)
 	}
 
@@ -556,7 +556,7 @@ func TestAgentTurnSubmitStagesDispatch(t *testing.T) {
 	}
 	var dispatchCount int
 	if err := as.pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM async_dispatches WHERE actor_name = $1 AND aggregate_id = $2
+		SELECT COUNT(*) FROM river_job WHERE args ->> 'actor' = $1 AND args ->> 'aggregate_id' = $2
 	`, queue.ActorAgentTurnSync, submitted.Turn.ID).Scan(&dispatchCount); err != nil {
 		t.Fatal(err)
 	}
@@ -820,7 +820,7 @@ func TestConcurrentDifferentQuestionAnswersCommitOnlyOne(t *testing.T) {
 	for _, answer := range []string{"first", "second"} {
 		go func(answer string) {
 			<-start
-			_, err := as.svc.persistQuestionAnswer(context.Background(), nil, convID, turnID, "question-concurrent", map[string]any{"text": answer})
+			_, err := as.svc.persistQuestionAnswer(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), nil, convID, turnID, "question-concurrent", map[string]any{"text": answer})
 			errorsOut <- err
 		}(answer)
 	}
@@ -853,13 +853,13 @@ func TestSyncTurnRetriesAnsweredQuestionAfterGatewayUnavailable(t *testing.T) {
 	as.mustStatus(t, resp, http.StatusServiceUnavailable)
 	resp.Body.Close()
 
-	if err := as.svc.SyncTurn(context.Background(), turnID); !errors.Is(err, queue.ErrLater) {
+	if err := as.svc.SyncTurn(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), turnID); !errors.Is(err, queue.ErrLater) {
 		t.Fatalf("answered requires_input should retry, got %v", err)
 	}
 
 	gw.answerErr = nil
 	gw.calls = nil
-	if err := as.svc.SyncTurn(context.Background(), turnID); err != nil && !errors.Is(err, queue.ErrLater) {
+	if err := as.svc.SyncTurn(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), turnID); err != nil && !errors.Is(err, queue.ErrLater) {
 		t.Fatal(err)
 	}
 	if len(gw.calls) < 2 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
@@ -884,19 +884,19 @@ func TestSyncTurnAppliesQueuedResumeAfterDurableAnswer(t *testing.T) {
 	`, turnID).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
-	auth := http.Header{"Authorization": []string{"Bearer tok"}}
+	headers := http.Header{"Authorization": []string{"Bearer tok"}}
 	claim := as.do(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/claim",
 		strings.NewReader(mustJSON(t, map[string]any{
 			"idempotency_key": key,
 			"harness_turn_id": harnessID,
 			"owner_id":        "worker-1",
-		})), "application/json", auth)
+		})), "application/json", headers)
 	as.mustStatus(t, claim, http.StatusOK)
 	var lease ExecutionLeaseResponse
 	as.decode(t, claim, &lease)
 	heartbeat := as.doJSONAuth(t, http.MethodPost, "/api/internal/v1/agent-conversations/"+convID+"/turn-executions/"+lease.ExecutionID+"/heartbeat", map[string]any{
 		"owner_id": "worker-1", "lease_token": lease.LeaseToken, "phase": "model",
-	}, auth)
+	}, headers)
 	as.mustStatus(t, heartbeat, http.StatusOK)
 	heartbeat.Body.Close()
 	if _, err := as.pool.Exec(context.Background(), `
@@ -907,7 +907,7 @@ func TestSyncTurnAppliesQueuedResumeAfterDurableAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	gw.calls = nil
-	if err := as.svc.SyncTurn(context.Background(), turnID); err != nil && !errors.Is(err, queue.ErrLater) {
+	if err := as.svc.SyncTurn(auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, as.db)), turnID); err != nil && !errors.Is(err, queue.ErrLater) {
 		t.Fatal(err)
 	}
 	if len(gw.calls) < 2 || gw.calls[0] != "answer:"+harnessID || gw.calls[1] != "resume:"+harnessID {
@@ -955,10 +955,10 @@ func TestRecoverUnfinishedTurnsRestagesConsumedDispatch(t *testing.T) {
 		t.Fatal("missing turn id")
 	}
 	if _, err := as.pool.Exec(context.Background(), `
-		UPDATE async_dispatches
-		SET status = $1, consumed_at = NOW(), updated_at = NOW()
-		WHERE actor_name = $2 AND aggregate_id = $3
-	`, queue.StatusConsumed, queue.ActorAgentTurnSync, submitted.Turn.ID); err != nil {
+		UPDATE river_job
+		SET state = $1, finalized_at = NOW()
+		WHERE args ->> 'actor' = $2 AND args ->> 'aggregate_id' = $3
+	`, "completed", queue.ActorAgentTurnSync, submitted.Turn.ID); err != nil {
 		t.Fatal(err)
 	}
 	summary, err := RecoverUnfinishedTurns(context.Background(), as.svc)
@@ -970,13 +970,13 @@ func TestRecoverUnfinishedTurnsRestagesConsumedDispatch(t *testing.T) {
 	}
 	var dispatchStatus string
 	if err := as.pool.QueryRow(context.Background(), `
-		SELECT status FROM async_dispatches
-		WHERE actor_name = $1 AND aggregate_id = $2
+		SELECT state FROM river_job
+		WHERE args ->> 'actor' = $1 AND args ->> 'aggregate_id' = $2
 		ORDER BY created_at DESC LIMIT 1
 	`, queue.ActorAgentTurnSync, submitted.Turn.ID).Scan(&dispatchStatus); err != nil {
 		t.Fatal(err)
 	}
-	if dispatchStatus != queue.StatusPending {
+	if dispatchStatus != "available" {
 		t.Fatalf("recovery left consumed dispatch as %s", dispatchStatus)
 	}
 }
@@ -1003,13 +1003,13 @@ func TestRecoverUnfinishedTurnsDoesNotRestagePendingDispatch(t *testing.T) {
 	}
 	var dispatchStatus string
 	if err := as.pool.QueryRow(context.Background(), `
-		SELECT status FROM async_dispatches
-		WHERE actor_name = $1 AND aggregate_id = $2
+		SELECT state FROM river_job
+		WHERE args ->> 'actor' = $1 AND args ->> 'aggregate_id' = $2
 		ORDER BY created_at DESC LIMIT 1
 	`, queue.ActorAgentTurnSync, submitted.Turn.ID).Scan(&dispatchStatus); err != nil {
 		t.Fatal(err)
 	}
-	if dispatchStatus != queue.StatusPending && dispatchStatus != queue.StatusSent {
+	if dispatchStatus != "available" && dispatchStatus != "running" {
 		t.Fatalf("status %s", dispatchStatus)
 	}
 }

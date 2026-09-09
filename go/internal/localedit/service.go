@@ -49,7 +49,7 @@ func (s Service) Capability() CapabilityResponse {
 }
 
 // Create 创建草稿局部编辑任务并 Stage mask PNG。
-// 调用时机：HTTP POST /image-edits。还不入队；Submit 才写 PENDING dispatch。
+// 调用时机：HTTP POST /image-edits。还不入队；Submit 才写 River 作业。
 // 源图缺尺寸或 mask 对不齐 Validation；商品/源图不存在 NotFound。失败 Rollback 文件。
 // 禁区：不要在这里 adopt，也不要当生成结果用。
 func (s Service) Create(ctx context.Context, productID, sourceAssetID, targetNodeID string, draft Draft, maskPNG []byte) (TaskResponse, error) {
@@ -233,7 +233,7 @@ func (s Service) List(ctx context.Context, productID string, limit int) (TaskLis
 	return out, err
 }
 
-// Submit 按幂等键把草稿任务标 queued 并写入 PENDING dispatch。
+// Submit 按幂等键把草稿任务标 queued 并写入 River 作业。
 // 供应商不支持或幂等键非法返回 Validation；已提交或同一 key 不同请求返回 Conflict。
 func (s Service) Submit(ctx context.Context, productID, taskID, idempotencyKey string) (TaskResponse, error) {
 	cap := s.provider().Capability()
@@ -284,7 +284,7 @@ func (s Service) Submit(ctx context.Context, productID, taskID, idempotencyKey s
 			if loaded.RequestHash == nil || *loaded.RequestHash != hash {
 				return apperr.Conflict("相同 idempotency key 不能提交不同的局部编辑请求")
 			}
-			_, err = queue.Stage(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, loaded.ID), queue.ActorLocalEdit, loaded.ID, map[string]any{
+			_, err = queue.StageTask(ctx, pgxTx, queue.ActorLocalEdit, loaded.ID, map[string]any{
 				"task_id": loaded.ID, "request_hash": hash,
 			}, nil)
 			return err
@@ -310,7 +310,7 @@ func (s Service) Submit(ctx context.Context, productID, taskID, idempotencyKey s
 		}).Error; err != nil {
 			return err
 		}
-		if _, err := queue.Stage(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, taskID), queue.ActorLocalEdit, taskID, map[string]any{
+		if _, err := queue.StageTask(ctx, pgxTx, queue.ActorLocalEdit, taskID, map[string]any{
 			"task_id": taskID, "request_hash": hash,
 		}, nil); err != nil {
 			return err
@@ -342,21 +342,22 @@ func (s Service) Retry(ctx context.Context, productID, taskID string, expectedRe
 			return apperr.Conflict("局部编辑任务缺少不可变请求身份，不能重试")
 		}
 		if err := pgxTx.Model(&schema.LocalImageEditTasks{}).Where("id = ?", taskID).Updates(map[string]any{
-			"status":            "queued",
-			"active_attempt_id": nil,
-			"progress_phase":    "queued",
-			"failure_reason":    nil,
-			"is_retryable":      true,
-			"queued_at":         time.Now().UTC(),
-			"started_at":        nil,
-			"finished_at":       nil,
-			"updated_at":        time.Now().UTC(),
+			"status":             "queued",
+			"queue_execution_id": clockid.New(),
+			"active_attempt_id":  nil,
+			"progress_phase":     "queued",
+			"failure_reason":     nil,
+			"is_retryable":       true,
+			"queued_at":          time.Now().UTC(),
+			"started_at":         nil,
+			"finished_at":        nil,
+			"updated_at":         time.Now().UTC(),
 		}).Error; err != nil {
 			return err
 		}
-		_, err = queue.Requeue(ctx, pgxTx, queue.DeliveryKey(queue.ActorLocalEdit, taskID), queue.ActorLocalEdit, taskID, map[string]any{
+		_, err = queue.StageTask(ctx, pgxTx, queue.ActorLocalEdit, taskID, map[string]any{
 			"task_id": taskID, "request_hash": *task.RequestHash,
-		}, nil, false)
+		}, nil)
 		return err
 	})
 	if err != nil {

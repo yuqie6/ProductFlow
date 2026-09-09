@@ -2,6 +2,7 @@ package graph_test
 
 import (
 	"context"
+	"go.uber.org/zap/zaptest"
 	"net/http"
 	"testing"
 	"time"
@@ -62,9 +63,9 @@ func TestGraphQueuedPromotionBindsPersistentMerchantWithoutContext(t *testing.T)
 	merchantID := auth.MustDevMerchantID(t, gs.db)
 	var dispatchMerchant string
 	if err := gs.pool.QueryRow(context.Background(), `
-		SELECT merchant_id
-		FROM async_dispatches
-		WHERE actor_name = $1 AND aggregate_id = $2
+		SELECT args ->> 'merchant_id'
+		FROM river_job
+		WHERE args ->> 'actor' = $1 AND args ->> 'aggregate_id' = $2
 		ORDER BY created_at DESC
 		LIMIT 1
 	`, queue.ActorGraphRun, queued.ID).Scan(&dispatchMerchant); err != nil {
@@ -104,6 +105,7 @@ func TestGraphWorkerBindsMerchantForImageSuccessDeliveryEnqueue(t *testing.T) {
 	gs.decode(t, runResp, &run)
 
 	executor := graph.Executor{
+		Log:      zaptest.NewLogger(t),
 		DB:       gs.db,
 		Products: product.GraphGuard{},
 		Deps: graph.Dependencies{
@@ -120,10 +122,10 @@ func TestGraphWorkerBindsMerchantForImageSuccessDeliveryEnqueue(t *testing.T) {
 	merchantID := auth.MustDevMerchantID(t, gs.db)
 	var dispatchMerchant string
 	if err := gs.pool.QueryRow(context.Background(), `
-		SELECT d.merchant_id
-		FROM async_dispatches d
-		JOIN delivery_rendition_jobs j ON j.id = d.aggregate_id
-		WHERE d.actor_name = $1 AND j.product_id = $2
+		SELECT d.args ->> 'merchant_id'
+		FROM river_job d
+		JOIN delivery_rendition_jobs j ON j.id = d.args ->> 'aggregate_id'
+		WHERE d.args ->> 'actor' = $1 AND j.product_id = $2
 		ORDER BY d.created_at DESC
 		LIMIT 1
 	`, queue.ActorDelivery, productID).Scan(&dispatchMerchant); err != nil {

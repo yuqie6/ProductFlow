@@ -26,7 +26,7 @@ func TestAgentAlertRulesCoverRequiredNames(t *testing.T) {
 		"ProductFlowAgentEffectUnknown",
 		"ProductFlowAgentSequenceConflicts",
 		"ProductFlowAgentUsageMissing",
-		"ProductFlowAgentDispatcherBacklog",
+		"ProductFlowQueueBacklog",
 		"ProductFlowAgentProviderHTTP5xx",
 		"ProductFlowAgentActiveTimeout",
 	}

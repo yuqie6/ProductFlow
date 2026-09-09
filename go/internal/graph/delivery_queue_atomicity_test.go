@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/yuqie6/productflow/internal/auth"
 	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
 	"github.com/yuqie6/productflow/internal/platform/tx"
@@ -35,14 +36,14 @@ func TestOptionalDeliveryFailureRollsBackOnlyDelivery(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			gs := newIsolatedGraphServer(t)
 			productID, graphID := gs.createDirectGraph(t)
-			ctx := context.Background()
+			ctx := auth.WithMerchantID(context.Background(), auth.MustDevMerchantID(t, gs.db))
 			if err := gs.db.Exec(`UPDATE workflow_graph_nodes SET config_json=jsonb_set(config_json::jsonb, '{delivery_spec}', '{"width":64,"height":64,"format":"png","fit":"contain"}'::jsonb) WHERE graph_id=? AND node_type='image_generation'`, graphID).Error; err != nil {
 				t.Fatal(err)
 			}
 			service := delivery.Service{DB: gs.db, Media: gs.media}
 			var queuer graph.DeliveryQueuer = service
 			if failure == "dispatch_sql" {
-				if err := gs.db.Exec(`ALTER TABLE async_dispatches ADD CONSTRAINT test_delivery_stage_failure CHECK(actor_name <> 'run_delivery_rendition_job')`).Error; err != nil {
+				if err := gs.db.Exec(`ALTER TABLE river_job ADD CONSTRAINT test_delivery_stage_failure CHECK(args ->> 'actor' <> 'run_delivery_rendition_job')`).Error; err != nil {
 					t.Fatal(err)
 				}
 			} else if failure == "outer_settlement" {
@@ -76,7 +77,7 @@ func TestOptionalDeliveryFailureRollsBackOnlyDelivery(t *testing.T) {
 			if err := gs.pool.QueryRow(ctx, `SELECT count(*) FROM delivery_rendition_jobs WHERE product_id=$1`, productID).Scan(&jobs); err != nil {
 				t.Fatal(err)
 			}
-			if err := gs.pool.QueryRow(ctx, `SELECT count(*) FROM async_dispatches WHERE actor_name='run_delivery_rendition_job'`).Scan(&dispatches); err != nil {
+			if err := gs.pool.QueryRow(ctx, `SELECT count(*) FROM river_job WHERE args ->> 'actor'='run_delivery_rendition_job'`).Scan(&dispatches); err != nil {
 				t.Fatal(err)
 			}
 			if err := gs.pool.QueryRow(ctx, `SELECT count(*) FROM merchant_quota_holds h JOIN workflow_graph_provider_effects e ON e.quota_key=h.idempotency_key JOIN workflow_graph_node_runs n ON n.id=e.node_run_id WHERE n.graph_run_id=$1 AND h.status='settled'`, run.ID).Scan(&settled); err != nil {
@@ -92,7 +93,7 @@ func TestOptionalDeliveryFailureRollsBackOnlyDelivery(t *testing.T) {
 				t.Fatalf("partial effects: artifacts=%d settled=%d jobs=%d dispatches=%d", artifacts, settled, jobs, dispatches)
 			}
 			if failure == "dispatch_sql" {
-				if err := gs.db.Exec("ALTER TABLE async_dispatches DROP CONSTRAINT test_delivery_stage_failure").Error; err != nil {
+				if err := gs.db.Exec("ALTER TABLE river_job DROP CONSTRAINT test_delivery_stage_failure").Error; err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -106,7 +107,7 @@ func TestOptionalDeliveryFailureRollsBackOnlyDelivery(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := gs.pool.QueryRow(ctx, `SELECT count(*) FROM delivery_rendition_jobs j JOIN async_dispatches d ON d.aggregate_id=j.id WHERE j.source_asset_id=$1 AND d.actor_name='run_delivery_rendition_job'`, assetID).Scan(&jobs); err != nil {
+			if err := gs.pool.QueryRow(ctx, `SELECT count(*) FROM delivery_rendition_jobs j JOIN river_job d ON d.args ->> 'aggregate_id'=j.id WHERE j.source_asset_id=$1 AND d.args ->> 'actor'='run_delivery_rendition_job'`, assetID).Scan(&jobs); err != nil {
 				t.Fatal(err)
 			}
 			if jobs != 1 {

@@ -171,10 +171,10 @@ func TestRecoverUnfinishedTurnsPreservesPendingRestageHasMore(t *testing.T) {
 	}
 	for _, submitted := range turns {
 		if _, err := as.pool.Exec(context.Background(), `
-			UPDATE async_dispatches
-			SET status = $1, consumed_at = NOW(), updated_at = NOW()
-			WHERE actor_name = $2 AND aggregate_id = $3
-		`, queue.StatusConsumed, queue.ActorAgentTurnSync, submitted.Turn.ID); err != nil {
+			UPDATE river_job
+			SET state = $1, finalized_at = NOW()
+			WHERE args ->> 'actor' = $2 AND args ->> 'aggregate_id' = $3
+		`, "completed", queue.ActorAgentTurnSync, submitted.Turn.ID); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -206,10 +206,10 @@ func TestRecoverUnfinishedTurnsHasMoreORsExpiredQueuedAndPending(t *testing.T) {
 	}
 	pending := createClaimedJournalTurn(t, as)
 	if _, err := as.pool.Exec(context.Background(), `
-		UPDATE async_dispatches
-		SET status = $1, consumed_at = NOW(), updated_at = NOW()
-		WHERE actor_name = $2 AND aggregate_id = $3
-	`, queue.StatusConsumed, queue.ActorAgentTurnSync, pending.turn.ID); err != nil {
+		UPDATE river_job
+		SET state = $1, finalized_at = NOW()
+		WHERE args ->> 'actor' = $2 AND args ->> 'aggregate_id' = $3
+	`, "completed", queue.ActorAgentTurnSync, pending.turn.ID); err != nil {
 		t.Fatal(err)
 	}
 

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
-	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 	"gorm.io/gorm"
 )
@@ -25,18 +24,8 @@ func TestConsumeDoesNotAcknowledgeFailedTaskPersistence(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			ctx := context.Background()
-			var dispatch queue.Dispatch
-			if err := db.Transaction(func(tx *gorm.DB) error {
-				var err error
-				dispatch, err = queue.StageForActor(ctx, tx, queue.ActorImageSession, taskID, 0)
-				return err
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if summary, err := queue.RunDispatcherOnce(ctx, pool, func(string, string) error { return nil }, 10); err != nil || summary.Sent != 1 {
-				t.Fatalf("dispatch=%+v err=%v", summary, err)
-			}
+			ctx := imageSessionQueueContext(t, db)
+			job := stageImageSessionJob(t, db, taskID)
 			injected := errors.New("task failure persistence unavailable")
 			const callback = "test:failure-persistence"
 			writes := 0
@@ -51,17 +40,13 @@ func TestConsumeDoesNotAcknowledgeFailedTaskPersistence(t *testing.T) {
 			}
 			t.Cleanup(func() { db.Callback().Update().Remove(callback) })
 			executor := Executor{DB: db, Media: ss.media, Provider: MockChatProvider{Err: ErrRateLimit}}
-			err := queue.Consume(ctx, pool, dispatch.ID, taskID, map[string]queue.ActorFunc{queue.ActorImageSession: executor.Execute})
+			err := executeImageSessionJob(ctx, job, executor)
 			if !errors.Is(err, injected) || writes != 1 {
 				t.Fatalf("consume error=%v failed writes=%d", err, writes)
 			}
 			task := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)
-			var envelope schema.AsyncDispatches
-			if err := db.Where("id = ?", dispatch.ID).Take(&envelope).Error; err != nil {
-				t.Fatal(err)
-			}
-			if task.Status != "running" || envelope.Status != queue.StatusPending || envelope.LeaseToken != nil || envelope.ConsumedAt != nil {
-				t.Fatalf("uncommitted failure acknowledged: task=%s envelope=%+v", task.Status, envelope)
+			if task.Status != "running" || riverImageSessionJobCount(t, ss, taskID) != 1 {
+				t.Fatalf("uncommitted failure changed task/job: task=%s jobs=%d", task.Status, riverImageSessionJobCount(t, ss, taskID))
 			}
 			if len(task.ProviderEffects) != 1 || task.ProviderEffects[0].EffectResult != "failed" {
 				t.Fatalf("confirmed provider failure changed: %+v", task.ProviderEffects)
@@ -74,43 +59,24 @@ func TestConsumeCancellationKeepsUnknownAndReleasesEnvelope(t *testing.T) {
 	pool, db := testdb.IsolatedMigrated(t, fmt.Sprintf("pf_cancel_finalize_%d", time.Now().UnixNano()))
 	ss := newSessionServerWithDatabase(t, pool, db)
 	session, taskID := createQueuedGeneration(t, ss, map[string]any{"prompt": "取消后的信封收尾", "size": "1024x1024"})
-	ctx := context.Background()
-	var dispatch queue.Dispatch
-	if err := ss.db.Transaction(func(tx *gorm.DB) error {
-		var err error
-		dispatch, err = queue.StageForActor(ctx, tx, queue.ActorImageSession, taskID, 0)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queue.RunDispatcherOnce(ctx, ss.pool, func(string, string) error { return nil }, 100); err != nil {
-		t.Fatal(err)
-	}
+	ctx := imageSessionQueueContext(t, ss.db)
+	job := stageImageSessionJob(t, ss.db, taskID)
 	actorCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	executor := Executor{DB: ss.db, Media: ss.media, Provider: contextCancelProvider{cancel: cancel}}
-	if err := queue.Consume(actorCtx, ss.pool, dispatch.ID, taskID, map[string]queue.ActorFunc{queue.ActorImageSession: executor.Execute}); err != nil {
+	if err := executeImageSessionJob(actorCtx, job, executor); err != nil {
 		t.Fatal(err)
 	}
 	task := generationTaskByID(t, loadSessionDetail(t, ss, session.ID), taskID)
 	if task.Status != "unknown" || task.IsRetryable || len(task.ProviderEffects) != 1 || task.ProviderEffects[0].EffectResult != "unknown" {
 		t.Fatalf("uncertain provider result changed: %+v", task)
 	}
-	var envelope schema.AsyncDispatches
-	if err := ss.db.Where("id = ?", dispatch.ID).Take(&envelope).Error; err != nil {
+	if riverImageSessionJobCount(t, ss, taskID) != 1 {
+		t.Fatalf("unknown job count=%d", riverImageSessionJobCount(t, ss, taskID))
+	}
+	// A repeated delivery reaches the business executor but must not replay the
+	// provider after the durable unknown result.
+	if err := executeImageSessionJob(ctx, job, executor); err != nil {
 		t.Fatal(err)
-	}
-	if envelope.Status != queue.StatusConsumed || envelope.LeaseToken != nil || envelope.LeaseExpiresAt != nil || envelope.ConsumedAt == nil {
-		t.Fatalf("envelope not finalized: %+v", envelope)
-	}
-	// 重复信封不得再次调用结果不明的供应商。
-	called := false
-	if err := queue.Consume(ctx, ss.pool, dispatch.ID, taskID, map[string]queue.ActorFunc{
-		queue.ActorImageSession: func(context.Context, string) error { called = true; return nil },
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if called {
-		t.Fatal("consumed unknown result was replayed")
 	}
 }

@@ -17,7 +17,7 @@ import (
 
 // HTTP 给 Web 管理员 session 挂 schema-v3 画布与跑图路由，路径前缀 /api/v3。
 // Service 必须注入；Settings 为 nil 时 RequireAdmin 视为不要求访问令牌。
-// 提交运行只写 PENDING dispatch，禁止在 handler 里打 broker。不要把本类型当成 graph.Service。
+// 提交运行只写 River 作业，禁止在 handler 里打 broker。不要把本类型当成 graph.Service。
 type HTTP struct {
 	Service           Service // 必须注入；改图与跑图都经此入口
 	GenerationOptions func(context.Context) (map[string][]string, error)
@@ -28,7 +28,7 @@ type HTTP struct {
 }
 
 // Register 挂上 schema-v3 画布读写与跑图 HTTP，全部走管理员 session。
-// 路径前缀 /api/v3。提交运行只写 PENDING dispatch，不在请求里打 broker。
+// 路径前缀 /api/v3。提交运行只写 River 作业，不在请求里打 broker。
 func (h HTTP) Register(engine *gin.Engine) {
 	admin := httpx.RequireAdmin(func(c *gin.Context) (bool, error) {
 		if h.Settings == nil {

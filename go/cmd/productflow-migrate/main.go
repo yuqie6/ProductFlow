@@ -35,7 +35,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "gorm: %v\n", err)
 		os.Exit(1)
 	}
-	if err := schema.Apply(gdb); err != nil {
+	if err := schema.Apply(gdb.WithContext(ctx)); err != nil {
 		fmt.Fprintf(os.Stderr, "migrate: %v\n", err)
 		os.Exit(1)
 	}

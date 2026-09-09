@@ -33,7 +33,7 @@ func TestOperatorProductManagementUsesExplicitMerchantWithoutGeneration(t *testi
 	}
 	bad.Body.Close()
 	var beforeJobs int64
-	if err := ps.db.Model(&schema.AsyncDispatches{}).Count(&beforeJobs).Error; err != nil {
+	if err := ps.db.Table("river_job").Count(&beforeJobs).Error; err != nil {
 		t.Fatal(err)
 	}
 	edited := ps.doJSON(t, http.MethodPut, base+"/"+target.ID+"/facts", map[string]any{"name": "admin corrected name"})
@@ -55,7 +55,7 @@ func TestOperatorProductManagementUsesExplicitMerchantWithoutGeneration(t *testi
 	}
 	noGenerate.Body.Close()
 	var afterJobs int64
-	if err := ps.db.Model(&schema.AsyncDispatches{}).Count(&afterJobs).Error; err != nil {
+	if err := ps.db.Table("river_job").Count(&afterJobs).Error; err != nil {
 		t.Fatal(err)
 	}
 	if beforeJobs != afterJobs {

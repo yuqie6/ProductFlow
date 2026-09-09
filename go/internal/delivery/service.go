@@ -1,7 +1,7 @@
 // Package delivery 按 DeliverySpec 做决定性出图：改尺寸或格式不调用图像模型，也不替换 generated source。
 //
 // 职责：把已有生成图做成 jpeg/webp/png 等交付件。这是本地渲染，不是再跑一遍 image 模型。
-// 调用时机：画布/HTTP 提交只写 delivery_rendition_jobs + PENDING dispatch；worker 走 [Executor]。
+// 调用时机：画布/HTTP 提交只写 delivery_rendition_jobs + River 作业；worker 走 [Executor]。
 // 副作用：写任务行、MediaObject 变体、产品图库关联；不改 workflow 节点上的 generated 原图绑定。
 // 错误：规格不合法 Validation；找不到源 NotFound；不可证明的 I/O 标 unknown，不要改成 failed 重试。
 // 禁区：不要为了「导出失败」去调 Gemini/OpenAI；jpeg444.go 是无色度抽样编码器，版权头保持英文。
@@ -44,7 +44,7 @@ type SubmitResult struct {
 	Queued  bool        // true 表示任务已排队或正在执行；HTTP 不直接入队 broker
 }
 
-// Submit 按规范化 DeliverySpec 创建或复用交付任务，并写入 PENDING dispatch。
+// Submit 按规范化 DeliverySpec 创建或复用交付任务，并写入 River 作业。
 // 规格不合法或源图未核验返回 Validation；找不到源图返回 NotFound。
 func (s Service) Submit(ctx context.Context, sourceAssetID string, specRaw map[string]any) (SubmitResult, error) {
 	normalized, err := NormalizeSpec(specRaw)
@@ -123,7 +123,7 @@ func (s Service) List(ctx context.Context, sourceAssetID string) (JobListRespons
 	return out, err
 }
 
-// Retry 把可重试的失败任务重新标 queued 并补 PENDING dispatch。
+// Retry 把可重试的失败任务重新标 queued 并补 River 作业。
 func (s Service) Retry(ctx context.Context, jobID string) (JobResponse, error) {
 	err := tx.WithGorm(ctx, s.DB, func(pgxTx *gorm.DB) error {
 		row, err := loadJobForUpdate(ctx, pgxTx, jobID)
@@ -137,17 +137,18 @@ func (s Service) Retry(ctx context.Context, jobID string) (JobResponse, error) {
 			return apperr.Conflict("该交付派生任务不可重试")
 		}
 		if err := pgxTx.Model(&schema.DeliveryRenditionJobs{}).Where("id = ?", jobID).Updates(map[string]any{
-			"status":            "queued",
-			"active_attempt_id": nil,
-			"failure_reason":    nil,
-			"started_at":        nil,
-			"finished_at":       nil,
-			"is_retryable":      true,
-			"updated_at":        time.Now().UTC(),
+			"status":             "queued",
+			"queue_execution_id": clockid.New(),
+			"active_attempt_id":  nil,
+			"failure_reason":     nil,
+			"started_at":         nil,
+			"finished_at":        nil,
+			"is_retryable":       true,
+			"updated_at":         time.Now().UTC(),
 		}).Error; err != nil {
 			return err
 		}
-		_, err = queue.Requeue(ctx, pgxTx, queue.DeliveryKey(queue.ActorDelivery, jobID), queue.ActorDelivery, jobID, nil, nil, false)
+		_, err = queue.StageTaskForActor(ctx, pgxTx, queue.ActorDelivery, jobID, 0)
 		return err
 	})
 	if err != nil {
@@ -157,7 +158,7 @@ func (s Service) Retry(ctx context.Context, jobID string) (JobResponse, error) {
 }
 
 // QueueAfterImageSuccess 图运行图片成功后按节点 DeliverySpec 入队。
-// 无 DeliverySpec 或规格不合法时跳过；INSERT / StageForActor 失败必须返回 error。
+// 无 DeliverySpec 或规格不合法时跳过；INSERT / StageTaskForActor 失败必须返回 error。
 func (s Service) QueueAfterImageSuccess(ctx context.Context, pgxTx *gorm.DB, nodeID, sourceAssetID string) error {
 	raw, err := graph.NodeConfigJSON(ctx, pgxTx, nodeID)
 	if err != nil {
@@ -226,7 +227,7 @@ func createOrReuseJob(ctx context.Context, db *gorm.DB, source product.ImageAsse
 		}
 		return *existing, false, nil
 	}
-	if _, err := queue.StageForActor(ctx, db, queue.ActorDelivery, row.ID, 0); err != nil {
+	if _, err := queue.StageTaskForActor(ctx, db, queue.ActorDelivery, row.ID, 0); err != nil {
 		return jobRow{}, false, err
 	}
 	return jobFromModel(row), true, nil

@@ -8,8 +8,8 @@ import (
 	"github.com/yuqie6/productflow/internal/platform/testdb"
 )
 
-// TestReplicaFieldTwoListenersSurviveNotifyLoss 模拟两个 dispatcher 副本各自 LISTEN：
-// 关掉副本 A 的 listener 后，Stage/Publish 仍能唤醒副本 B。
+// TestReplicaFieldTwoListenersSurviveNotifyLoss 模拟两个 API 副本各自 LISTEN：
+// 关掉副本 A 的 listener 后，Publish 仍能唤醒副本 B。
 func TestReplicaFieldTwoListenersSurviveNotifyLoss(t *testing.T) {
 	pool, gdb := testdb.Open(t)
 	ctxA, cancelA := context.WithCancel(context.Background())
@@ -17,16 +17,16 @@ func TestReplicaFieldTwoListenersSurviveNotifyLoss(t *testing.T) {
 	ctxB, cancelB := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancelB()
 
-	notesA, err := Listen(ctxA, pool, ChannelDispatch)
+	notesA, err := Listen(ctxA, pool, ChannelRun)
 	if err != nil {
 		t.Fatal(err)
 	}
-	notesB, err := Listen(ctxB, pool, ChannelDispatch)
+	notesB, err := Listen(ctxB, pool, ChannelRun)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := Publish(ctxB, gdb, ChannelDispatch, "both-replicas"); err != nil {
+	if err := Publish(ctxB, gdb, ChannelRun, "both-replicas"); err != nil {
 		t.Fatal(err)
 	}
 	waitNote(t, ctxB, notesA, "both-replicas")
@@ -39,7 +39,7 @@ func TestReplicaFieldTwoListenersSurviveNotifyLoss(t *testing.T) {
 		t.Fatal("replica A listener did not exit after cancel")
 	}
 
-	if err := Publish(ctxB, gdb, ChannelDispatch, "after-a-lost"); err != nil {
+	if err := Publish(ctxB, gdb, ChannelRun, "after-a-lost"); err != nil {
 		t.Fatal(err)
 	}
 	waitNote(t, ctxB, notesB, "after-a-lost")

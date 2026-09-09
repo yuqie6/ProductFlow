@@ -36,12 +36,12 @@ func TestStaleAttemptFailureCannotRequeueOrFinalizeQuota(t *testing.T) {
 			if status != "running" || active != current {
 				t.Fatalf("current attempt changed: status=%s active=%s", status, active)
 			}
-			var dispatches int
-			if err := ss.pool.QueryRow(context.Background(), "SELECT count(*) FROM async_dispatches WHERE aggregate_id=$1", taskID).Scan(&dispatches); err != nil {
+			var riverJobs int
+			if err := ss.pool.QueryRow(context.Background(), "SELECT count(*) FROM river_job WHERE args ->> 'aggregate_id'=$1", taskID).Scan(&riverJobs); err != nil {
 				t.Fatal(err)
 			}
-			if dispatches != 0 {
-				t.Fatalf("stale worker created %d dispatches", dispatches)
+			if riverJobs != 0 {
+				t.Fatalf("stale worker created %d river jobs", riverJobs)
 			}
 			merchantID := auth.MustDevMerchantID(t, ss.db)
 			hold := loadQuotaHold(t, ss.db, merchantID, generationQuotaKey(taskID, 0))

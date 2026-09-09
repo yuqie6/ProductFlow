@@ -178,6 +178,9 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 	var claimed bool
 	var attemptID string
 	err := tx.WithGorm(ctx, e.DB, func(pgxTx *gorm.DB) error {
+		if err := queue.AssertExecution(ctx, pgxTx, queue.ActorLocalEdit, taskID); err != nil {
+			return err
+		}
 		task, err := loadTaskByID(ctx, pgxTx, taskID)
 		if err != nil {
 			if apperr.IsNotFound(err) {
@@ -253,7 +256,7 @@ func (e Executor) claim(ctx context.Context, taskID string) (bool, string, error
 	return claimed, attemptID, err
 }
 
-// releaseIdle 在 claim 不到 queued 行时决定信封命运：别人正在跑则 ErrBusy；业务已终态或行不存在则 nil。
+// releaseIdle 在 claim 不到 queued 行时决定本次作业结果：别人正在跑则 ErrBusy；业务已终态或行不存在则 nil。
 func (e Executor) releaseIdle(ctx context.Context, taskID string) error {
 	var row schema.LocalImageEditTasks
 	err := e.DB.WithContext(ctx).Where("id = ?", taskID).Take(&row).Error

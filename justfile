@@ -149,10 +149,6 @@ go-test-agent-query-plan:
 go-test-agent-read-load:
     PRODUCTFLOW_RUN_AGENT_READ_LOAD=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/agent -run TestAgentReadHTTPTargetScale -count=1 -p 1 -v -timeout 4m'
 
-# Opt-in real dispatcher/Redis latency with and without a slow recovery backlog.
-go-test-dispatch-latency:
-    PRODUCTFLOW_RUN_DISPATCH_LATENCY=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/platform/queue -run TestDispatcherPendingSentLatency -count=1 -p 1 -v -timeout 4m'
-
 # Opt-in queue overview dense/sparse active Graph latency and EXPLAIN gate.
 go-test-queue-overview-load:
     PRODUCTFLOW_RUN_QUEUE_OVERVIEW_LOAD=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/platform/generation -run TestQueueOverviewActiveGraphScale -count=1 -p 1 -v -timeout 4m'
@@ -193,8 +189,7 @@ go-worker:
 go-dispatcher:
     bash scripts/with_dev_env.sh bash -lc 'go run -C go ./cmd/productflow-dispatcher --watch'
 
-# Local two-replica field gates: notify loss, two dispatchers, SIGKILL survivor, capacity, Graph lease/fencing.
-# SIGKILL spawn uses isolated PostgreSQL plus Redis DB 14; docker topology remains `just staging-up`.
+# Local replica and business lease/fencing gates; Docker topology is `just staging-up`.
 go-test-staging-field:
     PRODUCTFLOW_RUN_STAGING_FIELD=1 bash scripts/with_dev_env.sh bash -lc 'go test -C go ./internal/platform/notify ./internal/platform/queue ./internal/imagesession ./internal/graph -run "TestReplicaField|TestGraphRunLeaseTakesOverExpiredOwner|TestGraphRunLeaseFencesLateProviderResult|TestSubscribeSharesOneListenerAcrossChannels" -count=1 -p 1 -v -timeout 6m'
 

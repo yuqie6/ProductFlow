@@ -35,7 +35,7 @@ func TestGraphClaimRoundYieldsToOtherGraphAndBothProgress(t *testing.T) {
 	if ok, _, err := claimQueuedNodeRun(context.Background(), db, nodes[1], true); !errors.Is(err, errWaitingCapacity) || ok {
 		t.Fatalf("second node must yield to other GraphRun: ok=%t err=%v", ok, err)
 	}
-	assertAdmissionDispatchStatus(t, db, other.ID, queue.StatusPending)
+	assertAdmissionDispatchStatus(t, db, other.ID, "scheduled")
 
 	ok, _, err = claimQueuedNodeRun(context.Background(), db, otherNodes[0], false)
 	if err != nil || !ok {
@@ -47,7 +47,7 @@ func TestGraphClaimRoundYieldsToOtherGraphAndBothProgress(t *testing.T) {
 		t.Fatalf("other GraphRun must make progress in its next round: ok=%t err=%v", ok, err)
 	}
 	markAdmissionNodeTerminal(t, db, otherNodes[1])
-	if err := db.Model(&schema.AsyncDispatches{}).Where("id = ?", other.ID).Update("status", queue.StatusConsumed).Error; err != nil {
+	if err := db.Table("river_job").Where("id = ?", other.ID).Updates(map[string]any{"state": "completed", "finalized_at": time.Now().UTC()}).Error; err != nil {
 		t.Fatal(err)
 	}
 	ok, _, err = claimQueuedNodeRun(context.Background(), db, nodes[1], false)
@@ -61,12 +61,12 @@ func TestGraphClaimRoundLimitsLongGraphBeforeImageSession(t *testing.T) {
 	setAdmissionMax(t, db, 3)
 	merchantID := auth.MustDevMerchantID(t, db)
 	_, nodes := insertAdmissionGraphRun(t, db, merchantID, "running", "running", "queued")
-	other := stageAdmissionDispatch(t, db, queue.ActorImageSession, "merchant-b", time.Now().UTC().Add(-time.Second))
+	other := stageAdmissionDispatch(t, db, queue.ActorImageSession, insertAdmissionMerchant(t, db), time.Now().UTC().Add(-time.Second))
 
 	if ok, _, err := claimQueuedNodeRun(context.Background(), db, nodes[2], true); !errors.Is(err, errWaitingCapacity) || ok {
 		t.Fatalf("long graph must defer its third node for image session: ok=%t err=%v", ok, err)
 	}
-	if err := db.Model(&schema.AsyncDispatches{}).Where("id = ?", other.ID).Update("status", queue.StatusConsumed).Error; err != nil {
+	if err := db.Table("river_job").Where("id = ?", other.ID).Updates(map[string]any{"state": "completed", "finalized_at": time.Now().UTC()}).Error; err != nil {
 		t.Fatal(err)
 	}
 	ok, _, err := claimQueuedNodeRun(context.Background(), db, nodes[2], false)
@@ -170,38 +170,43 @@ func markAdmissionNodeTerminal(t *testing.T, db *gorm.DB, nodeID string) {
 	}
 }
 
-func stageAdmissionDispatch(t *testing.T, db *gorm.DB, actor, merchantID string, availableAt time.Time) queue.Dispatch {
+func stageAdmissionDispatch(t *testing.T, db *gorm.DB, actor, merchantID string, availableAt time.Time) queue.RiverJob {
 	t.Helper()
-	ctx := context.Background()
-	aggregateID := clockid.New()
-	var dispatch queue.Dispatch
-	if err := db.Transaction(func(dbTx *gorm.DB) error {
+	ctx := auth.WithMerchantID(context.Background(), merchantID)
+	var aggregateID string
+	if actor == queue.ActorGraphRun {
+		if err := db.Table("workflow_graph_runs r").Select("r.id").Joins("JOIN workflow_graphs g ON g.id=r.graph_id").Joins("JOIN products p ON p.id=g.product_id").Where("p.merchant_id=?", merchantID).Limit(1).Scan(&aggregateID).Error; err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		now := time.Now().UTC()
+		session := schema.ImageSessions{ID: clockid.New(), MerchantID: merchantID, Title: "fairness", CreatedAt: now, UpdatedAt: now}
+		if err := db.Create(&session).Error; err != nil {
+			t.Fatal(err)
+		}
+		task := schema.ImageSessionGenerationTasks{ID: clockid.New(), SessionID: session.ID, Status: "queued", Prompt: "fairness", Size: "1024x1024", GenerationCount: 1, CreatedAt: now, IsRetryable: true}
+		if err := db.Create(&task).Error; err != nil {
+			t.Fatal(err)
+		}
+		aggregateID = task.ID
+	}
+	var job queue.RiverJob
+	if err := db.Transaction(func(tx *gorm.DB) error {
 		var err error
-		dispatch, err = queue.Stage(ctx, dbTx, queue.DeliveryKey(actor, aggregateID), actor, aggregateID, nil, nil)
+		job, err = queue.StageTask(ctx, tx, actor, aggregateID, nil, &availableAt)
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Model(&schema.AsyncDispatches{}).Where("id = ?", dispatch.ID).Updates(map[string]any{
-		"merchant_id":  merchantID,
-		"available_at": availableAt,
-		"created_at":   availableAt,
-		"updated_at":   availableAt,
-	}).Error; err != nil {
-		t.Fatal(err)
-	}
-	dispatch.MerchantID = merchantID
-	dispatch.AvailableAt = availableAt
-	return dispatch
+	return job
 }
-
-func assertAdmissionDispatchStatus(t *testing.T, db *gorm.DB, id, want string) {
+func assertAdmissionDispatchStatus(t *testing.T, db *gorm.DB, id int64, want string) {
 	t.Helper()
 	var got string
-	if err := db.Model(&schema.AsyncDispatches{}).Where("id = ?", id).Pluck("status", &got).Error; err != nil {
+	if err := db.Table("river_job").Select("state").Where("id=?", id).Scan(&got).Error; err != nil {
 		t.Fatal(err)
 	}
 	if got != want {
-		t.Fatalf("dispatch %s status=%s want=%s", id, got, want)
+		t.Fatalf("state=%s want=%s", got, want)
 	}
 }

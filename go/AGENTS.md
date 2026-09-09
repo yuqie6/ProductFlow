@@ -12,9 +12,9 @@ Terminal logs are readable lines (time, level, process, message, `key=value`). J
 
 ## Contracts
 
-- Cookie name `session`. Errors `{"detail":"..."}`. HTTP 不 enqueue broker；dispatcher 标 SENT 后再入队。
+- Cookie name `session`. Errors `{"detail":"..."}`.
 - JSON extra=forbid via `DisallowUnknownFields` → 400 `请求体无效`.
-- HTTP does not enqueue the broker. Write the business row and `async_dispatches` PENDING; dispatcher marks SENT then enqueues. Worker `MaxRetry=0`.
+- Write business rows and River jobs in the same explicit GORM transaction using `StageTaskForActor` / `StageTask`. River owns job delivery, snooze and infrastructure retry. The dispatcher process only runs business recovery. Preserve execution identity on recovery; rotate it on explicit business retry.
 - Unprovable provider results stay `unknown` and are not auto-retried as failure.
 
 ## Tests

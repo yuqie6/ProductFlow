@@ -220,6 +220,7 @@ func (AgentTurnExecutions) TableName() string { return "agent_turn_executions" }
 // Web 侧 Turn 投影；output_text 等是列表摘要，不是第二份模型 transcript。
 type AgentTurnProjections struct {
 	ID                                 string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	QueueExecutionID                   string     `gorm:"column:queue_execution_id;type:varchar(36);not null;default:gen_random_uuid()"`
 	ConversationID                     string     `gorm:"column:conversation_id;type:varchar(36);not null"`
 	HarnessTurnID                      *string    `gorm:"column:harness_turn_id;type:varchar(120)"`
 	IdempotencyKey                     string     `gorm:"column:idempotency_key;type:varchar(200);not null"`
@@ -289,34 +290,11 @@ type AppSettings struct {
 
 func (AppSettings) TableName() string { return "app_settings" }
 
-// AsyncDispatches 对应表 async_dispatches。
-// 异步信封：HTTP 只写 PENDING，dispatcher 标 SENT 再入队。
-// MerchantID 是受理时商家快照（非租户根）；重试/Restage 不得改写；空串表示旧行尚未回填。
-type AsyncDispatches struct {
-	ID             string     `gorm:"column:id;type:varchar(36);primaryKey"`
-	DeliveryKey    string     `gorm:"column:delivery_key;type:varchar(255);not null"`
-	ActorName      string     `gorm:"column:actor_name;type:varchar(120);not null"`
-	AggregateID    string     `gorm:"column:aggregate_id;type:varchar(36);not null"`
-	MerchantID     string     `gorm:"column:merchant_id;type:varchar(36)"`
-	PayloadJSON    *string    `gorm:"column:payload_json;type:json"`
-	Status         string     `gorm:"column:status;type:asyncdispatchstatus;not null"`
-	AvailableAt    time.Time  `gorm:"column:available_at;type:timestamptz;not null"`
-	LeaseToken     *string    `gorm:"column:lease_token;type:varchar(36)"`
-	LeaseExpiresAt *time.Time `gorm:"column:lease_expires_at;type:timestamptz"`
-	Attempts       int        `gorm:"column:attempts;type:integer;not null"`
-	LastError      *string    `gorm:"column:last_error;type:text"`
-	SentAt         *time.Time `gorm:"column:sent_at;type:timestamptz"`
-	ConsumedAt     *time.Time `gorm:"column:consumed_at;type:timestamptz"`
-	CreatedAt      time.Time  `gorm:"column:created_at;type:timestamptz;not null"`
-	UpdatedAt      time.Time  `gorm:"column:updated_at;type:timestamptz;not null"`
-}
-
-func (AsyncDispatches) TableName() string { return "async_dispatches" }
-
 // DeliveryRenditionJobs 对应表 delivery_rendition_jobs。
 // 确定性交付转码作业，不调用图像模型。
 type DeliveryRenditionJobs struct {
 	ID                string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	QueueExecutionID  string     `gorm:"column:queue_execution_id;type:varchar(36);not null;default:gen_random_uuid()"`
 	ProductID         string     `gorm:"column:product_id;type:varchar(36);not null"`
 	SourceAssetID     string     `gorm:"column:source_asset_id;type:varchar(36);not null"`
 	ResultAssetID     *string    `gorm:"column:result_asset_id;type:varchar(36)"`
@@ -402,6 +380,7 @@ func (ImageSessionAssets) TableName() string { return "image_session_assets" }
 type ImageSessionGenerationTasks struct {
 	BillingSeq                int        `gorm:"column:billing_seq;type:integer;not null;default:0"`
 	ID                        string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	QueueExecutionID          string     `gorm:"column:queue_execution_id;type:varchar(36);not null;default:gen_random_uuid()"`
 	SessionID                 string     `gorm:"column:session_id;type:varchar(36);not null"`
 	Status                    string     `gorm:"column:status;type:jobstatus;not null"`
 	Prompt                    string     `gorm:"column:prompt;type:text;not null"`
@@ -588,6 +567,7 @@ func (LocalImageEditTaskReferences) TableName() string { return "local_image_edi
 // 蒙版局部编辑任务；mask 指向独立 MediaObject。
 type LocalImageEditTasks struct {
 	ID                        string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	QueueExecutionID          string     `gorm:"column:queue_execution_id;type:varchar(36);not null;default:gen_random_uuid()"`
 	ProductID                 string     `gorm:"column:product_id;type:varchar(36);not null"`
 	SourceAssetID             string     `gorm:"column:source_asset_id;type:varchar(36);not null"`
 	SourceMediaSHA256         string     `gorm:"column:source_media_sha256;type:varchar(64);not null"`
@@ -1028,6 +1008,7 @@ func (WorkflowGraphProviderEffects) TableName() string { return "workflow_graph_
 // 独立业务执行记录；用户点运行即可创建，不必先有 Agent Session。
 type WorkflowGraphRuns struct {
 	ID                      string     `gorm:"column:id;type:varchar(36);primaryKey"`
+	QueueExecutionID        string     `gorm:"column:queue_execution_id;type:varchar(36);not null;default:gen_random_uuid()"`
 	GraphID                 string     `gorm:"column:graph_id;type:varchar(36);not null"`
 	Status                  string     `gorm:"column:status;type:varchar(40);not null"`
 	RunScope                string     `gorm:"column:run_scope;type:varchar(40);not null"`
@@ -1173,7 +1154,6 @@ func AllModels() []any {
 		&AgentTurnProjections{},
 		&AgentWorkflowRunRequests{},
 		&AppSettings{},
-		&AsyncDispatches{},
 		&DeliveryRenditionJobs{},
 		&DeliveryAdoptionVersions{},
 		&DeliveryAdoptionSlots{},

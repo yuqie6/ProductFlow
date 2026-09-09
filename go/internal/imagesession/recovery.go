@@ -20,14 +20,14 @@ const recoveryBatchLimit = 25
 
 // DefaultStaleRunningAfter 是 dispatcher 未传入正数阈值时，按最后一次 progress heartbeat
 // （没有则 started_at）判断 running 闲置的默认等待。进程崩溃后商家仍看到 running 的上限
-// 约为该值加上 recovery 扫描间隔；asynq 墙钟到期走 worker 落 unknown，不等待本阈值。
+// 约为该值加上 recovery 扫描间隔；River 墙钟到期走 worker 落 unknown，不等待本阈值。
 const DefaultStaleRunningAfter = 90 * time.Minute
 
 // RecoverySummary 统计 dispatcher 本轮补回或标 unknown 的连续生图任务。
 type RecoverySummary struct {
 	QueuedTasks       int  `json:"queued_tasks"`        // 本轮看到的 queued 任务数
 	StaleRunningTasks int  `json:"stale_running_tasks"` // 过期且未打 provider 的 running 被重排队
-	EnqueuedTasks     int  `json:"enqueued_tasks"`      // 成功补回 PENDING dispatch 的数量
+	EnqueuedTasks     int  `json:"enqueued_tasks"`      // 成功补回 River 作业 的数量
 	UnknownTasks      int  `json:"unknown_tasks"`       // 已过 provider 边界、标 unknown 且不可自动重试
 	HasMore           bool `json:"has_more"`            // 跳过锁定行后仍有超过本批额度的候选
 }
@@ -37,7 +37,7 @@ type imageTaskRecoverResult struct {
 	sessionID string
 }
 
-// RecoverUnfinished 把 queued 任务补回 PENDING；过期 running 若已打 provider 则 unknown。
+// RecoverUnfinished 把 queued 任务补回 River 作业；过期 running 若已打 provider 则 unknown。
 // pool 为 nil 或写库失败时返回 error；已过 provider 边界标 unknown，不得当失败自动重试。
 // 单条任务失败计入返回 error，不回滚本轮已提交的其它任务。
 func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration) (RecoverySummary, error) {
@@ -125,12 +125,12 @@ func imageSessionRecoveryScope(tx *gorm.DB, cutoff time.Time) *gorm.DB {
 	return tx.Model(&schema.ImageSessionGenerationTasks{}).Where(`
 			is_retryable = ? AND (
 				(status = ? AND NOT EXISTS (
-					SELECT 1 FROM async_dispatches d
-					WHERE d.delivery_key = ? || ':' || image_session_generation_tasks.id
-					  AND d.status IN ?
+					SELECT 1 FROM river_job d
+					WHERE d.kind = 'productflow_task' AND d.args ->> 'actor' = ? AND d.args ->> 'aggregate_id' = image_session_generation_tasks.id
+ AND d.state <> 'completed' AND d.args ->> 'execution_id' = image_session_generation_tasks.queue_execution_id
 				))
 				OR (status = ? AND COALESCE(progress_updated_at, started_at) <= ?)
-			)`, true, "queued", queue.ActorImageSession, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}, "running", cutoff)
+			)`, true, "queued", queue.ActorImageSession, "running", cutoff)
 }
 
 func recoverImageTaskState(ctx context.Context, gdb *gorm.DB, taskID string, cutoff time.Time) (imageTaskRecoverResult, error) {
@@ -276,7 +276,7 @@ func restageImageTask(ctx context.Context, gdb *gorm.DB, taskID, sessionID strin
 		}
 		restageCtx := auth.WithMerchantID(ctx, merchantID)
 		var restageErr error
-		changed, restageErr = queue.RestageIfIdle(restageCtx, pgxTx, queue.ActorImageSession, taskID, nil)
+		changed, restageErr = queue.RestageTaskIfIdle(restageCtx, pgxTx, queue.ActorImageSession, taskID, nil)
 		if restageErr != nil {
 			return restageErr
 		}

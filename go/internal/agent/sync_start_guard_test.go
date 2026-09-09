@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/riverqueue/river"
 	"net/http"
 	"testing"
 
@@ -100,19 +102,24 @@ func TestLateSyncEnvelopeConsumesWithoutRestartingCanceledTurn(t *testing.T) {
 	if _, err := as.pool.Exec(ctx, `UPDATE agent_turn_projections SET status='canceled' WHERE id=$1`, turnID); err != nil {
 		t.Fatal(err)
 	}
-	var dispatchID string
-	if err := as.pool.QueryRow(ctx, `UPDATE async_dispatches SET status='sent',sent_at=NOW() WHERE actor_name=$1 AND aggregate_id=$2 RETURNING id`, queue.ActorAgentTurnSync, turnID).Scan(&dispatchID); err != nil {
+	var argsJSON []byte
+	if err := as.pool.QueryRow(ctx, `SELECT args FROM river_job WHERE args ->> 'actor'=$1 AND args ->> 'aggregate_id'=$2`, queue.ActorAgentTurnSync, turnID).Scan(&argsJSON); err != nil {
+		t.Fatal(err)
+	}
+	var args queue.TaskArgs
+	if err := json.Unmarshal(argsJSON, &args); err != nil {
 		t.Fatal(err)
 	}
 	gw.startErr = nil
 	gw.startCount = 0
-	if err := queue.Consume(ctx, as.pool, dispatchID, turnID, map[string]queue.ActorFunc{queue.ActorAgentTurnSync: as.svc.SyncTurn}); err != nil {
+	worker := queue.NewWorker(map[string]queue.ActorFunc{queue.ActorAgentTurnSync: as.svc.SyncTurn})
+	if err := worker.Work(ctx, &river.Job[queue.TaskArgs]{Args: args}); err != nil {
 		t.Fatal(err)
 	}
-	var status string
-	if err := as.pool.QueryRow(ctx, `SELECT status FROM async_dispatches WHERE id=$1`, dispatchID).Scan(&status); err != nil || status != queue.StatusConsumed || gw.startCount != 0 {
-		t.Fatalf("dispatch=%s starts=%d err=%v", status, gw.startCount, err)
+	if gw.startCount != 0 {
+		t.Fatalf("canceled Turn restarted %d times", gw.startCount)
 	}
+
 }
 
 func createUnboundStartGuardTurn(t *testing.T, as *agentServer) (string, string) {

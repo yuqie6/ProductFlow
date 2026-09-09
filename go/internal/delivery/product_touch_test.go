@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/yuqie6/productflow/internal/auth"
 )
 
 func TestProductTouchFailureRollsBackDeliveryResult(t *testing.T) {
@@ -57,7 +58,7 @@ func TestProductTouchFailureRollsBackDeliveryResult(t *testing.T) {
 	if _, err := ds.pool.Exec(ctx, "ALTER TABLE products DROP CONSTRAINT "+constraint); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (Service{DB: ds.db}).Retry(ctx, jobID); err != nil {
+	if _, err := (Service{DB: ds.db}).Retry(auth.WithMerchantID(ctx, auth.MustDevMerchantID(t, ds.db)), jobID); err != nil {
 		t.Fatal(err)
 	}
 	if err := executor.Execute(ctx, jobID); err != nil {

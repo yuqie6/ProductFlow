@@ -85,7 +85,7 @@ Repository documentation:
 
 ## Technology
 
-- Backend: Go 1.23 (Gin, GORM, asynq), `productflow-migrate`, Redis, PostgreSQL.
+- Backend: Go 1.26.5 (Gin, GORM, River), `productflow-migrate`, Redis, PostgreSQL.
 - Agent service: Node.js 22, Pi SDK, ProductFlow Tool adapter, JSONL session files, and JSON event files.
 - Frontend: React 19, Vite, TypeScript, React Router, TanStack Query, XYFlow, and Tailwind CSS 4.
 - Model SDKs: OpenAI-compatible adapters in Go and TypeScript, plus Google GenAI.
@@ -161,7 +161,7 @@ Set `STORAGE_HOST_PATH=/absolute/host/path` to use a host directory. When omitte
 
 ### 1. Prerequisites
 
-- Go 1.23+
+- Go 1.26.5+
 - Node.js 22.19+ and `pnpm`
 - Python 3 (repo scripts such as `just docs-check` and `just wipe-dev-data`)
 - Docker / Docker Compose

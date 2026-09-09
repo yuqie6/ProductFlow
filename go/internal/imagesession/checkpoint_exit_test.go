@@ -3,6 +3,7 @@ package imagesession
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,13 +14,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 	"github.com/yuqie6/productflow/internal/media"
 	pfdb "github.com/yuqie6/productflow/internal/platform/db"
-	"github.com/yuqie6/productflow/internal/platform/db/schema"
 	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/platform/storage"
 	"github.com/yuqie6/productflow/internal/platform/testdb"
-	"gorm.io/gorm"
 )
 
 func TestImageCheckpointExitHelper(t *testing.T) {
@@ -37,15 +37,20 @@ func TestImageCheckpointExitHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	executor := Executor{DB: db, Media: media.Store{Files: storage.Local{Root: os.Getenv("PRODUCTFLOW_CHECKPOINT_ROOT")}}, Provider: MockChatProvider{}}
-	err = queue.Consume(ctx, pool, os.Getenv("PRODUCTFLOW_CHECKPOINT_DISPATCH"), os.Getenv("PRODUCTFLOW_CHECKPOINT_TASK"), map[string]queue.ActorFunc{
-		queue.ActorImageSession: func(ctx context.Context, id string) error {
-			err := executor.Execute(ctx, id)
-			if errors.Is(err, queue.ErrLater) {
-				os.Exit(23)
-			}
-			return err
-		},
-	})
+	var raw []byte
+	if err := pool.QueryRow(ctx, "SELECT args FROM river_job WHERE id=$1", os.Getenv("PRODUCTFLOW_CHECKPOINT_JOB_ID")).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var args queue.TaskArgs
+	if err := json.Unmarshal(raw, &args); err != nil {
+		t.Fatal(err)
+	}
+	worker := queue.NewWorker(map[string]queue.ActorFunc{queue.ActorImageSession: executor.Execute})
+	err = worker.Work(ctx, &river.Job[queue.TaskArgs]{Args: args})
+	var snooze *river.JobSnoozeError
+	if errors.As(err, &snooze) {
+		os.Exit(23)
+	}
 	t.Fatalf("did not exit at confirmed checkpoint: %v", err)
 }
 
@@ -59,25 +64,7 @@ func TestImageCheckpointExitRecovery(t *testing.T) {
 			})
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			var dispatch queue.Dispatch
-			if err := db.Transaction(func(tx *gorm.DB) error {
-				var err error
-				dispatch, err = queue.StageForActor(ctx, tx, queue.ActorImageSession, taskID, 0)
-				return err
-			}); err != nil {
-				t.Fatal(err)
-			}
-			enqueued := 0
-			deliver := func(id, aggregate string) error {
-				if id != dispatch.ID || aggregate != taskID {
-					return fmt.Errorf("unexpected envelope %s", id)
-				}
-				enqueued++
-				return nil
-			}
-			if _, err := queue.RunDispatcherOnce(ctx, pool, deliver, 10); err != nil {
-				t.Fatal(err)
-			}
+			job := stageImageSessionJob(t, db, taskID)
 			binary, err := os.Executable()
 			if err != nil {
 				t.Fatal(err)
@@ -85,7 +72,7 @@ func TestImageCheckpointExitRecovery(t *testing.T) {
 			child := exec.CommandContext(ctx, binary, "-test.run=^TestImageCheckpointExitHelper$")
 			child.Env = append(os.Environ(), "PRODUCTFLOW_CHECKPOINT_CHILD=1",
 				"PRODUCTFLOW_CHECKPOINT_DB="+pool.Config().ConnString(), "PRODUCTFLOW_CHECKPOINT_ROOT="+ss.root,
-				"PRODUCTFLOW_CHECKPOINT_TASK="+taskID, "PRODUCTFLOW_CHECKPOINT_DISPATCH="+dispatch.ID)
+				"PRODUCTFLOW_CHECKPOINT_TASK="+taskID, "PRODUCTFLOW_CHECKPOINT_JOB_ID="+fmt.Sprint(job.ID))
 			output, err := child.CombinedOutput()
 			var exited *exec.ExitError
 			if !errors.As(err, &exited) || exited.ExitCode() != 23 {
@@ -109,34 +96,15 @@ func TestImageCheckpointExitRecovery(t *testing.T) {
 				return sha256.Sum256(data)
 			}
 			firstHash := downloadHash()
-			var envelope schema.AsyncDispatches
-			if err := db.Where("id = ?", dispatch.ID).Take(&envelope).Error; err != nil {
-				t.Fatal(err)
-			}
-			if envelope.Status != queue.StatusPending || envelope.LeaseToken != nil {
-				t.Fatalf("checkpoint envelope=%+v", envelope)
-			}
 			if cancelTask {
 				response := ss.doJSON(t, http.MethodPost, "/api/image-sessions/"+session.ID+"/generation-tasks/"+taskID+"/cancel", map[string]any{})
 				ss.mustStatus(t, response, http.StatusOK)
 				response.Body.Close()
 			}
 			recoveryStarted := time.Now()
-			for enqueued == 1 && time.Since(recoveryStarted) < 3*time.Second {
-				if _, err := queue.RunDispatcherOnce(ctx, pool, deliver, 10); err != nil {
-					t.Fatal(err)
-				}
-				if enqueued == 1 {
-					time.Sleep(20 * time.Millisecond)
-				}
-			}
-			if enqueued != 2 {
-				t.Fatalf("checkpoint deliveries=%d within 3s", enqueued)
-			}
-			t.Logf("checkpoint ready-to-redelivery=%s without timestamp edits", time.Since(recoveryStarted))
 			provider := &countingProvider{}
 			executor := Executor{DB: db, Media: ss.media, Provider: provider}
-			if err := queue.Consume(ctx, pool, dispatch.ID, taskID, map[string]queue.ActorFunc{queue.ActorImageSession: executor.Execute}); err != nil {
+			if err := executeImageSessionJob(ctx, job, executor); err != nil {
 				t.Fatal(err)
 			}
 			detail = loadSessionDetail(t, ss, session.ID)
@@ -166,13 +134,7 @@ func TestImageCheckpointExitRecovery(t *testing.T) {
 					t.Fatalf("final effect=%+v", effect)
 				}
 			}
-			if err := db.Where("id = ?", dispatch.ID).Take(&envelope).Error; err != nil {
-				t.Fatal(err)
-			}
-			if envelope.Status != queue.StatusConsumed || envelope.LeaseToken != nil {
-				t.Fatalf("final envelope=%+v", envelope)
-			}
-			t.Logf("process_exit=23 cancel=%t deliveries=2 resumed_provider_calls=%d completed=%d attempts=1 first_asset_preserved=true", cancelTask, provider.calls, task.CompletedCandidates)
+			t.Logf("process_exit=23 cancel=%t resumed_after=%s resumed_provider_calls=%d completed=%d attempts=1 first_asset_preserved=true", cancelTask, time.Since(recoveryStarted), provider.calls, task.CompletedCandidates)
 		})
 	}
 }

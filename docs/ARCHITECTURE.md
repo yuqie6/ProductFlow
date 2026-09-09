@@ -34,9 +34,9 @@ GET `/api/v2/products/overview` 由 `go/internal/product/overview.go` 读取自�
 
 `go/cmd/productflow-api/register.go` 在全部 API 注册前挂载 `httpx.BrowserStateProtection`。浏览器 POST/PUT/PATCH/DELETE（含 JSON 和 multipart）按 `BACKEND_CORS_ORIGINS` 精确校验 Origin，缺失时检查 Referer，缺来源或不匹配返回 403；请求 Host 不构成信任来源。内部调用须通过配置令牌校验，并继续接受具体路由的服务鉴权。`TRUSTED_PROXY_CIDRS` 默认空，未经信任的转发头不影响限流 IP。入口覆盖证据由 API 路由合同测试及 auth/httpx 测试维护。
 
-业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx，命令事务走 `tx.WithGorm` 与 schema 模型 `Create`/`Updates`/`Take`，行锁走 `platform/db` locking clause），异步投递用 asynq 信封，状态权威仍是 PostgreSQL 的 `async_dispatches` 与业务表。schema 权威是 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 加 ExtraDDL（CHECK / enum / 部分唯一索引 / FK）。不使用 AutoMigrate。写库约定见 [`go/AGENTS.md`](../go/AGENTS.md)。
+业务后端按功能竖切，代码在 `go/internal/`。HTTP 用 Gin，PostgreSQL 访问用 GORM（驱动仍是 pgx，命令事务走 `tx.WithGorm` 与 schema 模型 `Create`/`Updates`/`Take`，行锁走 `platform/db` locking clause），后台任务使用 River 0.47.0 的 PostgreSQL 队列，业务表负责业务终态、执行身份和供应商副作用。schema 权威是 `productflow-migrate`：GORM `CreateTable`/`AddColumn` 加 ExtraDDL（CHECK / enum / 部分唯一索引 / FK）。不使用 AutoMigrate。写库约定见 [`go/AGENTS.md`](../go/AGENTS.md)。
 
-机器可读合同在仓库根 `contracts/`：`http-routes.json` 与 `openapi.json` 是 2026-08-29 历史封印快照，默认不重生。Go 对未知 JSON 字段 `DisallowUnknownFields` → 400。HTTP 只写业务行和 `async_dispatches` PENDING，不在请求里打 broker。
+机器可读合同在仓库根 `contracts/`：`http-routes.json` 与 `openapi.json` 是 2026-08-29 历史封印快照，默认不重生。Go 对未知 JSON 字段 `DisallowUnknownFields` → 400。HTTP 在同一 GORM SQL 事务中写业务行和 River job，不经 Redis 发布任务。
 
 当前代码所有权：
 
@@ -247,9 +247,12 @@ Go 业务 API 解析 prompt/image 绑定；Agent service 通过受内部 token �
 连续生图每次消费最多发起一次 provider 调用。确认批次后仍有候选时，任务在 `candidate_saved` 检查点回 queued、释放 attempt 围栏，并在同一事务通过 Requeue 释放信封 lease、置 PENDING、设置原有 1s 续投延迟；然后返回 `queue.ErrLater`。旧 consumer 的 token CAS 不能修改新一轮 lease。检查点后进程退出不再等待旧 35 分钟消费 lease，信封写入失败则整个检查点事务回滚。下次 claim 创建新围栏，保留完成数、结果组、业务尝试次数和原 started_at；失败重试清空 started_at，仍受原尝试次数上限约束。30 分钟 handler deadline 限制每次消费，不再累计顺序批次。每次消费重新读取输入媒体，批次之间可能等待投递和容量 admission。回归：`go/internal/imagesession/batch_yield_test.go`、`checkpoint_exit_test.go`、`checkpoint_transaction_test.go`。
 
 - Go worker 负责工作流节点、生图会话候选、交付图和局部修任务。
-- Async dispatcher 扫描 PostgreSQL 中的 durable dispatch/recovery 状态并向 Redis 投递；`just dev` 与 Compose 都启动该进程。watch 模式默认每秒运行 dispatch，默认每 10 秒运行一次 domain recovery；`--interval` 与 `--recovery-interval` 分开控制。claim 满 `limit` 时 dispatch 立即续跑，空闲才等 interval 或 NOTIFY；同一轮已 claim 行有界并发 SENT+enqueue，每条仍先 SENT 再 enqueue。Agent、Graph、ImageSession、Delivery、LocalEdit recovery 默认每阶段最多处理 25 条候选，业务域使用稳定排序与 `SKIP LOCKED`；dispatcher 结构化日志记录每个 owner 的 `has_more`、recovery duration 和错误；配置 metrics token 后，API `/metrics` 提供 queued/stale-running backlog 与当前 PostgreSQL 锁等待，dispatcher `/metrics` 另提供各域 recovery duration histogram 和候选锁查询耗时。
-- 连续生图 running 是否闲置看最后一次 progress heartbeat（没有则 started_at）。默认 90 分钟后 dispatcher 重排队或标 `unknown`；心跳未过期不恢复。asynq `TaskTimeout` 30 分钟取消 handler context 时，worker 仍把不可证明的结果写成 `unknown`，不等待闲置阈值。已 `applied` 的 candidate 不因恢复再写副作用；晚到 attempt 不能覆盖 `unknown`。本链没有 parked question/approval。实现：`go/internal/imagesession/recovery.go`、`execute.go`；回归：`recovery_test.go`、`TestExecuteCanceledContextMarksUnknown`。
-- Redis 只承担 asynq broker 和投递唤醒；业务状态和生成容量 admission 由 PostgreSQL 负责。asynq worker 默认并发为 4，业务失败不依赖 broker retry。
+- `productflow-worker` 以 River typed job 调用 Graph、ImageSession、Delivery、LocalEdit、Agent Turn Sync 五类执行器。原 `async_dispatches`、SENT 信封、通用消费 lease 与自研 dispatcher 投递已退役。River 管理领取、snooze、有限基础设施重试和失联任务维护；业务已持久化的成功、失败、取消或 unknown 结束本次作业。
+- 作业身份为 actor、merchant_id、aggregate_id、execution_id。五类业务表持久化 `queue_execution_id`，显式重试更新身份，自动恢复和候选续跑保持身份。领取事务校验持久化商家及身份，业务 attempt/租约继续拒绝旧 Worker 回写。停止的 River 作业保留，不由自动恢复复活；已 completed 的 invocation 可由 River 原生 JobRetryTx 修复尚未完成的业务投影。
+- Graph/ImageSession 共用全库 generation admission lock 和容量计数；默认 3 槽，按实际商家占用、最近服务时间及就绪顺序分配。River generation 消费池与 delivery/local_edit/agent 分开，单进程默认并发分别为 3/2/2/2；多实例仍受业务全局生成容量约束。该容量合同不自动覆盖 LocalEdit。
+- `productflow-dispatcher` 保留进程名，仅执行五类业务恢复与额度待对账过期。各域独立循环，默认每 10 秒一次、每次最多 25 条，稳定排序和 SKIP LOCKED。`--watch`、`--recovery-interval` 控制扫描；旧投递 `--interval`/`--limit` 已删除。队列指标为 `productflow_queue_jobs{status=...}`，只反映 River 作业状态；业务 backlog 和 recovery duration 继续独立观测。
+- River job timeout 30 分钟、rescue 阈值 35 分钟；rescue 还受维护扫描和业务执行权限制。Graph 租约 35 分钟，每 5 分钟续租。连续生图依据 progress heartbeat（无则 started_at），默认 90 分钟无进展后恢复为 queued 或 unknown；已 applied 的候选不重放，旧 attempt 不得覆盖 unknown。进程正常超时可写 unknown，SIGKILL 则要等待业务恢复，不能把队列 rescue 当成供应商可安全重试。
+- Redis 仅用于认证限流，任务消费不依赖 Redis。River 原生迁移由 `productflow-migrate` 在现有迁移锁下按版本提交，业务 schema 仍单事务执行。检测到旧队列 pending/sent/dead 会拒绝切换；先核对处置业务记录和运行资源，不能清表规避停止证据。
 - PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
 - 连续生图状态的 `has_active_generation_task` 由同次返回的完整活动任务列表推导，不做独立 COUNT，避免查询间入队/完成导致活动标志与列表矛盾。此保证仅覆盖活动标志与任务列表，不表示轮次、effects 和队列统计共用一个全局快照。Status/SSE 返回该会话全部 queued/running，但不重复下发 `prompt`；提示词以详情和提交响应为准，前端把状态进度叠到已缓存任务上。实现：`go/internal/imagesession/serialize.go`、`web/src/pages/image-chat/branching.ts`；回归：`status_projection_test.go`、`active_status_load_test.go`、`branching.test.ts`。
 - 连续生图 Status 和详情仅在本次返回任务时读取队列概览；空任务列表不查询全局容量配置及队列 COUNT。详情返回终态任务时仍附带现行队列字段。实现与回归：`go/internal/imagesession/serialize.go`、`status_projection_test.go`、`http_load_test.go`。

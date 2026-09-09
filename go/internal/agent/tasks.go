@@ -376,7 +376,7 @@ func (s Service) ResumeTask(ctx context.Context, taskID string) (TaskResponse, e
 			if err != nil {
 				return err
 			}
-			if _, err := queue.StageForActor(ctx, pgxTx, queue.ActorAgentTurnSync, reservation.ID, 0); err != nil {
+			if _, err := queue.StageTaskForActor(ctx, pgxTx, queue.ActorAgentTurnSync, reservation.ID, 0); err != nil {
 				return err
 			}
 		}

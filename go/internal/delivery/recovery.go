@@ -22,11 +22,11 @@ const recoveryBatchLimit = 25
 type RecoverySummary struct {
 	QueuedJobs       int  `json:"queued_jobs"`        // 本轮看到的 queued 任务数
 	StaleRunningJobs int  `json:"stale_running_jobs"` // 过期 running 被重置为 queued 的数量
-	EnqueuedJobs     int  `json:"enqueued_jobs"`      // 成功补回 PENDING dispatch 的数量
+	EnqueuedJobs     int  `json:"enqueued_jobs"`      // 成功补回 River 作业 的数量
 	HasMore          bool `json:"has_more"`           // 跳过锁定行后仍有超过本批额度的候选
 }
 
-// RecoverUnfinished 把 queued / 过期 running 的交付任务补回 PENDING dispatch。交付没有 unknown。
+// RecoverUnfinished 把 queued / 过期 running 的交付任务补回 River 作业。交付没有 unknown。
 // pool 为 nil 或写库失败、ctx 取消时返回 error。
 // 单条任务失败计入返回 error，不回滚本轮已提交的其它任务。
 func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, staleAfter time.Duration) (RecoverySummary, error) {
@@ -103,12 +103,12 @@ func deliveryRecoveryScope(tx *gorm.DB, cutoff time.Time) *gorm.DB {
 	return tx.Model(&schema.DeliveryRenditionJobs{}).Where(`
 			is_retryable = ? AND (
 				(status = ? AND NOT EXISTS (
-					SELECT 1 FROM async_dispatches d
-					WHERE d.delivery_key = ? || ':' || delivery_rendition_jobs.id
-					  AND d.status IN ?
+					SELECT 1 FROM river_job d
+					WHERE d.kind = 'productflow_task' AND d.args ->> 'actor' = ? AND d.args ->> 'aggregate_id' = delivery_rendition_jobs.id
+ AND d.state <> 'completed' AND d.args ->> 'execution_id' = delivery_rendition_jobs.queue_execution_id
 				))
 				OR (status = ? AND started_at IS NOT NULL AND started_at <= ?)
-			)`, true, "queued", queue.ActorDelivery, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}, "running", cutoff)
+			)`, true, "queued", queue.ActorDelivery, "running", cutoff)
 }
 
 func recoverDeliveryJobState(ctx context.Context, gdb *gorm.DB, jobID string, cutoff time.Time) (string, error) {
@@ -176,7 +176,7 @@ func restageDeliveryJob(ctx context.Context, gdb *gorm.DB, jobID string) (bool, 
 		}
 		restageCtx := auth.WithMerchantID(ctx, merchantID)
 		var restageErr error
-		changed, restageErr = queue.RestageIfIdle(restageCtx, pgxTx, queue.ActorDelivery, jobID, nil)
+		changed, restageErr = queue.RestageTaskIfIdle(restageCtx, pgxTx, queue.ActorDelivery, jobID, nil)
 		return restageErr
 	})
 	return changed, err

@@ -4,13 +4,11 @@ import (
 	"context"
 	"strings"
 	"testing"
-
-	"github.com/yuqie6/productflow/internal/platform/queue"
 )
 
-// Real PostgreSQL constraints fail writes after the worker has claimed the task.
-// This exercises transaction rollback and the queue consumer, not a mocked DB.
-func TestTerminalPersistenceFailureDoesNotConsumeDispatch(t *testing.T) {
+// Real PostgreSQL constraints fail writes after the River worker has claimed
+// the task. This exercises transaction rollback at the business boundary.
+func TestTerminalPersistenceFailurePreservesBusinessClaim(t *testing.T) {
 	for _, table := range []string{"local_image_edit_tasks", "local_image_edit_provider_attempts"} {
 		t.Run(table, func(t *testing.T) {
 			ctx := context.Background()
@@ -32,21 +30,17 @@ func TestTerminalPersistenceFailureDoesNotConsumeDispatch(t *testing.T) {
 			if _, err := restageLocalEditTask(ctx, es.db, taskID); err != nil {
 				t.Fatal(err)
 			}
-			var dispatchID string
-			if err := es.pool.QueryRow(ctx, "UPDATE async_dispatches SET status='sent', attempts=1 WHERE aggregate_id=$1 RETURNING id", taskID).Scan(&dispatchID); err != nil {
-				t.Fatal(err)
-			}
 			executor := Executor{DB: es.db, Media: es.media, Provider: MockProvider{Cap: SupportedCapability("different-provider")}}
-			err := queue.Consume(ctx, es.pool, dispatchID, taskID, map[string]queue.ActorFunc{queue.ActorLocalEdit: executor.Execute})
+			err := runLocalEditRiverWorker(t, ctx, es.pool, taskID, executor)
 			if err == nil || !strings.Contains(err.Error(), constraint) {
 				t.Fatalf("want PostgreSQL write error, got %v", err)
 			}
-			var status, phase, dispatchStatus string
-			if err := es.pool.QueryRow(ctx, "SELECT t.status, a.phase, d.status FROM local_image_edit_tasks t JOIN local_image_edit_provider_attempts a ON a.task_id=t.id JOIN async_dispatches d ON d.aggregate_id=t.id WHERE t.id=$1", taskID).Scan(&status, &phase, &dispatchStatus); err != nil {
+			var status, phase string
+			if err := es.pool.QueryRow(ctx, "SELECT t.status, a.phase FROM local_image_edit_tasks t JOIN local_image_edit_provider_attempts a ON a.task_id=t.id WHERE t.id=$1", taskID).Scan(&status, &phase); err != nil {
 				t.Fatal(err)
 			}
-			if status != "running" || phase != "claimed" || dispatchStatus != "pending" {
-				t.Fatalf("partial commit or consumed failure: task=%s attempt=%s dispatch=%s", status, phase, dispatchStatus)
+			if status != "running" || phase != "claimed" {
+				t.Fatalf("partial commit or consumed failure: task=%s attempt=%s", status, phase)
 			}
 		})
 	}

@@ -170,7 +170,7 @@ func pendingDispatchCount(t *testing.T, pool *pgxpool.Pool, aggregateID string) 
 	t.Helper()
 	var n int
 	if err := pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM async_dispatches WHERE aggregate_id = $1 AND status = 'pending'
+		SELECT COUNT(*) FROM river_job WHERE args ->> 'aggregate_id' = $1 AND state = 'available'
 	`, aggregateID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}

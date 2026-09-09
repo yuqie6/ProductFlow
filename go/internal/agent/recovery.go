@@ -16,10 +16,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// RecoverySummary 是 dispatcher 本轮崩溃恢复的计数：待同步 Turn、实际补入 PENDING 的条数、为 queued Task 补出的首轮 Turn、以及因过期 lease 标 unknown 的 execution。
+// RecoverySummary 是 dispatcher 本轮崩溃恢复的计数：待同步 Turn、实际补入 River 作业 的条数、为 queued Task 补出的首轮 Turn、以及因过期 lease 标 unknown 的 execution。
 type RecoverySummary struct {
 	PendingTurns       int  `json:"pending_turns"`        // 本轮选中的待同步 Turn 数
-	EnqueuedTurns      int  `json:"enqueued_turns"`       // 实际补入 PENDING 的条数
+	EnqueuedTurns      int  `json:"enqueued_turns"`       // 实际补入 River 作业 的条数
 	RecoveredTaskTurns int  `json:"recovered_task_turns"` // 为 queued Task 补出的首轮 Turn
 	UnknownExecutions  int  `json:"unknown_executions"`   // 因过期 lease 标 unknown 的 execution
 	HasMore            bool `json:"has_more"`             // 本轮批次已填满，下一轮继续探测
@@ -29,7 +29,7 @@ const expiredExecutionBatchLimit = 25
 
 // RecoverUnfinished 是 dispatcher 崩溃恢复入口：用连接池构造 RecoveryService，再跑 recoverUnfinishedTurns。
 //
-// 过期 lease 先标 unknown（无法证明终态时），未完成 Turn 补回 ActorAgentTurnSync 的 PENDING。Pi session files 不是恢复权威。
+// 过期 lease 先标 unknown（无法证明终态时），未完成 Turn 补回 ActorAgentTurnSync 作业。Pi session files 不是恢复权威。
 func RecoverUnfinished(ctx context.Context, pool *pgxpool.Pool, limit int) (RecoverySummary, error) {
 	gdb, err := pfdb.OpenGorm(pool)
 	if err != nil {
@@ -50,7 +50,7 @@ func RecoverUnfinishedTurns(ctx context.Context, s Service) (RecoverySummary, er
 
 // recoverUnfinishedTurns 分阶段执行 Agent recovery：每个阶段独立提交，避免把 projection、execution、task 和 outbox 锁在同一事务里。
 //
-// 扫描 queued/running/cancel_requested，以及已有答案的 requires_input。waiting_reason=goal_loop 的 Goal 不在这里造新 Turn。RestageIfIdle 只在 dispatch 空闲时写入 PENDING，已在飞的不重复入队。
+// 扫描 queued/running/cancel_requested，以及已有答案的 requires_input。waiting_reason=goal_loop 的 Goal 不在这里造新 Turn。RestageTaskIfIdle 只在当前执行轮无活跃或停止作业时补入 River 作业，已在飞的不重复入队。
 //
 // 任一阶段提交后进程退出，下一轮会按 PostgreSQL 状态继续恢复。事务提交后才 CompactExpiredTurnJournals。禁区：不要读 Pi 文件决定「该补哪条」；不要在恢复里把 Goal 标 succeeded。
 func recoverUnfinishedTurns(ctx context.Context, s Service, limit int) (RecoverySummary, error) {
@@ -168,10 +168,10 @@ func restagePendingTurns(ctx context.Context, s Service, limit int) (enqueued, p
 		return pgxTx.WithContext(ctx).Model(&schema.AgentTurnProjections{}).
 			Where("resume_required = FALSE AND ((harness_turn_id IS NULL AND status IN ?) OR (status = 'requires_input' AND question_answer_json IS NOT NULL))", []string{"queued", "running", "cancel_requested"}).
 			Where(`NOT EXISTS (
-				SELECT 1 FROM async_dispatches d
-				WHERE d.delivery_key = ? || ':' || agent_turn_projections.id
-				  AND d.status IN ?
-			)`, queue.ActorAgentTurnSync, []string{queue.StatusPending, queue.StatusSent, queue.StatusDead}).
+				SELECT 1 FROM river_job d
+				WHERE d.kind = 'productflow_task' AND d.args ->> 'actor' = ? AND d.args ->> 'aggregate_id' = agent_turn_projections.id
+ AND d.state <> 'completed' AND d.args ->> 'execution_id' = agent_turn_projections.queue_execution_id
+			)`, queue.ActorAgentTurnSync).
 			Order("created_at, id").
 			Limit(limit+1).
 			Pluck("id", &ids).Error
@@ -208,7 +208,7 @@ func restagePendingTurns(ctx context.Context, s Service, limit int) (enqueued, p
 				return scanErr
 			}
 			restageCtx := auth.WithMerchantID(ctx, merchantID)
-			ok, restageErr := queue.RestageIfIdle(restageCtx, pgxTx, queue.ActorAgentTurnSync, id, nil)
+			ok, restageErr := queue.RestageTaskIfIdle(restageCtx, pgxTx, queue.ActorAgentTurnSync, id, nil)
 			changed = ok
 			return restageErr
 		})

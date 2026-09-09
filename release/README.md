@@ -148,7 +148,7 @@ INCLUDE_REDIS=1 COMPOSE_PROJECT_NAME=pf-site bash scripts/release-backup.sh
 
 ### 恢复到新目录 / 新实例
 
-目标应是**新** Compose 项目（或新主机上的安装目录）。脚本会写入 `.env`、恢复 PG / storage / agent-data，再 `compose up -d`（migrate 经 `depends_on`）。空 Redis 亦可：以 PG `async_dispatches` 再投递为准。
+目标应是**新** Compose 项目（或新主机上的安装目录）。脚本会写入 `.env`、恢复 PG / storage / agent-data，再 `compose up -d`（migrate 经 `depends_on`）。任务由 PostgreSQL 业务行与 River 作业恢复；Redis 仅保存认证限流计数。
 
 ```bash
 COMPOSE_PROJECT_NAME=pf-restore-20260907 \

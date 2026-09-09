@@ -9,27 +9,15 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/db/schema"
-	"github.com/yuqie6/productflow/internal/platform/queue"
-	"gorm.io/gorm"
 )
 
 func TestEffectPersistenceFailureDoesNotConsumeOrRetryProvider(t *testing.T) {
 	for _, mode := range []string{"confirmed_failure", "unknown", "applied"} {
 		t.Run(mode, func(t *testing.T) {
 			ss := newSessionServer(t)
-			ctx := context.Background()
+			ctx := imageSessionQueueContext(t, ss.db)
 			_, taskID := createQueuedGeneration(t, ss, map[string]any{"prompt": "effect persistence", "size": "1024x1024"})
-			var dispatch queue.Dispatch
-			if err := ss.db.Transaction(func(tx *gorm.DB) error {
-				var err error
-				dispatch, err = queue.StageForActor(ctx, tx, queue.ActorImageSession, taskID, 0)
-				return err
-			}); err != nil {
-				t.Fatal(err)
-			}
-			if err := ss.db.Model(&schema.AsyncDispatches{}).Where("id=?", dispatch.ID).Update("status", queue.StatusSent).Error; err != nil {
-				t.Fatal(err)
-			}
+			job := stageImageSessionJob(t, ss.db, taskID)
 			const constraint = "test_imagesession_effect_persistence"
 			if _, err := ss.pool.Exec(ctx, "ALTER TABLE image_session_provider_effects ADD CONSTRAINT "+constraint+" CHECK (generation_task_id <> '"+taskID+"' OR effect_result='pending')"); err != nil {
 				t.Fatal(err)
@@ -48,20 +36,17 @@ func TestEffectPersistenceFailureDoesNotConsumeOrRetryProvider(t *testing.T) {
 			}
 			provider := &countingProvider{MockChatProvider: MockChatProvider{Err: providerErr}}
 			e := Executor{DB: ss.db, Media: ss.media, Provider: provider}
-			err := queue.Consume(ctx, ss.pool, dispatch.ID, taskID, map[string]queue.ActorFunc{queue.ActorImageSession: e.Execute})
+			err := executeImageSessionJob(ctx, job, e)
 			var pgErr *pgconn.PgError
 			if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
 				t.Fatalf("effect constraint error was not propagated: %v", err)
 			}
-			var taskStatus, dispatchStatus string
+			var taskStatus string
 			if err := ss.pool.QueryRow(ctx, "SELECT status FROM image_session_generation_tasks WHERE id=$1", taskID).Scan(&taskStatus); err != nil {
 				t.Fatal(err)
 			}
-			if err := ss.pool.QueryRow(ctx, "SELECT status FROM async_dispatches WHERE id=$1", dispatch.ID).Scan(&dispatchStatus); err != nil {
-				t.Fatal(err)
-			}
-			if taskStatus != "running" || dispatchStatus != queue.StatusPending {
-				t.Fatalf("partial effect failure task=%s dispatch=%s", taskStatus, dispatchStatus)
+			if taskStatus != "running" || riverImageSessionJobCount(t, ss, taskID) != 1 {
+				t.Fatalf("partial effect failure task=%s jobs=%d", taskStatus, riverImageSessionJobCount(t, ss, taskID))
 			}
 			if provider.calls != 1 {
 				t.Fatalf("provider calls=%d", provider.calls)
@@ -98,7 +83,7 @@ func TestEffectPersistenceFailureDoesNotConsumeOrRetryProvider(t *testing.T) {
 					t.Fatalf("recovered effect incomplete: %+v", effect)
 				}
 			}
-			if err := e.Execute(ctx, taskID); err != nil {
+			if err := executeImageSessionJob(ctx, job, e); err != nil {
 				t.Fatal(err)
 			}
 			if provider.calls != 1 {

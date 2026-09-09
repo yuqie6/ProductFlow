@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	// GraphRun execution leases are aligned with the worker consumer lease. A crashed
-	// worker can therefore be taken over without leaving a run permanently running.
-	graphRunExecutionLeaseDuration   = time.Duration(queue.DefaultConsumerLeaseSeconds) * time.Second
+	// Business execution ownership survives queue redelivery. Recovery waits for
+	// this lease to expire before taking over a crashed executor.
+	graphRunExecutionLeaseDuration   = 35 * time.Minute
 	graphRunExecutionLeaseRenewEvery = 5 * time.Minute
 )
 
@@ -57,6 +57,9 @@ func acquireGraphRunLease(ctx context.Context, db *gorm.DB, runID, token string)
 	leaseUntil := now.Add(graphRunExecutionLeaseDuration)
 	var updated int64
 	err = tx.WithGorm(ctx, db, func(dbTx *gorm.DB) error {
+		if err := queue.AssertExecution(ctx, dbTx, queue.ActorGraphRun, runID); err != nil {
+			return err
+		}
 		result := dbTx.WithContext(ctx).Model(&schema.WorkflowGraphRuns{}).
 			Where("id = ? AND status = ? AND (execution_lease_expires_at IS NULL OR execution_lease_expires_at <= ?)", runID, RunStatusRunning, now).
 			Updates(map[string]any{

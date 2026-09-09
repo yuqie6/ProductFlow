@@ -109,8 +109,10 @@ func TestRecoverUnfinishedDoesNotRequeueAppliedCandidate(t *testing.T) {
 	}
 	var pending int
 	if err := ss.pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM async_dispatches WHERE aggregate_id = $1 AND status = 'pending'
-	`, taskID).Scan(&pending); err != nil {
+		SELECT COUNT(*) FROM river_job
+		WHERE kind = 'productflow_task' AND args ->> 'actor' = $1 AND args ->> 'aggregate_id' = $2
+		  AND state <> 'completed'
+	`, queue.ActorImageSession, taskID).Scan(&pending); err != nil {
 		t.Fatal(err)
 	}
 	if pending != 0 {
@@ -206,7 +208,6 @@ func TestRecoverUnfinishedContinuesAfterOneRestageFailure(t *testing.T) {
 	stampCreatedAt(t, ss, thirdID, time.Unix(3, 0).UTC())
 	poisonDispatchIdentity(t, ss, badID)
 	t.Cleanup(func() {
-		_, _ = ss.pool.Exec(context.Background(), `DELETE FROM async_dispatches WHERE aggregate_id = $1`, badID)
 		_, _ = ss.pool.Exec(context.Background(), `
 			UPDATE image_session_generation_tasks
 			SET is_retryable = FALSE, status = 'cancelled'
@@ -382,11 +383,9 @@ func TestRecoverUnfinishedLateWriterDoesNotSucceedAfterUnknown(t *testing.T) {
 func drainImageRecovery(t *testing.T, ss *sessionServer) {
 	t.Helper()
 	if _, err := ss.pool.Exec(context.Background(), `
-		DELETE FROM async_dispatches
-		WHERE status = 'consumed'
-		  AND delivery_key LIKE $1
-		  AND actor_name <> $2
-	`, queue.ActorImageSession+":%", queue.ActorImageSession); err != nil {
+		DELETE FROM river_job
+		WHERE kind = 'productflow_task' AND args ->> 'actor' = $1
+	`, queue.ActorImageSession); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 20; i++ {
@@ -440,8 +439,10 @@ func pendingDispatchCount(t *testing.T, ss *sessionServer, aggregateID string) i
 	t.Helper()
 	var n int
 	if err := ss.pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM async_dispatches WHERE aggregate_id = $1 AND status = 'pending'
-	`, aggregateID).Scan(&n); err != nil {
+		SELECT COUNT(*) FROM river_job
+		WHERE kind = 'productflow_task' AND args ->> 'actor' = $1 AND args ->> 'aggregate_id' = $2
+		  AND state <> 'completed'
+	`, queue.ActorImageSession, aggregateID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -449,11 +450,14 @@ func pendingDispatchCount(t *testing.T, ss *sessionServer, aggregateID string) i
 
 func poisonDispatchIdentity(t *testing.T, ss *sessionServer, taskID string) {
 	t.Helper()
-	if _, err := ss.pool.Exec(context.Background(), `
-		INSERT INTO async_dispatches (
-			id, delivery_key, actor_name, aggregate_id, status, available_at, attempts, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, 'consumed', NOW(), 0, NOW(), NOW())
-	`, clockid.New(), queue.DeliveryKey(queue.ActorImageSession, taskID), queue.ActorGraphRun, taskID); err != nil {
+	const constraint = "test_imagesession_recovery_river_reject"
+	if _, err := ss.pool.Exec(context.Background(),
+		"ALTER TABLE river_job ADD CONSTRAINT "+constraint+" CHECK (args ->> 'aggregate_id' <> '"+taskID+"') NOT VALID"); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if _, err := ss.pool.Exec(context.Background(), "ALTER TABLE river_job DROP CONSTRAINT IF EXISTS "+constraint); err != nil {
+			t.Error(err)
+		}
+	})
 }

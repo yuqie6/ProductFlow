@@ -1,20 +1,17 @@
-// Command productflow-worker 消费 asynq 信封 run_async_dispatch，执行已经 SENT 的 async_dispatches。
-//
-// 只处理 dispatcher 标过 SENT 的行。MaxRetry=0：业务失败不要靠 asynq 重试，unknown/Busy/Later 由队列语义处理。
-// actor 名与 queue.Actor* 必须一致，否则任务会被丢掉。不要在 worker 里再 Stage 同一作业造成双跑。
+// Command productflow-worker 使用 River 消费与业务事务同时写入的 PostgreSQL 作业。
+// 业务状态决定外部调用是否允许重试；River 负责投递、容量等待和基础设施错误重试。
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
-	"github.com/hibiken/asynq"
 	"github.com/yuqie6/productflow/internal/agent"
 	"github.com/yuqie6/productflow/internal/delivery"
 	"github.com/yuqie6/productflow/internal/graph"
@@ -33,6 +30,7 @@ import (
 	"github.com/yuqie6/productflow/internal/providers/adapt"
 	"github.com/yuqie6/productflow/internal/settings"
 	"go.uber.org/zap"
+	"go.uber.org/zap/exp/zapslog"
 )
 
 func main() {
@@ -77,11 +75,6 @@ func main() {
 			defer cancelShutdown()
 			_ = metricsServer.Shutdown(shutdownCtx)
 		}()
-	}
-
-	redisOpt, err := queue.ParseRedis(cfg.RedisURL)
-	if err != nil {
-		logger.Fatal("redis", zap.Error(err))
 	}
 
 	mediaStore := media.Store{Files: storage.Local{Root: cfg.StorageRoot}}
@@ -144,32 +137,24 @@ func main() {
 		},
 	}
 
-	mux := asynq.NewServeMux()
-	mux.HandleFunc(queue.TaskRunAsyncDispatch, func(ctx context.Context, task *asynq.Task) error {
-		var payload queue.TaskPayload
-		if err := json.Unmarshal(task.Payload(), &payload); err != nil {
-			return err
-		}
-		return queue.Consume(ctx, pool, payload.DispatchID, payload.AggregateID, actors)
+	worker, err := queue.NewClient(pool, actors, queue.WorkerConfig{
+		Logger: slog.New(zapslog.NewHandler(logger.Core())).With("component", "river"),
 	})
-
-	server := asynq.NewServer(redisOpt, asynq.Config{Concurrency: 4})
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(stop)
-	logger.Info("worker listen")
-	if err := runWorker(server, mux, stop); err != nil {
-		logger.Fatal("worker", zap.Error(err))
+	if err != nil {
+		logger.Fatal("worker setup", zap.Error(err))
 	}
-}
-
-func runWorker(server *asynq.Server, handler asynq.Handler, stop <-chan os.Signal) error {
-	// Run also handles process signals. A second Shutdown caller can return
-	// while the first caller is still draining workers, letting main exit early.
-	if err := server.Start(handler); err != nil {
-		return err
+	workerCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// The signal initiates graceful Stop below; cancelling Start's context
+	// immediately would interrupt paid provider calls before the grace period.
+	if err := worker.Start(context.Background()); err != nil {
+		logger.Fatal("worker start", zap.Error(err))
 	}
-	<-stop
-	server.Shutdown()
-	return nil
+	logger.Info("worker listen", zap.String("queue", "postgresql"))
+	<-workerCtx.Done()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelShutdown()
+	if err := worker.Stop(shutdownCtx); err != nil {
+		logger.Error("worker shutdown", zap.Error(err))
+	}
 }

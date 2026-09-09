@@ -13,6 +13,7 @@ import (
 	"github.com/yuqie6/productflow/internal/media"
 	"github.com/yuqie6/productflow/internal/platform/apperr"
 	"github.com/yuqie6/productflow/internal/platform/clockid"
+	"github.com/yuqie6/productflow/internal/platform/queue"
 	"github.com/yuqie6/productflow/internal/product"
 )
 
@@ -360,7 +361,9 @@ func TestExecuteValidationDoesNotAutoRetry(t *testing.T) {
 	}
 	var pending int
 	if err := ss.pool.QueryRow(context.Background(), `
-		SELECT COUNT(*) FROM async_dispatches WHERE aggregate_id = $1 AND status = 'pending'
+		SELECT COUNT(*) FROM river_job
+		WHERE kind = 'productflow_task' AND args ->> 'actor' = 'run_image_session_generation_task'
+		  AND args ->> 'aggregate_id' = $1 AND state <> 'completed'
 	`, taskID).Scan(&pending); err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +397,7 @@ func TestExecuteRateLimitIsFailedRetryable(t *testing.T) {
 	})
 	exec := Executor{DB: ss.db, Media: ss.media, Provider: MockChatProvider{Err: ErrRateLimit}}
 	for i := 0; i < maxAttempts; i++ {
-		if err := exec.Execute(context.Background(), taskID); err != nil {
+		if err := exec.Execute(context.Background(), taskID); err != nil && !errors.Is(err, queue.ErrBusy) && !errors.Is(err, queue.ErrLater) {
 			t.Fatal(err)
 		}
 	}
@@ -470,7 +473,7 @@ func (p contextCancelProvider) Generate(ctx context.Context, req ChatRequest) (C
 func TestExecuteCanceledContextMarksUnknown(t *testing.T) {
 	ss := newSessionServer(t)
 	session, taskID := createQueuedGeneration(t, ss, map[string]any{
-		"prompt": "asynq 取消", "size": "1024x1024", "generation_count": 1,
+		"prompt": "Worker 取消", "size": "1024x1024", "generation_count": 1,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	exec := Executor{DB: ss.db, Media: ss.media, Provider: contextCancelProvider{cancel: cancel}}

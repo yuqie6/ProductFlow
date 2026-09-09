@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
+	"github.com/riverqueue/river/rivermigrate"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"gorm.io/gorm/schema"
@@ -17,6 +19,18 @@ const schemaMigrationAdvisoryLock int64 = 712450012
 //
 // EnumDDL、建表、补列或 ExtraDDL 失败会回滚并 wrap 返回。
 func Apply(gdb *gorm.DB) error {
+	// River's enum migrations require commits between versions. Keep its native
+	// per-version transactions under the existing migration serialization lock;
+	// a failure prevents business schema changes, and rerunning resumes River.
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		return err
+	}
+	migrator, err := rivermigrate.New(riverdatabasesql.New(sqlDB), nil)
+	if err != nil {
+		return fmt.Errorf("river migrator: %w", err)
+	}
+	ctx := gdb.Statement.Context
 	db := gdb.Session(&gorm.Session{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
@@ -24,6 +38,24 @@ func Apply(gdb *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", schemaMigrationAdvisoryLock).Error; err != nil {
 			return fmt.Errorf("migration lock: %w", err)
+		}
+		if tx.Migrator().HasTable("async_dispatches") {
+			var remaining int64
+			if err := tx.Table("async_dispatches").Where("status IN ?", []string{"pending", "sent", "dead"}).Count(&remaining).Error; err != nil {
+				return err
+			}
+			if remaining > 0 {
+				return fmt.Errorf("queue cutover refused: %d old active/stopped dispatches require disposition", remaining)
+			}
+			if err := tx.Migrator().DropTable("async_dispatches"); err != nil {
+				return err
+			}
+			if err := tx.Exec("DROP TYPE IF EXISTS asyncdispatchstatus").Error; err != nil {
+				return err
+			}
+		}
+		if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+			return fmt.Errorf("river schema: %w", err)
 		}
 		if err := applyPrefix(tx, EnumDDL); err != nil {
 			return fmt.Errorf("create enums: %w", err)
