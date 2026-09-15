@@ -32,9 +32,9 @@
   } catch {
     /* ignore */
   }
-  for (let i = 0; i < 18; i++) {
-    window.scrollBy(0, 900);
-    await new Promise((r) => setTimeout(r, 280));
+  for (let i = 0; i < 14; i++) {
+    window.scrollBy(0, 750);
+    await new Promise((r) => setTimeout(r, 650));
   }
   window.scrollTo(0, 0);
   await new Promise((r) => setTimeout(r, 350));
