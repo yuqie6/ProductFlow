@@ -1351,6 +1351,7 @@ def test_image_generation_max_dimension_runtime_config_controls_size_bounds(conf
     runtime = client.get("/api/settings/runtime")
     assert runtime.status_code == 200
     assert runtime.json() == {
+        "image_session_prompt_max_length": 16000,
         "image_generation_max_dimension": 3840,
         "image_tool_allowed_fields": [
             "model",

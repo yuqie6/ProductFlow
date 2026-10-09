@@ -777,6 +777,7 @@ function ConfigField({
         id={item.key}
         type={item.input_type === "password" ? "password" : item.input_type === "number" ? "number" : "text"}
         value={String(value)}
+        step={item.input_type === "number" ? 1 : undefined}
         min={item.minimum ?? undefined}
         max={item.maximum ?? undefined}
         placeholder={item.secret && item.has_value ? t("settings.secretPlaceholder") : item.description || undefined}

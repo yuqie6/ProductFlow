@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from productflow_backend.application.image_sessions import ImageSessionStatusSnapshot
+from productflow_backend.config import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus
 from productflow_backend.infrastructure.db.models import (
@@ -152,7 +153,7 @@ class ImageToolOptionsRequest(BaseModel):
 
 
 class GenerateImageSessionRoundRequest(BaseModel):
-    prompt: str = Field(min_length=1, max_length=4000)
+    prompt: str = Field(min_length=1)
     size: str = Field(default="1024x1024")
     base_asset_id: str | None = None
     selected_reference_asset_ids: list[str] = Field(default_factory=list, max_length=6)
@@ -165,6 +166,9 @@ class GenerateImageSessionRoundRequest(BaseModel):
         normalized = prompt.strip()
         if not normalized:
             raise ValueError("提示词不能为空")
+        limit = get_runtime_settings().image_session_prompt_max_length
+        if len(normalized) > limit:
+            raise ValueError(f"提示词最多允许 {limit} 个字符，当前 {len(normalized)} 个字符")
         return normalized
 
     @field_validator("size")

@@ -590,6 +590,7 @@ export interface ConfigResponse {
 }
 
 export interface RuntimeConfig {
+  image_session_prompt_max_length: number;
   image_generation_max_dimension: number;
   image_tool_allowed_fields: ImageToolOptionKey[];
   admin_access_required: boolean;

@@ -180,6 +180,7 @@ class Settings(BaseSettings):
     prompt_poster_image_edit_template: str = DEFAULT_PROMPT_POSTER_IMAGE_EDIT_TEMPLATE
     prompt_poster_image_reference_policy: str = DEFAULT_PROMPT_POSTER_IMAGE_REFERENCE_POLICY
     prompt_image_chat_template: str = DEFAULT_PROMPT_IMAGE_CHAT_TEMPLATE
+    image_session_prompt_max_length: int = Field(default=16_000, ge=1, le=100_000)
 
     upload_max_image_bytes: int = 10 * 1024 * 1024
     upload_max_reference_images: int = 6
@@ -274,6 +275,15 @@ def get_settings() -> Settings:
 
 
 CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
+    ConfigDefinition(
+        key="image_session_prompt_max_length",
+        label="文/图生图提示词长度上限",
+        category="提示词",
+        input_type="number",
+        description="按字符计数，保存后立即生效；模型供应商可能另有长度限制。",
+        minimum=1,
+        maximum=100_000,
+    ),
     ConfigDefinition(
         key="image_tool_allowed_fields",
         label="可用 Tool 字段",

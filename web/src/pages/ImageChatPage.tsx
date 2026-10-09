@@ -286,6 +286,11 @@ export function ImageChatPage() {
   });
 
   const products = productsQuery.data?.items ?? [];
+  const promptMaxLength = runtimeConfigQuery.data?.image_session_prompt_max_length ?? 16_000;
+  const promptCharacterCount = Array.from(draft.trim()).length;
+  const promptLengthError = promptCharacterCount > promptMaxLength
+    ? `提示词最多允许 ${promptMaxLength} 个字符，当前 ${promptCharacterCount} 个字符`
+    : "";
   const imageGenerationMaxDimension =
     runtimeConfigQuery.data?.image_generation_max_dimension ?? DEFAULT_IMAGE_GENERATION_MAX_DIMENSION;
   const imageToolAllowedFields = runtimeConfigQuery.data?.image_tool_allowed_fields ?? DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS;
@@ -682,6 +687,10 @@ export function ImageChatPage() {
   function handleGenerate() {
     const prompt = draft.trim();
     if (!selectedSessionId || !imageSession || !prompt || generateMutation.isPending) {
+      return;
+    }
+    if (promptLengthError) {
+      setErrorMessage(promptLengthError);
       return;
     }
     if (baseRequirementMessage) {
@@ -1299,12 +1308,17 @@ export function ImageChatPage() {
                     </label>
                     <textarea
                       id="image-chat-prompt"
+                      aria-invalid={Boolean(promptLengthError)}
+                      aria-describedby="image-chat-prompt-feedback"
                       value={draft}
-                      onChange={(event) => setDraft(event.target.value)}
+                      onChange={(event) => { setDraft(event.target.value); setErrorMessage(""); }}
                       rows={6}
                       placeholder={t("chat.freePromptPlaceholder")}
                       className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/20"
                     />
+                    <p id="image-chat-prompt-feedback" aria-live="polite" className={`mt-2 text-xs ${promptLengthError ? "text-red-600 dark:text-red-300" : "text-slate-500 dark:text-slate-400"}`}>
+                      {promptLengthError || `提示词字符数：${promptCharacterCount} / ${promptMaxLength}`}
+                    </p>
                   </div>
 
                   <ImageGenerationSettingsPanel
@@ -1333,9 +1347,6 @@ export function ImageChatPage() {
                   {successMessage}
                 </div>
               ) : null}
-              {errorMessage ? (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">{errorMessage}</div>
-              ) : null}
             </div>
           </div>
 
@@ -1345,10 +1356,15 @@ export function ImageChatPage() {
                 {baseRequirementMessage}
               </div>
             ) : null}
+            {promptLengthError || errorMessage ? (
+              <div role="alert" className="mb-2 max-h-32 overflow-y-auto rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
+                {promptLengthError || errorMessage}
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={generateDisabled}
+              disabled={generateDisabled || Boolean(promptLengthError)}
               className="inline-flex w-full items-center justify-center rounded-2xl bg-indigo-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500 disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:via-violet-500 dark:to-fuchsia-500 dark:shadow-violet-900/45 dark:ring-1 dark:ring-violet-300/35"
             >
               {generateMutation.isPending ? (
@@ -1575,12 +1591,17 @@ export function ImageChatPage() {
                       </label>
                       <textarea
                         id="image-chat-prompt-mobile"
+                      aria-invalid={Boolean(promptLengthError)}
+                      aria-describedby="image-chat-prompt-mobile-feedback"
                         value={draft}
-                        onChange={(event) => setDraft(event.target.value)}
+                        onChange={(event) => { setDraft(event.target.value); setErrorMessage(""); }}
                         rows={6}
                         placeholder={t("chat.freePromptPlaceholder")}
                         className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/20"
                       />
+                      <p id="image-chat-prompt-mobile-feedback" aria-live="polite" className={`mt-2 text-xs ${promptLengthError ? "text-red-600 dark:text-red-300" : "text-slate-500 dark:text-slate-400"}`}>
+                        {promptLengthError || `提示词字符数：${promptCharacterCount} / ${promptMaxLength}`}
+                      </p>
                     </div>
 
                     <ImageGenerationSettingsPanel
@@ -1609,9 +1630,6 @@ export function ImageChatPage() {
                     {successMessage}
                   </div>
                 ) : null}
-                {errorMessage ? (
-                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">{errorMessage}</div>
-                ) : null}
               </div>
             </div>
             <div className="border-t border-slate-200 bg-white/96 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] dark:border-slate-800 dark:bg-slate-950/94">
@@ -1620,10 +1638,15 @@ export function ImageChatPage() {
                   {baseRequirementMessage}
                 </div>
               ) : null}
+              {promptLengthError || errorMessage ? (
+                <div role="alert" className="mb-2 max-h-32 overflow-y-auto rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
+                  {promptLengthError || errorMessage}
+                </div>
+              ) : null}
               <button
                 type="button"
                 onClick={handleGenerate}
-                disabled={generateDisabled}
+                disabled={generateDisabled || Boolean(promptLengthError)}
                 className="inline-flex min-h-12 w-full items-center justify-center rounded-2xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-colors active:scale-[0.98] hover:bg-indigo-500 disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:via-violet-500 dark:to-fuchsia-500 dark:shadow-violet-900/45 dark:ring-1 dark:ring-violet-300/35"
               >
                 {generateMutation.isPending ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Sparkles size={15} className="mr-2" />}

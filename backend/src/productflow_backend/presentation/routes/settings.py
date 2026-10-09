@@ -638,6 +638,7 @@ def update_provider_binding_endpoint(
 def get_runtime_config_endpoint() -> RuntimeConfigResponse:
     settings = get_runtime_settings()
     return RuntimeConfigResponse(
+        image_session_prompt_max_length=settings.image_session_prompt_max_length,
         image_generation_max_dimension=settings.image_generation_max_dimension,
         image_tool_allowed_fields=list(parse_image_tool_allowed_fields(settings.image_tool_allowed_fields)),
         admin_access_required=settings.admin_access_required,

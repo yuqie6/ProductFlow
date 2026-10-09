@@ -1,3 +1,4 @@
+import { normalizeApiErrorDetail } from "./apiErrors";
 import type {
   ApplyWorkflowTemplateGroupInput,
   CanvasTemplateSummary,
@@ -43,10 +44,11 @@ export class ApiError extends Error {
   status: number;
   detail: string;
 
-  constructor(status: number, detail: string) {
-    super(detail);
+  constructor(status: number, detail: unknown) {
+    const message = normalizeApiErrorDetail(detail);
+    super(message);
     this.status = status;
-    this.detail = detail;
+    this.detail = message;
   }
 }
 
@@ -70,8 +72,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     let detail = "请求失败";
     try {
-      const payload = (await response.json()) as { detail?: string };
-      detail = payload.detail ?? detail;
+      const payload = (await response.json()) as { detail?: unknown };
+      detail = normalizeApiErrorDetail(payload.detail, detail);
     } catch {
       detail = response.statusText || detail;
     }
